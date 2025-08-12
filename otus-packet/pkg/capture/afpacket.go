@@ -42,6 +42,9 @@ func (h *afpacketHandle) Open(interfaceName string, options *CaptureOptions) err
 	}
 
 	framSize, szBlock, numBlock, err := computeFrameSizeAndBlocks(options)
+	if err != nil {
+		return fmt.Errorf("failed to compute frame size and blocks: %v", err)
+	}
 
 	// 创建 AF_PACKET socket
 	tpacket, err := afpacket.NewTPacket(
@@ -70,7 +73,7 @@ func (h *afpacketHandle) Open(interfaceName string, options *CaptureOptions) err
 
 	// 如果有 BPF 过滤器，则设置过滤器
 	if options.Filter != "" {
-		rawBpf, err := utils.CompileBpf(options.Filter)
+		rawBpf, err := utils.CompileBpf(options.Filter, options.SnapLen)
 		if err != nil {
 			return fmt.Errorf("failed to compile BPF filter: %v", err)
 		}

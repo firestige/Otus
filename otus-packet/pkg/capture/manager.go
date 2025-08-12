@@ -110,12 +110,10 @@ func ExampleUsage() {
 
 	// 配置抓包选项
 	options := &CaptureOptions{
-		BufferSize:   2 * 1024 * 1024, // 2MB
-		Promiscuous:  true,
-		Timeout:      500, // 500ms
-		SnapLen:      1500,
-		Filter:       "tcp port 80",
-		BlockingMode: false,
+		BufferSize: 2 * 1024 * 1024, // 2MB
+		Timeout:    500,             // 500ms
+		SnapLen:    1500,
+		Filter:     "tcp port 80",
 	}
 
 	// 启动 AF_PACKET 抓包
