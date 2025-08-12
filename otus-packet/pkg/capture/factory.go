@@ -35,13 +35,12 @@ type CaptureHandle interface {
 
 // CaptureOptions 抓包选项配置
 type CaptureOptions struct {
-	BufferSize   int    // 缓冲区大小
-	Promiscuous  bool   // 混杂模式
-	Timeout      int    // 超时时间 (毫秒)
-	SnapLen      int    // 捕获长度
-	Filter       string // BPF 过滤器
-	BlockingMode bool   // 阻塞模式
-	FanoutId     uint16 // Fanout ID (可选)
+	SnapLen     int    // 捕获长度
+	BufferSize  int    // 缓冲区大小
+	SupportVlan bool   // 是否支持 VLAN
+	Timeout     int    // 超时时间 (毫秒)
+	Filter      string // BPF 过滤器
+	FanoutId    uint16 // Fanout ID (可选)
 }
 
 // HandleStats 抓包句柄统计信息
@@ -55,12 +54,10 @@ type HandleStats struct {
 // DefaultCaptureOptions 返回默认的抓包选项
 func DefaultCaptureOptions() *CaptureOptions {
 	return &CaptureOptions{
-		BufferSize:   1024 * 1024, // 1MB
-		Promiscuous:  true,
-		Timeout:      1000, // 1秒
-		SnapLen:      65536,
-		Filter:       "",
-		BlockingMode: false,
+		BufferSize: 1024 * 1024, // 1MB
+		Timeout:    1000,        // 1秒
+		SnapLen:    65536,
+		Filter:     "",
 	}
 }
 
