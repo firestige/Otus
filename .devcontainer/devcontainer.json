@@ -1,0 +1,8 @@
+{
+    "name": "skywalking-satellite-plugin-dev",
+    "build": {
+        "dockerfile": "Dockerfile"
+    },
+    "features": {},
+    "remoteUser": "vscode"
+}
