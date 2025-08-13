@@ -1,0 +1,41 @@
+log:
+  level: info
+  pattern: "%d{2006-01-02 15:04:05} [%p] %c: %m%n"
+sniffer:
+  interface: any
+  snaplen: 1514
+  local_ip: 127.0.0.1
+sender:
+  - name: skywalking-satellite-reporter
+    remote_addr: 127.0.0.1:11800
+  - name: kafka-reporter
+    broker_addr: 
+pipelines:
+  - name: example
+    sniffer:
+      host:
+      port:
+      transport:
+    decoder:
+    filters:
+      - name:
+      - name:
+    handler:
+      - name:
+    sender:
+      - name:
+      - name: 
+  - name: example
+    sniffer:
+      host:
+      port:
+      transport:
+    decoder:
+    filters:
+      - name:
+      - name:
+    handler:
+      - name:
+    sender:
+      - name: skywalking-satellite-reporter
+      - name: kafka-reporter
