@@ -1,6 +1,7 @@
 package config
 
 import (
+	"firestige.xyz/otus/internal/log"
 	"github.com/mitchellh/mapstructure"
 )
 
@@ -32,4 +33,10 @@ func BuildComponet(name string, configData map[string]interface{}) (interface{},
 		return nil, err
 	}
 	return comp, nil
+}
+
+type OtusConfig struct {
+	Logger   *log.LoggerConfig `mapstructure:"logger"`
+	Capture  *capture.Config   `mapstructure:"capture"`
+	Pipeline *pipeline.Config  `mapstructure:"pipeline"`
 }
