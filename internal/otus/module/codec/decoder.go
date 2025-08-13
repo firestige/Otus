@@ -1,30 +1,49 @@
 package codec
 
 import (
-	"net"
+	"context"
 
-	p "firestige.xyz/otus/pkg/pipeline"
+	"github.com/google/gopacket"
 )
 
-type Packet struct {
-	Protocol  string
-	Transport string
-	IpVersion string
-	SrcIP     net.IP
-	DstIP     net.IP
-	SrcPort   uint16
-	DstPort   uint16
-	Tsec      uint32
-	Tmsec     uint32
-	Payload   []byte
+// SimplifiedDecoder 简化解码器
+type SimplifiedDecoder struct {
+	processor PacketProcessor
 }
 
-type decoder struct {
+// NewSimplifiedDecoder 创建简化解码器
+func NewSimplifiedDecoder(outputChan chan<- *NetworkMessage) (*SimplifiedDecoder, error) {
+	processor, err := NewIPv4PacketProcessor(DefaultProcessorConfig(), outputChan)
+	if err != nil {
+		return nil, err
+	}
+
+	return &SimplifiedDecoder{
+		processor: processor,
+	}, nil
 }
 
-func (d *decoder) decode(data p.PacketData, ci p.CaptureInfo) (*Packet, error) {
-	// 这里应该实现具体的解码逻辑
-	// 例如解析 IP、TCP/UDP 头部等
-	// 返回一个 Packet 实例或错误
-	return nil, nil // 示例返回
+// Process 处理网络包数据 - 保持接口不变
+func (d *SimplifiedDecoder) Process(data []byte, ci *gopacket.CaptureInfo) {
+	if d.processor != nil {
+		if ipv4Processor, ok := d.processor.(*IPv4PacketProcessor); ok {
+			ipv4Processor.Process(data, ci)
+		}
+	}
+}
+
+// Start 启动解码器
+func (d *SimplifiedDecoder) Start() error {
+	if d.processor != nil {
+		return d.processor.Start(context.Background())
+	}
+	return nil
+}
+
+// Stop 停止解码器
+func (d *SimplifiedDecoder) Stop() error {
+	if d.processor != nil {
+		return d.processor.Stop()
+	}
+	return nil
 }
