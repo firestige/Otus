@@ -1,5 +1,5 @@
 {
-    "name": "skywalking-satellite-plugin-dev",
+    "name": "otus-dev-container",
     "build": {
         "dockerfile": "Dockerfile"
     },
