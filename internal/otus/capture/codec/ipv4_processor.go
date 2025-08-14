@@ -18,7 +18,6 @@ type IPv4PacketProcessor struct {
 	tcpAssembler       *tcpassembly.Assembler
 	applicationHandler *ApplicationProcessor
 	outputChannel      chan<- *NetworkMessage
-	metrics            *ProcessorMetrics
 	config             *ProcessorConfig
 
 	// 解析器缓存
@@ -50,15 +49,12 @@ func NewIPv4PacketProcessor(config *ProcessorConfig, outputChan chan<- *NetworkM
 	processor := &IPv4PacketProcessor{
 		config:        config,
 		outputChannel: outputChan,
-		metrics: &ProcessorMetrics{
-			StartTime: time.Now(),
-		},
-		ctx:    ctx,
-		cancel: cancel,
+		ctx:           ctx,
+		cancel:        cancel,
 	}
 
 	// 初始化应用层处理器
-	processor.applicationHandler = NewApplicationProcessor(processor.metrics)
+	processor.applicationHandler = NewApplicationProcessor()
 
 	// 初始化UDP重组器
 	processor.udpReassembler = NewUDPReassembler(ReassemblerOptions{
@@ -98,7 +94,6 @@ func (p *IPv4PacketProcessor) ProcessPacket(ctx context.Context, rawData []byte,
 	// 解析数据包
 	err := p.layerParser.DecodeLayers(rawData, &p.decodedLayers)
 	if err != nil {
-		atomic.AddUint64(&p.metrics.ProcessingErrors, 1)
 		return err
 	}
 
@@ -141,22 +136,6 @@ func (p *IPv4PacketProcessor) Stop() error {
 	return nil
 }
 
-// GetMetrics 获取性能指标
-func (p *IPv4PacketProcessor) GetMetrics() *ProcessorMetrics {
-	return &ProcessorMetrics{
-		IPv4Packets:       atomic.LoadUint64(&p.metrics.IPv4Packets),
-		TCPPackets:        atomic.LoadUint64(&p.metrics.TCPPackets),
-		UDPPackets:        atomic.LoadUint64(&p.metrics.UDPPackets),
-		SCTPPackets:       atomic.LoadUint64(&p.metrics.SCTPPackets),
-		FragmentedPackets: atomic.LoadUint64(&p.metrics.FragmentedPackets),
-		SIPMessages:       atomic.LoadUint64(&p.metrics.SIPMessages),
-		RTPPackets:        atomic.LoadUint64(&p.metrics.RTPPackets),
-		RTCPPackets:       atomic.LoadUint64(&p.metrics.RTCPPackets),
-		ProcessingErrors:  atomic.LoadUint64(&p.metrics.ProcessingErrors),
-		StartTime:         p.metrics.StartTime,
-	}
-}
-
 // Process 处理网络包数据 - 维持原有接口不变
 // data: 原始包数据
 // ci: 捕获信息(包含时间戳等)
@@ -175,11 +154,9 @@ func (p *IPv4PacketProcessor) Process(data []byte, ci *gopacket.CaptureInfo) {
 
 // handleIPv4Packet 处理IPv4包
 func (p *IPv4PacketProcessor) handleIPv4Packet(ctx context.Context, meta *CaptureMetadata) error {
-	atomic.AddUint64(&p.metrics.IPv4Packets, 1)
 
 	// 检查分片
 	if p.ipv4Layer.Flags&layers.IPv4MoreFragments != 0 || p.ipv4Layer.FragOffset != 0 {
-		atomic.AddUint64(&p.metrics.FragmentedPackets, 1)
 
 		// 对于TCP分片，我们需要先重组IP分片，然后再处理TCP
 		if p.ipv4Layer.Protocol == layers.IPProtocolTCP {
@@ -230,7 +207,6 @@ func (p *IPv4PacketProcessor) processTransportLayers(meta *CaptureMetadata) erro
 
 // processUDPLayer 处理UDP层
 func (p *IPv4PacketProcessor) processUDPLayer(meta *CaptureMetadata) error {
-	atomic.AddUint64(&p.metrics.UDPPackets, 1)
 
 	msg := &NetworkMessage{
 		IPVersion:       4,
@@ -249,7 +225,6 @@ func (p *IPv4PacketProcessor) processUDPLayer(meta *CaptureMetadata) error {
 
 // processTCPLayer 处理TCP层
 func (p *IPv4PacketProcessor) processTCPLayer(meta *CaptureMetadata) error {
-	atomic.AddUint64(&p.metrics.TCPPackets, 1)
 
 	// 计算TCP标志位
 	var flags uint8
@@ -304,7 +279,6 @@ func (p *IPv4PacketProcessor) processTCPLayer(meta *CaptureMetadata) error {
 
 // processSCTPLayer 处理SCTP层
 func (p *IPv4PacketProcessor) processSCTPLayer(meta *CaptureMetadata) error {
-	atomic.AddUint64(&p.metrics.SCTPPackets, 1)
 
 	var content []byte
 	if len(p.sctpLayer.Payload) >= 16 {

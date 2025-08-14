@@ -25,7 +25,6 @@ type DataSource interface {
 }
 
 type Decoder interface {
-	supported(data PacketData) bool
 	Decode(data PacketData, ci CaptureInfo) (interface{}, error)
 }
 

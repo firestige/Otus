@@ -1,13 +1,15 @@
 package config
 
 import (
+	"context"
+
 	"firestige.xyz/otus/internal/log"
 	"github.com/mitchellh/mapstructure"
 )
 
 type Configurable interface {
 	ConfigSpec() interface{}
-	ApplyConfig(config interface{}) error
+	PostConfig(config interface{}, ctx context.Context) error
 }
 
 var registry = make(map[string]func() interface{})
@@ -19,7 +21,7 @@ func Register(name string, factory func() interface{}) {
 	registry[name] = factory
 }
 
-func BuildComponet(name string, configData map[string]interface{}) (interface{}, error) {
+func BuildComponet(name string, configData map[string]interface{}, ctx context.Context) (interface{}, error) {
 	comp := registry[name]()
 	configPointer := comp.(Configurable).ConfigSpec()
 
@@ -28,7 +30,7 @@ func BuildComponet(name string, configData map[string]interface{}) (interface{},
 		return nil, err
 	}
 
-	err = comp.(Configurable).ApplyConfig(configPointer)
+	err = comp.(Configurable).PostConfig(configPointer, ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -36,7 +38,5 @@ func BuildComponet(name string, configData map[string]interface{}) (interface{},
 }
 
 type OtusConfig struct {
-	Logger   *log.LoggerConfig `mapstructure:"logger"`
-	Capture  *capture.Config   `mapstructure:"capture"`
-	Pipeline *pipeline.Config  `mapstructure:"pipeline"`
+	Logger *log.LoggerConfig `mapstructure:"log"`
 }

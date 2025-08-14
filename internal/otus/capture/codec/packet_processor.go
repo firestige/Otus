@@ -9,9 +9,6 @@ import (
 // PacketProcessor 网络包处理器主接口
 type PacketProcessor interface {
 	ProcessPacket(ctx context.Context, rawData []byte, meta *CaptureMetadata) error
-	Start(ctx context.Context) error
-	Stop() error
-	GetMetrics() *ProcessorMetrics
 }
 
 // CaptureMetadata 捕获包的元数据
@@ -20,20 +17,6 @@ type CaptureMetadata struct {
 	CaptureLength  int
 	PacketLength   int
 	InterfaceIndex int
-}
-
-// ProcessorMetrics 处理器性能指标
-type ProcessorMetrics struct {
-	IPv4Packets       uint64
-	TCPPackets        uint64
-	UDPPackets        uint64
-	SCTPPackets       uint64
-	FragmentedPackets uint64
-	SIPMessages       uint64
-	RTPPackets        uint64
-	RTCPPackets       uint64
-	ProcessingErrors  uint64
-	StartTime         time.Time
 }
 
 // NetworkMessage 解析后的网络消息

@@ -2,7 +2,6 @@ package codec
 
 import (
 	"bytes"
-	"sync/atomic"
 
 	"github.com/google/gopacket/layers"
 )
@@ -10,14 +9,12 @@ import (
 // ApplicationProcessor 应用层处理器
 type ApplicationProcessor struct {
 	protocolHandlers map[byte]ProtocolHandler
-	metrics          *ProcessorMetrics
 }
 
 // NewApplicationProcessor 创建应用层处理器
-func NewApplicationProcessor(metrics *ProcessorMetrics) *ApplicationProcessor {
+func NewApplicationProcessor() *ApplicationProcessor {
 	ap := &ApplicationProcessor{
 		protocolHandlers: make(map[byte]ProtocolHandler),
-		metrics:          metrics,
 	}
 
 	// 注册协议处理器
@@ -76,7 +73,6 @@ func (ap *ApplicationProcessor) isRTPRTCPMessage(msg *NetworkMessage) bool {
 func (ap *ApplicationProcessor) processRTPRTCPMessage(msg *NetworkMessage) (*NetworkMessage, error) {
 	if msg.SourcePort%2 != 0 && msg.DestinationPort%2 != 0 {
 		// RTCP消息
-		atomic.AddUint64(&ap.metrics.RTCPPackets, 1)
 		msg.ApplicationType = 5 // RTCP
 
 		if handler, exists := ap.protocolHandlers[5]; exists {
@@ -88,7 +84,6 @@ func (ap *ApplicationProcessor) processRTPRTCPMessage(msg *NetworkMessage) (*Net
 		}
 	} else {
 		// RTP消息
-		atomic.AddUint64(&ap.metrics.RTPPackets, 1)
 		msg.ApplicationType = 2 // RTP
 
 		if handler, exists := ap.protocolHandlers[2]; exists {
@@ -104,7 +99,6 @@ func (ap *ApplicationProcessor) processRTPRTCPMessage(msg *NetworkMessage) (*Net
 func (ap *ApplicationProcessor) processApplicationMessage(msg *NetworkMessage) (*NetworkMessage, error) {
 	// 尝试SIP处理
 	if ap.isSIPMessage(msg.Content) {
-		atomic.AddUint64(&ap.metrics.SIPMessages, 1)
 		msg.ApplicationType = 1 // SIP
 
 		if handler, exists := ap.protocolHandlers[1]; exists {

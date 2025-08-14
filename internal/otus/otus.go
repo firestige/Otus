@@ -4,10 +4,12 @@ import (
 	"context"
 	"os"
 	"os/signal"
+	"reflect"
 	"sync"
 	"syscall"
 
 	"firestige.xyz/otus/internal/config"
+	"firestige.xyz/otus/plugin"
 )
 
 var (
@@ -23,18 +25,16 @@ func GetAppContext() *AppContext {
 }
 
 type AppContext struct {
-	ctx       context.Context
-	registry  map[string]interface{}
-	container map[string]interface{}
+	ctx      context.Context
+	registry map[reflect.Type]map[string]reflect.Value
 }
 
 func newAppContext() *AppContext {
 	ctx, cancel := context.WithCancel(context.Background())
 	initShutdownListener(cancel)
 	return &AppContext{
-		ctx:       ctx,
-		registry:  make(map[string]interface{}),
-		container: make(map[string]interface{}),
+		ctx:      ctx,
+		registry: make(map[reflect.Type]map[string]reflect.Value),
 	}
 }
 
@@ -42,12 +42,8 @@ func (a *AppContext) GetContext() context.Context {
 	return a.ctx
 }
 
-func (a *AppContext) register(name string, component interface{}) {
-	a.registry[name] = component
-}
-
 func (a *AppContext) SeekAndRegisterModules() {
-	// TODO: Implement module seeking and registration logic
+	plugin.SeekAndRegisterModules()
 }
 
 func (a *AppContext) BuildComponents(cfg *config.OtusConfig) {
@@ -62,7 +58,7 @@ func (a *AppContext) Shutdown() {
 }
 
 func initShutdownListener(cancel context.CancelFunc) {
-	signals := make(chan os.Signal)
+	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, os.Interrupt, syscall.SIGHUP, syscall.SIGTERM, syscall.SIGINT)
 	go func() {
 		<-signals

@@ -6,10 +6,12 @@ import (
 	"firestige.xyz/otus/internal/config"
 	"firestige.xyz/otus/internal/log"
 	"firestige.xyz/otus/internal/otus"
+	"firestige.xyz/otus/plugin"
 )
 
 func Start(cfg *config.OtusConfig, timeout time.Duration) error {
 	log.Init(cfg.Logger)
+	plugin.SeekAndRegisterModules()
 	app := otus.GetAppContext()
 	app.SeekAndRegisterModules()
 	app.BuildComponents(cfg)
