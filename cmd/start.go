@@ -1,8 +1,10 @@
 package cmd
 
 import (
+	"os"
+
 	"firestige.xyz/otus/internal/config"
-	"firestige.xyz/otus/internal/otus"
+	"firestige.xyz/otus/internal/otus/boot"
 	"github.com/spf13/cobra"
 )
 
@@ -18,6 +20,13 @@ Examples:
   otus start -c config.yml -t 1m            # Start the application by config.yml and shutdown timeout 1m
 `,
 	Run: func(cmd *cobra.Command, args []string) {
+		pid := os.Getpid()
+		err := os.WriteFile("/tmp/otus.pid", []byte(string(pid)), 0644)
+		if err != nil {
+			panic(err)
+		}
+		defer os.Remove("/tmp/otus.pid")
+
 		configPath, err := cmd.Flags().GetString("config")
 		// Load configuration
 		cfg, err := config.Load(configPath)
@@ -31,7 +40,7 @@ Examples:
 		}
 
 		// Start the application
-		if err := otus.Start(cfg, timeout); err != nil {
+		if err := boot.Start(cfg, timeout); err != nil {
 			panic(err)
 		}
 	},

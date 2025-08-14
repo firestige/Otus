@@ -1,7 +1,11 @@
 package cmd
 
 import (
-	"firestige.xyz/otus/pkg/capture"
+	"fmt"
+	"os"
+	"strconv"
+	"syscall"
+
 	"github.com/spf13/cobra"
 )
 
@@ -9,8 +13,20 @@ var stopCmd = &cobra.Command{
 	Use:   "stop",
 	Short: "Stop the Otus Packet server",
 	Run: func(cmd *cobra.Command, args []string) {
-		// Implementation of the stop command
-		capture.GetInstance().Stop()
+		data, err := os.ReadFile("/tmp/otus.pid")
+		if err != nil {
+			panic(err)
+		}
+		pid, err := strconv.Atoi(string(data))
+		if err != nil {
+			fmt.Print("invalid pid file")
+			return
+		}
+		err = syscall.Kill(pid, syscall.SIGTERM)
+		if err != nil {
+			panic(err)
+		}
+		fmt.Println("Stopped Otus Packet server with PID:", pid)
 	},
 }
 
