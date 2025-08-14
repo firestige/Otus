@@ -180,6 +180,14 @@ func (p *IPv4PacketProcessor) handleIPv4Packet(ctx context.Context, meta *Captur
 	// 检查分片
 	if p.ipv4Layer.Flags&layers.IPv4MoreFragments != 0 || p.ipv4Layer.FragOffset != 0 {
 		atomic.AddUint64(&p.metrics.FragmentedPackets, 1)
+
+		// 对于TCP分片，我们需要先重组IP分片，然后再处理TCP
+		if p.ipv4Layer.Protocol == layers.IPProtocolTCP {
+			// TCP分片需要等待IP层重组完成
+			// 这里可以使用UDPReassembler的逻辑来重组IP分片
+			// 但是由于当前UDPReassembler专门针对UDP，我们需要检查是否可以复用
+			return p.handleTCPFragment(meta)
+		}
 	}
 
 	// 使用UDPReassembler处理UDP分片
@@ -338,6 +346,76 @@ func (p *IPv4PacketProcessor) processTransportMessage(msg *NetworkMessage) error
 			return nil
 		default:
 			return fmt.Errorf("output channel full")
+		}
+	}
+
+	return nil
+}
+
+// handleTCPFragment 处理TCP分片
+func (p *IPv4PacketProcessor) handleTCPFragment(meta *CaptureMetadata) error {
+	// 对于TCP分片，我们可以尝试使用UDPReassembler来重组IP层
+	// 然后再解析TCP头部
+	reassembledPacket, err := p.udpReassembler.ProcessIPv4Packet(&p.ipv4Layer)
+	if err != nil {
+		return err
+	}
+
+	if reassembledPacket != nil {
+		// 重组成功，现在需要重新解析TCP头部
+		// 创建一个新的gopacket来解析重组后的数据
+		packet := gopacket.NewPacket(reassembledPacket.Payload, layers.LayerTypeTCP, gopacket.Default)
+
+		if tcpLayer := packet.Layer(layers.LayerTypeTCP); tcpLayer != nil {
+			tcp := tcpLayer.(*layers.TCP)
+
+			// 计算TCP标志位
+			var flags uint8
+			if tcp.FIN {
+				flags |= 0x01
+			}
+			if tcp.SYN {
+				flags |= 0x02
+			}
+			if tcp.RST {
+				flags |= 0x04
+			}
+			if tcp.PSH {
+				flags |= 0x08
+			}
+			if tcp.ACK {
+				flags |= 0x10
+			}
+			if tcp.URG {
+				flags |= 0x20
+			}
+
+			msg := &NetworkMessage{
+				IPVersion:       4,
+				TransportProto:  uint8(layers.IPProtocolTCP),
+				SourceAddr:      reassembledPacket.SrcIP,
+				DestinationAddr: reassembledPacket.DstIP,
+				SourcePort:      uint16(tcp.SrcPort),
+				DestinationPort: uint16(tcp.DstPort),
+				TimestampSec:    uint32(meta.Timestamp.Unix()),
+				TimestampMicro:  uint32(meta.Timestamp.Nanosecond() / 1000),
+				Content:         tcp.Payload,
+				TCPFlags:        flags,
+			}
+
+			// 对于重组后的TCP数据，如果启用了TCP流重组，也可以发送到TCP assembler
+			if p.config.EnableTCPReassembly && p.tcpAssembler != nil && len(msg.Content) > 0 {
+				// 为重组后的TCP包创建network flow
+				netFlow := gopacket.NewFlow(layers.EndpointIPv4, reassembledPacket.SrcIP, reassembledPacket.DstIP)
+
+				p.tcpAssembler.AssembleWithTimestamp(netFlow, tcp, meta.Timestamp)
+				return nil
+			}
+
+			// 如果没有启用TCP流重组，直接处理
+			if len(msg.Content) > 0 {
+				return p.processTransportMessage(msg)
+			}
 		}
 	}
 
