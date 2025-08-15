@@ -1,0 +1,152 @@
+' Activity + Sequence diagrams for decoder.Process entry point
+' Generated from decoder.go behavior (Process -> decode -> defrag -> transport -> app processing)
+
+@startuml DecoderActivity
+title Decoder.Process activity (high level)
+
+start
+:Receive raw packet data;
+:Dedup/filter checks;
+:parser.DecodeLayers(data, &decodedLayers);
+
+if (found GRE?) then (yes)
+  :handle GRE -> parser.DecodeLayers(inner);
+  note right: may re-populate decodedLayers
+endif
+
+partition "Layer loop" {
+  repeat
+    :pop next layerType;
+    if (layerType == IPv4) then (ipv4)
+      if (not fragmented) then (no)
+        :processTransport(..., ip4.NetworkFlow(), protocol);
+      else (yes)
+        :ip4New, err := d.defragIP4(d.ip4, ts);
+        if (ip4New == nil) then (incomplete)
+          :increment fragCount; 
+          stop
+        else (reassembled)
+          :parserUDP/ parserTCP.DecodeLayers(ip4New.Payload,...);
+          :processTransport(..., ip4New.NetworkFlow(), ip4New.Protocol);
+        endif
+      endif
+    else (layer == IPv6)
+      if (nextHeader != IPv6Fragment) then (no)
+        :processTransport(..., ip6.NetworkFlow(), nextHeader);
+      else (yes)
+        :ip6New := d.defragIP6(...);
+        if (ip6New == nil) then (incomplete)
+          :increment fragCount;
+          stop
+        else
+          :parserUDP/ parserTCP.DecodeLayers(ip6New.Payload,...);
+          :processTransport(..., ip6New.NetworkFlow(), ip6New.NextHeader);
+        endif
+      endif
+    endif
+  repeat while (more layers)
+}
+
+stop
+@enduml
+
+@startuml DecoderSequence
+title Decoder.Process sequence (detailed)
+
+actor PacketSource
+participant "Decoder.Process" as Process
+participant "DecodingLayerParser" as Parser
+participant "ip4defrag" as Defrag4
+participant "ip6defrag" as Defrag6
+participant "processTransport" as Transport
+participant "UDP handler" as UDP
+participant "TCP handler" as TCP
+participant "SCTP handler" as SCTP
+participant "tcpassembly.Assembler" as Asm
+participant "tcpStreamFactory.New / tcpStream" as tcpStream
+participant "correlateRTCP / extractCID / app processors" as App
+participant "PacketQueue" as Queue
+
+== parse incoming ==
+PacketSource -> Process : Process(data, ci)
+Process -> Parser : DecodeLayers(data, &decodedLayers)
+Parser --> Process : decodedLayers
+
+alt GRE present
+  Process -> Parser : DecodeLayers(gre.Payload, &decodedLayers)
+  Parser --> Process : inner layers
+end
+
+loop iterate decodedLayers
+  alt layer == IPv4
+    Process -> Process : check fragmentation flags
+    alt not fragmented
+      Process -> Transport : processTransport(..., ip4.NetworkFlow(), ip4.Protocol)
+    else fragmented
+      Process -> Defrag4 : defragIP4(d.ip4, ts)
+      alt not complete
+        Defrag4 --> Process : nil (wait for more fragments)
+      else reassembled
+        Defrag4 --> Process : ip4New
+        Process -> Parser : parserUDP/ parserTCP.DecodeLayers(ip4New.Payload)
+        Parser --> Process : decodedLayers (for reassembled payload)
+        Process -> Transport : processTransport(..., ip4New.NetworkFlow(), ip4New.Protocol)
+      end
+    end
+  else layer == IPv6
+    Process -> Process : check ip6.NextHeader
+    alt not fragment
+      Process -> Transport : processTransport(..., ip6.NetworkFlow(), ip6.NextHeader)
+    else fragment
+      Process -> Defrag6 : defragIP6(d.ip6, ip6frag, ts)
+      alt not complete
+        Defrag6 --> Process : nil (wait)
+      else reassembled
+        Defrag6 --> Process : ip6New
+        Process -> Parser : parserUDP/ parserTCP.DecodeLayers(ip6New.Payload)
+        Parser --> Process : decodedLayers
+        Process -> Transport : processTransport(..., ip6New.NetworkFlow(), ip6New.NextHeader)
+      end
+    end
+  else
+    Process -> Process : handle other layers
+  end
+end
+
+== transport processing ==
+Transport -> Transport : loop over decodedLayers
+alt UDP
+  Transport -> UDP : set pkt fields, udp.Payload
+  alt RTP/RTCP detection
+    UDP -> App : correlateRTCP(...) [RTCP]
+    alt correlate success
+      App --> Transport : pkt.Payload, CID
+      Transport -> Queue : PacketQueue <- pkt (enqueue RTCP)
+    else correlate fail
+      App --> Transport : nil (increment rtcpFailCount)
+    end
+  else RTP
+    UDP -> App : protos.NewRTP for debug (optional)
+    Transport -> Transport : drop payload / return
+  end
+  Transport -> App : extractCID(src,dst,payload) (SIP over UDP path)
+else TCP
+  Transport -> TCP : set pkt fields
+  alt config.Cfg.Reassembly == true
+    TCP -> Asm : AssembleWithTimestamp(flow, tcp, ts)
+    note right: gopacket tcpassembly will create stream via factory
+    Asm -> tcpStream : New stream / Reassembled -> tcpStream.Reassembled(...)
+    tcpStream -> App : process reassembled bytes (extractCID / SIP parsing)
+    tcpStream -> Queue : enqueue SIP HEP packets as needed
+  else if config.Cfg.SipAssembly
+    TCP -> Transport : checkTransport(...) aggregate fragments
+    Transport -> App : extractCID on assembled payloads
+  else
+    Transport -> App : extractCID(pkt.Payload)
+  end
+else SCTP
+  Transport -> SCTP : set pkt fields, parse chunk, set payload
+  Transport -> App : extractCID(pkt.Payload)
+end
+
+@enduml
