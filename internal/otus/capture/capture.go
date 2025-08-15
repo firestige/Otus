@@ -4,6 +4,7 @@ import (
 	"context"
 	"sync"
 
+	"firestige.xyz/otus/internal/otus/api"
 	"firestige.xyz/otus/internal/otus/capture/codec"
 	"firestige.xyz/otus/internal/otus/capture/sniffer"
 )
@@ -12,8 +13,9 @@ type Capture struct {
 	SnifferOpt *sniffer.Options `mapstructure:"sniffer"`
 	CodecOpt   *codec.Options   `mapstructure:"codec"`
 
-	sniffer *sniffer.Sniffer
-	decoder *codec.Decoder
+	sniffer     *sniffer.Sniffer
+	decoder     *codec.Decoder
+	packetQueue chan *api.NetPacket
 
 	wg  *sync.WaitGroup
 	ctx context.Context
@@ -25,8 +27,8 @@ func (c *Capture) ConfigSpec() interface{} {
 
 func (c *Capture) PostConfig(cfg interface{}, ctx context.Context) error {
 	c.ctx = ctx
-	c.decoder = codec.NewDecoder(ctx)
-	c.sniffer = sniffer.NewSniffer(c.decoder, ctx)
+	c.decoder = codec.NewDecoder(c.packetQueue, c.CodecOpt, ctx)
+	c.sniffer = sniffer.NewSniffer(c.decoder, c.SnifferOpt, ctx)
 
 	c.wg = &sync.WaitGroup{}
 	return nil
@@ -49,4 +51,6 @@ func (c *Capture) Start() error {
 }
 
 func (c *Capture) Stop() {
+	c.wg.Wait()
+	c.sniffer.Stop()
 }

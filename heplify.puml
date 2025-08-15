@@ -150,3 +150,143 @@ else SCTP
 end
 
 @enduml
+
+@startuml Decoder class view
+
+class Decoder {
+  - asm: *tcpassembly.Assembler
+  - defrag4: *ip4defrag.IPv4Defragmenter
+  - defrag6: *ip6defrag.IPv6Defragmenter
+  - layerType: gopacket.LayerType
+  - decodedLayers: []gopacket.LayerType
+  - parser: *gopacket.DecodingLayerParser
+  - parserUDP: *gopacket.DecodingLayerParser
+  - parserTCP: *gopacket.DecodingLayerParser
+  - sll: layers.LinuxSLL
+  - d1q: layers.Dot1Q
+  - gre: layers.GRE
+  - eth: layers.Ethernet
+  - etherip: layers.EtherIP
+  - vxl: ownlayers.VXLAN
+  - hperm: ownlayers.HPERM
+  - ip4: layers.IPv4
+  - ip6: layers.IPv6
+  - tcp: layers.TCP
+  - udp: layers.UDP
+  - dns: layers.DNS
+  - sctp: layers.SCTP
+  - payload: gopacket.Payload
+  - dedupCache: *freecache.Cache
+  - filter: []string
+  - filterIP: []string
+  - filterSrcIP: []string
+  - filterDstIP: []string
+  - cachePayload: *freecache.Cache
+  - lastStatTime: time.Time
+  - stats
+  --
+  + defragIP4(i4: layers.IPv4, t: time.Time): (*layers.IPv4, error)
+  + defragIP6(i6: layers.IPv6, i6frag: layers.IPv6Fragment, t: time.Time): (*layers.IPv6, error)
+  + Process(data: []byte, ci: *gopacket.CaptureInfo)
+  + addCachePayload(cachePayload: *CachePayload): bool
+  + checkTransport(...)
+  + processTransport(...)
+  + ProcessHEPPacket(data: []byte)
+  + SendPingHEPPacket()
+  + SendExitHEPPacket()
+}
+
+class Packet {
+  Version: byte
+  Protocol: byte
+  SrcIP: net.IP
+  DstIP: net.IP
+  SrcPort: uint16
+  DstPort: uint16
+  Tsec: uint32
+  Tmsec: uint32
+  ProtoType: byte
+  Payload: []byte
+  CID: []byte
+  Vlan: uint16
+  Mos: uint16
+  TCPFlag: uint8
+  IPTos: uint8
+  --
+  + GetVersion(): uint32
+  + GetProtocol(): uint32
+  + GetSrcIP(): string
+  + GetDstIP(): string
+  + GetSrcPort(): uint16
+  + GetDstPort(): uint16
+  + GetTsec(): uint32
+  + GetTmsec(): uint32
+  + GetProtoType(): uint32
+  + GetPayload(): string
+  + GetCID(): string
+}
+
+class CachePayload {
+  SrcIP: net.IP
+  SrcPort: uint16
+  DstIP: net.IP
+  DstPort: uint16
+  AckNumber: uint32
+  SeqNumber: uint32
+  NextSeqNumber: uint32
+  RemainLength: int
+  FrameCount: int
+  Payload: []byte
+}
+
+class HEP {
+  Version: uint32
+  Protocol: uint32
+  SrcIP: string
+  DstIP: string
+  SrcPort: uint32
+  DstPort: uint32
+  Tsec: uint32
+  Tmsec: uint32
+  ProtoType: uint32
+  NodeID: uint32
+  NodePW: string
+  Payload: string
+  CID: string
+  Vlan: uint32
+  ProtoString: string
+  Timestamp: time.Time
+  SIP: string
+  NodeName: string
+  TargetName: string
+  SID: string
+}
+
+class Context {
+  CaptureInfo: gopacket.CaptureInfo
+  --
+  + GetCaptureInfo(): gopacket.CaptureInfo
+}
+
+class stats {
+  fragCount: uint64
+  dupCount: uint64
+  dnsCount: uint64
+  ip4Count: uint64
+  ip6Count: uint64
+  rtcpCount: uint64
+  rtcpFailCount: uint64
+  tcpCount: uint64
+  hepCount: uint64
+  sctpCount: uint64
+  udpCount: uint64
+  unknownCount: uint64
+}
+
+Decoder "1" *-- "1" stats
+Decoder ..> Packet : creates/uses
+Decoder ..> CachePayload : uses
+Decoder ..> HEP : uses
+Decoder ..> Context : uses
+
+@enduml
