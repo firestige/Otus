@@ -274,19 +274,6 @@ func (r *IPv4Reassembler) cleanup() {
 	}
 }
 
-// IPv4Packet 重组后的IPv4包
-type IPv4Packet struct {
-	SrcIP     []byte
-	DstIP     []byte
-	Protocol  layers.IPProtocol
-	ID        uint16
-	Flags     layers.IPv4Flag
-	TTL       uint8
-	Length    uint16
-	Payload   []byte
-	Timestamp time.Time
-}
-
 // GetStats 获取统计信息
 func (r *IPv4Reassembler) GetStats() map[string]interface{} {
 	r.mu.RLock()

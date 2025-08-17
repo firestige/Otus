@@ -2,13 +2,26 @@ package codec
 
 import (
 	"context"
-	"fmt"
 	"time"
 
 	"firestige.xyz/otus/internal/otus/api"
 	"github.com/google/gopacket"
 	"github.com/google/gopacket/layers"
 )
+
+// IPv4Packet 重组后的IPv4包
+type IPv4Packet struct {
+	SrcIP     []byte
+	DstIP     []byte
+	Protocol  layers.IPProtocol
+	ID        uint16
+	Flags     layers.IPv4Flag
+	TTL       uint8
+	Length    uint16
+	Payload   []byte
+	Timestamp time.Time
+	Flow      gopacket.Flow
+}
 
 type Decoder struct {
 	ipv4Reassembler *IPv4Reassembler
@@ -21,9 +34,11 @@ type Decoder struct {
 	output chan *api.NetPacket
 }
 
+// TODO 补齐Decoder的初始化配置代码
+// 如果我注定要用IPv4对分片进行重整，还需要录入UDP和TCP的解码么？
 func NewDecoder(output chan *api.NetPacket, opts *Options, ctx context.Context) *Decoder {
-	tcphandler := &tcpHandler{}
-	udpHandler := &udpHandler{}
+	tcphandler := &tcpHandler{output: output}
+	udpHandler := &udpHandler{output: output}
 	d := &Decoder{
 		output:  output,
 		handler: NewTransportHandlerComposite(tcphandler, udpHandler),
@@ -62,27 +77,10 @@ func (d *Decoder) Decode(data []byte, ci *gopacket.CaptureInfo) error {
 		if layer == layers.LayerTypeIPv4 {
 			packet, err := d.ipv4Reassembler.ProcessIPv4Packet(&d.ipv4, ci)
 			if err != nil {
-				return nil, err
+				return err
 			}
-			msg, err := d.parseTransportLayer(packet, ci)
-			if err != nil {
-				return nil, err
-			}
-			return msg, nil
+			d.handler.handle(packet)
 		}
 	}
-}
-
-func (d *Decoder) parseTransportLayer(packet *IPv4Packet, ci *gopacket.CaptureInfo) error {
-	switch packet.Protocol {
-	case layers.IPProtocolTCP:
-		// 转入tcpassenbler处理TCP分段,分段会在Assemble中通过ReassembledChan被处理并发送至pktqueue
-		d.tcpReassembler.AssembleWithTimestamp(flow, &d.tcp, ci.Timestamp)
-		return nil
-	case layers.IPProtocolUDP:
-		// 转入udp协议处理器，udp消息被识别后直接转换成对应的应用层协议并发送至pktqueue
-		d.udp.ProcessUDPPacket(packet, ci)
-	default:
-		return fmt.Errorf("unsupported transport protocol: %v", packet.Protocol)
-	}
+	return nil
 }
