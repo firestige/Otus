@@ -16,14 +16,11 @@ type afpacketHandle struct {
 	tpacket       *afpacket.TPacket
 	interfaceName string
 	options       *CaptureOptions
-	stats         *HandleStats
 }
 
 // NewAFPacketHandle 创建新的 AF_PACKET 抓包句柄
 func NewAFPacketHandle() CaptureHandle {
-	return &afpacketHandle{
-		stats: &HandleStats{},
-	}
+	return &afpacketHandle{}
 }
 
 // Open 打开 AF_PACKET 抓包句柄
@@ -107,11 +104,8 @@ func (h *afpacketHandle) ReadPacket() (data []byte, ci gopacket.CaptureInfo, err
 
 	data, ci, err = h.tpacket.ReadPacketData()
 	if err != nil {
-		h.stats.Errors++
 		return nil, ci, err
 	}
-
-	h.stats.PacketsReceived++
 
 	return
 }
@@ -123,11 +117,8 @@ func (h *afpacketHandle) ZeroCopyReadPacket() (data []byte, ci gopacket.CaptureI
 
 	data, ci, err = h.tpacket.ZeroCopyReadPacketData()
 	if err != nil {
-		h.stats.Errors++
 		return nil, ci, err
 	}
-
-	h.stats.PacketsReceived++
 
 	return
 }
@@ -139,26 +130,6 @@ func (h *afpacketHandle) Close() error {
 		h.tpacket = nil
 	}
 	return nil
-}
-
-// GetStats 获取抓包统计信息
-func (h *afpacketHandle) GetStats() (*HandleStats, error) {
-	if h.tpacket == nil {
-		return nil, fmt.Errorf("handle not opened")
-	}
-
-	// 获取 AF_PACKET 的统计信息
-	stats, err := h.tpacket.Stats()
-	if err != nil {
-		return h.stats, err
-	}
-
-	// 更新统计信息 (根据实际的 afpacket.Stats 字段)
-	h.stats.PacketsReceived = uint64(stats.Packets)
-	// 注意: afpacket.Stats 可能没有 Drops 字段，需要根据实际情况调整
-	// h.stats.PacketsDropped = uint64(stats.Drops)
-
-	return h.stats, nil
 }
 
 // GetType 获取抓包类型

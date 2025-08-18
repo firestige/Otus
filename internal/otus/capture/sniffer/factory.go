@@ -26,9 +26,6 @@ type CaptureHandle interface {
 	// Close 关闭抓包句柄
 	Close() error
 
-	// GetStats 获取抓包统计信息
-	GetStats() (*HandleStats, error)
-
 	// GetType 获取抓包类型
 	GetType() CaptureType
 }
@@ -41,14 +38,6 @@ type CaptureOptions struct {
 	Timeout     int    // 超时时间 (毫秒)
 	Filter      string // BPF 过滤器
 	FanoutId    uint16 // Fanout ID (可选)
-}
-
-// HandleStats 抓包句柄统计信息
-type HandleStats struct {
-	PacketsReceived uint64
-	PacketsDropped  uint64
-	PacketsSent     uint64
-	Errors          uint64
 }
 
 // DefaultCaptureOptions 返回默认的抓包选项
