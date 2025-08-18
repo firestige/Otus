@@ -2,6 +2,7 @@ package codec
 
 import (
 	"firestige.xyz/otus/internal/otus/api"
+	parser "firestige.xyz/otus/plugin/parser/api"
 	"github.com/google/gopacket/layers"
 )
 
@@ -40,6 +41,14 @@ func (t *transportHandlerComposite) handle(packet *IPv4Packet) error {
 
 type udpHandler struct {
 	output chan *api.NetPacket
+	parser parser.Parser
+}
+
+func NewUDPHandler(output chan *api.NetPacket, p parser.Parser) TransportHandler {
+	return &udpHandler{
+		output: output,
+		parser: p,
+	}
 }
 
 func (u *udpHandler) support(packet *IPv4Packet) bool {
@@ -48,21 +57,59 @@ func (u *udpHandler) support(packet *IPv4Packet) bool {
 }
 
 func (u *udpHandler) handle(packet *IPv4Packet) error {
-	// 处理UDP包的逻辑
-	// 这里从plugin的parser扩展中找到合适的处理器并将其解析成message再送到对应消息的packetChannel中由组装好的协议pipeline处理
-	udpMessage := &api.NetPacket{
-		Protocol:  layers.IPProtocolUDP,
-		Timestamp: packet.Timestamp,
-		Flow:      packet.Flow,
-		Payload:   packet.Payload,
+	payload := packet.Payload
+
+	if !u.parser.Detect(payload) {
+		// 快速探测，不能处理的消息直接返回错误
+		// TODO: 这里可以考虑添加日志记录，另外，应该根据探测结果返回异常，这里直接返回SIP错误是不够的
+		return parser.ErrNotSIP
 	}
-	u.output <- udpMessage
+	// 单个UDP包可能含有多个应用层消息（主要针对其他协议为了提高吞吐量，SIP不存在这种情况）
+	for len(payload) > 0 {
+		msg, n, err := u.parser.Extract(payload)
+		if err != nil {
+			return err
+		}
+		fiveTuple := extractFiveTuple(packet)
+		u.output <- &api.NetPacket{
+			Protocol:  layers.IPProtocolUDP,
+			Timestamp: packet.Timestamp.UnixNano(),
+			FiveTuple: &fiveTuple,
+			Payload:   msg,
+		}
+		payload = payload[n:]
+	}
 	return nil
 }
 
 type tcpHandler struct {
-	// 这里可以添加TCP处理器特有的字段
-	output chan *api.NetPacket
+	assembly TCPAssembly // TCP assembly负责所有TCP处理逻辑
+}
+
+func NewTCPHandler(output chan *api.NetPacket, p parser.Parser) TransportHandler {
+	// 创建consumer函数，将重组后的消息封装为NetPacket发送到output
+	consumer := func(data []byte, fiveTuple *api.FiveTuple, timestamp int64) error {
+		netPacket := &api.NetPacket{
+			Protocol:  layers.IPProtocolTCP,
+			Timestamp: timestamp,
+			FiveTuple: fiveTuple,
+			Payload:   data,
+		}
+
+		select {
+		case output <- netPacket:
+			return nil
+		default:
+			return nil // 如果通道满了，静默丢弃
+		}
+	}
+
+	// 创建TCP assembly，传入consumer和parser
+	assembly := NewTCPAssembly(consumer, p)
+
+	return &tcpHandler{
+		assembly: assembly,
+	}
 }
 
 func (t *tcpHandler) support(packet *IPv4Packet) bool {
@@ -71,6 +118,6 @@ func (t *tcpHandler) support(packet *IPv4Packet) bool {
 }
 
 func (t *tcpHandler) handle(packet *IPv4Packet) error {
-	// 把tcp包放入assembly中进行处理
-	return nil // 处理TCP包的逻辑
+	// 将所有TCP处理工作委派给assembly
+	return t.assembly.ProcessPacket(packet)
 }

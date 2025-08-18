@@ -3,6 +3,7 @@ package codec
 import (
 	"errors"
 	"fmt"
+	"net"
 	"sync"
 	"time"
 
@@ -139,7 +140,19 @@ func (r *IPv4Reassembler) handleFragment(ip *layers.IPv4, ci *gopacket.CaptureIn
 		buffer = &IPv4FragmentBuffer{
 			Fragments:    make([]*IPv4Fragment, 0, r.maxFragments),
 			LastActivity: time.Now(),
-			FirstPacket:  ip,
+			FirstPacket:  &layers.IPv4{
+				Version:  ip.Version,
+				IHL:      ip.IHL,
+				TOS:      ip.TOS,
+				Length:   ip.Length,
+				Id:       ip.Id,
+				Flags:    ip.Flags,
+				FragOffset: ip.FragOffset,
+				TTL:      ip.TTL,
+				Protocol: ip.Protocol,
+				SrcIP:    append(net.IP(nil), ip.SrcIP...),
+				DstIP:    append(net.IP(nil), ip.DstIP...),
+			},
 		}
 		r.fragmentFlows[key] = buffer
 	}

@@ -1,15 +1,23 @@
 package api
 
-import "net"
+import (
+	"net"
+
+	"github.com/google/gopacket/layers"
+)
 
 type NetPacket struct {
-	Protocol  byte  // IP protocol (e.g., TCP, UDP, STCP)
-	direction uint8 // 0: inbound, 1: outbound
-	SrcIP     net.IP
-	DstIP     net.IP
-	SrcPort   uint16
-	DstPort   uint16
-	Timestamp uint64 //accurate to nanosecond
-	ProtoType byte   // application protocol (e.g. SIP, RTP)
-	Payload   []byte // content
+	Protocol             layers.IPProtocol // IP protocol (e.g., TCP, UDP, STCP)
+	FiveTuple            *FiveTuple
+	Timestamp            int64  //accurate to nanosecond
+	ApplicationProtoType byte   // application protocol (e.g. SIP, RTP)
+	Payload              []byte // content
+}
+
+type FiveTuple struct {
+	SrcIP    net.IP
+	SrcPort  uint16
+	DstIP    net.IP
+	DstPort  uint16
+	Protocol layers.IPProtocol // IP protocol (e.g., TCP, UDP)
 }
