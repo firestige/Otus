@@ -9,7 +9,6 @@ import (
 	"syscall"
 
 	"firestige.xyz/otus/internal/config"
-	"firestige.xyz/otus/plugin"
 )
 
 var (
@@ -43,7 +42,7 @@ func (a *AppContext) GetContext() context.Context {
 }
 
 func (a *AppContext) SeekAndRegisterModules() {
-	plugin.SeekAndRegisterModules()
+	// plugin.SeekAndRegisterModules()
 }
 
 func (a *AppContext) BuildComponents(cfg *config.OtusConfig) {
