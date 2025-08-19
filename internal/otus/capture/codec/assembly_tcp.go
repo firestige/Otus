@@ -4,7 +4,6 @@ import (
 	"sync"
 
 	"firestige.xyz/otus/internal/otus/api"
-	parser "firestige.xyz/otus/plugin/parser/api"
 	"github.com/google/gopacket"
 	"github.com/google/gopacket/layers"
 	"github.com/google/gopacket/tcpassembly"
@@ -40,7 +39,7 @@ type TCPAssembly interface {
 //   - parser: 用于解析应用层消息的parser
 //
 // 返回: TCPAssembly实例
-func NewTCPAssembly(consumer TCPStreamConsumerFunc, parser parser.Parser) TCPAssembly {
+func NewTCPAssembly(consumer TCPStreamConsumerFunc, parser Parser) TCPAssembly {
 	streamFactory := &tcpStreamFactory{
 		consumer: consumer,
 		parser:   parser,
@@ -112,7 +111,7 @@ func (t *tcpAssemblyImpl) Close() error {
 // tcpStreamFactory 实现tcpassembly.StreamFactory接口
 type tcpStreamFactory struct {
 	consumer TCPStreamConsumerFunc
-	parser   parser.Parser
+	parser   Parser
 	mutex    sync.RWMutex
 
 	// 上下文信息，用于传递给新创建的stream
@@ -157,7 +156,7 @@ func (f *tcpStreamFactory) New(net, transport gopacket.Flow) tcpassembly.Stream 
 type tcpStream struct {
 	net, transport gopacket.Flow
 	consumer       TCPStreamConsumerFunc
-	parser         parser.Parser
+	parser         Parser
 	fiveTuple      *api.FiveTuple
 	timestamp      int64
 	buffer         []byte

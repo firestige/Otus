@@ -2,7 +2,6 @@ package codec
 
 import (
 	"firestige.xyz/otus/internal/otus/api"
-	parser "firestige.xyz/otus/plugin/parser/api"
 	"github.com/google/gopacket/layers"
 )
 
@@ -41,10 +40,10 @@ func (t *transportHandlerComposite) handle(packet *IPv4Packet) error {
 
 type udpHandler struct {
 	output chan *api.NetPacket
-	parser parser.Parser
+	parser Parser
 }
 
-func NewUDPHandler(output chan *api.NetPacket, p parser.Parser) TransportHandler {
+func NewUDPHandler(output chan *api.NetPacket, p Parser) TransportHandler {
 	return &udpHandler{
 		output: output,
 		parser: p,
@@ -62,7 +61,7 @@ func (u *udpHandler) handle(packet *IPv4Packet) error {
 	if !u.parser.Detect(payload) {
 		// 快速探测，不能处理的消息直接返回错误
 		// TODO: 这里可以考虑添加日志记录，另外，应该根据探测结果返回异常，这里直接返回SIP错误是不够的
-		return parser.ErrNotSIP
+		return ErrNotSIP
 	}
 	// 单个UDP包可能含有多个应用层消息（主要针对其他协议为了提高吞吐量，SIP不存在这种情况）
 	for len(payload) > 0 {
@@ -86,7 +85,7 @@ type tcpHandler struct {
 	assembly TCPAssembly // TCP assembly负责所有TCP处理逻辑
 }
 
-func NewTCPHandler(output chan *api.NetPacket, p parser.Parser) TransportHandler {
+func NewTCPHandler(output chan *api.NetPacket, p Parser) TransportHandler {
 	// 创建consumer函数，将重组后的消息封装为NetPacket发送到output
 	consumer := func(data []byte, fiveTuple *api.FiveTuple, timestamp int64) error {
 		netPacket := &api.NetPacket{

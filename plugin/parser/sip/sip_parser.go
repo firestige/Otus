@@ -2,6 +2,7 @@ package sip
 
 import (
 	"bytes"
+	"context"
 )
 
 // SIP方法常量
@@ -84,4 +85,24 @@ func (p *SipParser) Extract(data []byte) (msg []byte, consumed int, err error) {
 // 由于不使用内部缓冲，这里不需要做任何操作
 func (p *SipParser) Reset() {
 	// TCP Assembly处理缓冲，parser不需要维护状态
+}
+
+func (p *SipParser) Name() string {
+	return "sip-parser"
+}
+
+func (p *SipParser) ConfigSpec() interface{} {
+	return &struct{}{} // SIP parser 不需要配置
+}
+
+func (p *SipParser) PostConfig(cfg interface{}, ctx context.Context) error {
+	return nil
+}
+
+func (p *SipParser) Start() error {
+	return nil
+}
+
+func (p *SipParser) Stop() error {
+	return nil
 }

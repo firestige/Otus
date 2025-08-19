@@ -54,9 +54,9 @@ func NewDecoder(output chan *api.NetPacket, opts *Options, ctx context.Context) 
 		&d.udp)
 	d.parser = dlp
 	d.ipv4Reassembler = NewIPv4Reassembler(ReassemblerOptions{
-		MaxAge:       30 * time.Second,
-		MaxFragments: 100,
-		MaxIPSize:    65535,
+		MaxAge:       time.Duration(opts.MaxAge) * time.Second,
+		MaxFragments: opts.MaxFragmentsNum,
+		MaxIPSize:    opts.MaxIPSize,
 	})
 	return d
 }

@@ -103,9 +103,9 @@ func (p *pipeline) Start() error {
 	// 组装上下文
 	p.ctx, p.cancel = context.WithCancel(context.Background())
 	// 启动sender作为最终的消费者
-	go p.Sender.Send()
+	// go p.Sender.Send()
 	// 启动流水线的处理逻辑，向channel中生产数据
-	go p.run()
+	// go p.run()
 	return nil
 }
 

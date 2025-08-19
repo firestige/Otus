@@ -13,15 +13,21 @@ func init() {
 }
 
 func RegisterPlugin(plugin Plugin) {
-	moduleType := reflect.TypeOf(plugin)
+	pluginType := reflect.TypeOf(plugin).Elem() // 获取接口类型
 	successFlag := false
-	if mReg, exists := registry[moduleType]; !exists {
-		mReg[plugin.Name()] = reflect.ValueOf(plugin)
-		log.GetLogger().WithField("category", moduleType.Name()).WithField("module", plugin.Name()).Debug("Registered module")
-		successFlag = true
+
+	// 遍历所有已注册的类型，找到匹配的接口
+	for registeredType, moduleMap := range registry {
+		if reflect.TypeOf(plugin).Implements(registeredType) {
+			moduleMap[plugin.Name()] = reflect.ValueOf(plugin)
+			log.GetLogger().WithField("category", registeredType.Name()).WithField("module", plugin.Name()).Debug("Registered module")
+			successFlag = true
+			break
+		}
 	}
+
 	if !successFlag {
-		log.GetLogger().WithField("category", moduleType.Name()).WithField("module", plugin.Name()).Error("Module register failed")
+		log.GetLogger().WithField("category", pluginType.Name()).WithField("module", plugin.Name()).Error("Module register failed")
 	}
 }
 
@@ -51,4 +57,26 @@ func MergeRegistry(other map[reflect.Type]map[string]reflect.Value) map[reflect.
 	}
 
 	return newRegistry
+}
+
+// GetPluginsByType 根据类型获取所有插件
+func GetPluginsByType(pluginType reflect.Type) []reflect.Value {
+	if moduleMap, exists := registry[pluginType]; exists {
+		var plugins []reflect.Value
+		for _, plugin := range moduleMap {
+			plugins = append(plugins, plugin)
+		}
+		return plugins
+	}
+	return nil
+}
+
+// GetPluginByName 根据类型和名称获取特定插件
+func GetPluginByName(pluginType reflect.Type, name string) reflect.Value {
+	if moduleMap, exists := registry[pluginType]; exists {
+		if plugin, exists := moduleMap[name]; exists {
+			return plugin
+		}
+	}
+	return reflect.Value{}
 }
