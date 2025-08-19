@@ -1,6 +1,7 @@
 package sniffer
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"os"
@@ -13,29 +14,29 @@ import (
 
 // afpacketHandle AF_PACKET 抓包句柄实现
 type afpacketHandle struct {
-	tpacket       *afpacket.TPacket
-	interfaceName string
-	options       *CaptureOptions
+	ctx     context.Context
+	tpacket *afpacket.TPacket
+	options *Options
 }
 
 // NewAFPacketHandle 创建新的 AF_PACKET 抓包句柄
-func NewAFPacketHandle() CaptureHandle {
-	return &afpacketHandle{}
+func NewAFPacketHandle(ctx context.Context) CaptureHandle {
+	return &afpacketHandle{
+		ctx: ctx,
+	}
 }
 
 // Open 打开 AF_PACKET 抓包句柄
-func (h *afpacketHandle) Open(interfaceName string, options *CaptureOptions) error {
+func (h *afpacketHandle) Open(options *Options) error {
 	if options == nil {
 		options = DefaultCaptureOptions()
 	}
-
-	h.interfaceName = interfaceName
 	h.options = options
 
 	// 获取网络接口
-	iface, err := net.InterfaceByName(interfaceName)
+	iface, err := net.InterfaceByName(options.NetworkInterface)
 	if err != nil {
-		return fmt.Errorf("failed to get interface %s: %v", interfaceName, err)
+		return fmt.Errorf("failed to get interface %s: %v", options.NetworkInterface, err)
 	}
 
 	framSize, szBlock, numBlock, err := computeFrameSizeAndBlocks(options)
@@ -49,7 +50,6 @@ func (h *afpacketHandle) Open(interfaceName string, options *CaptureOptions) err
 		afpacket.OptFrameSize(framSize),
 		afpacket.OptBlockSize(szBlock),
 		afpacket.OptNumBlocks(numBlock),
-		afpacket.OptAddVLANHeader(options.SupportVlan),
 		afpacket.OptPollTimeout(time.Duration(options.Timeout)*time.Millisecond),
 		afpacket.SocketRaw,
 		afpacket.TPacketVersion3,
@@ -80,7 +80,7 @@ func (h *afpacketHandle) Open(interfaceName string, options *CaptureOptions) err
 	return nil
 }
 
-func computeFrameSizeAndBlocks(options *CaptureOptions) (frameSize int, blockSize int, numBlocks int, err error) {
+func computeFrameSizeAndBlocks(options *Options) (frameSize int, blockSize int, numBlocks int, err error) {
 	pageSize := os.Getpagesize()
 	if options.SnapLen < pageSize {
 		frameSize = pageSize / (pageSize / options.SnapLen)
@@ -139,10 +139,10 @@ func (h *afpacketHandle) GetType() CaptureType {
 
 // GetInterfaceName 获取接口名称
 func (h *afpacketHandle) GetInterfaceName() string {
-	return h.interfaceName
+	return h.options.NetworkInterface
 }
 
 // GetOptions 获取配置选项
-func (h *afpacketHandle) GetOptions() *CaptureOptions {
+func (h *afpacketHandle) GetOptions() *Options {
 	return h.options
 }

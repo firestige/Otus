@@ -1,24 +1,29 @@
 package sniffer
 
 import (
+	"context"
 	"fmt"
+	"sync"
 
 	"github.com/google/gopacket"
 )
 
-// CaptureType 定义抓包类型
-type CaptureType string
-
-const (
-	TypeAFPacket CaptureType = "afpacket"
-	TypePCAP     CaptureType = "pcap"
-	TypeXDP      CaptureType = "xdp"
+var (
+	factory CaptureHandleFactory
+	once    *sync.Once
 )
+
+func HandleFactory() *CaptureHandleFactory {
+	once.Do(func() {
+		factory = *NewCaptureHandleFactory()
+	})
+	return &factory
+}
 
 // CaptureHandle 定义抓包句柄接口
 type CaptureHandle interface {
 	// Open 打开抓包句柄
-	Open(interfaceName string, options *CaptureOptions) error
+	Open(options *Options) error
 
 	// ReadPacket 读取数据包
 	ReadPacket() ([]byte, gopacket.CaptureInfo, error)
@@ -41,8 +46,8 @@ type CaptureOptions struct {
 }
 
 // DefaultCaptureOptions 返回默认的抓包选项
-func DefaultCaptureOptions() *CaptureOptions {
-	return &CaptureOptions{
+func DefaultCaptureOptions() *Options {
+	return &Options{
 		BufferSize: 1024 * 1024, // 1MB
 		Timeout:    1000,        // 1秒
 		SnapLen:    65536,
@@ -59,10 +64,10 @@ func NewCaptureHandleFactory() *CaptureHandleFactory {
 }
 
 // CreateHandle 根据类型创建抓包句柄
-func (f *CaptureHandleFactory) CreateHandle(captureType CaptureType) (CaptureHandle, error) {
+func (f *CaptureHandleFactory) CreateHandle(ctx context.Context, captureType CaptureType) (CaptureHandle, error) {
 	switch captureType {
 	case TypeAFPacket:
-		return NewAFPacketHandle(), nil
+		return NewAFPacketHandle(ctx), nil
 	case TypePCAP:
 		return nil, fmt.Errorf("PCAP capture type not implemented yet")
 	case TypeXDP:

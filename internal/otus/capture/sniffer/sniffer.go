@@ -3,18 +3,15 @@ package sniffer
 import (
 	"context"
 	"fmt"
-	"sync"
 
 	"firestige.xyz/otus/internal/otus/capture/codec"
 )
 
 type Sniffer struct {
-	factory *CaptureHandleFactory
 	options *Options
+
 	handle  CaptureHandle
 	decoder *codec.Decoder
-
-	wg *sync.WaitGroup
 }
 
 func NewSniffer(decoder *codec.Decoder, options *Options, ctx context.Context) *Sniffer {
@@ -25,17 +22,18 @@ func NewSniffer(decoder *codec.Decoder, options *Options, ctx context.Context) *
 }
 
 func (s *Sniffer) Start(ctx context.Context) error {
-	if !s.factory.IsTypeSupported(s.options.CaptureType) {
+	factory := HandleFactory()
+	if !factory.IsTypeSupported(s.options.CaptureType) {
 		return fmt.Errorf("capture type %s is not supported", s.options.CaptureType)
 	}
 
-	handle, err := s.factory.CreateHandle(s.options.CaptureType)
+	handle, err := factory.CreateHandle(ctx, s.options.CaptureType)
 	if err != nil {
 		return fmt.Errorf("failed to create capture handle: %v", err)
 	}
 
 	s.handle = handle
-	err = s.handle.Open(s.options.InterfaceName, s.options.CaptureOptions)
+	err = s.handle.Open(s.options)
 	if err != nil {
 		return fmt.Errorf("failed to open capture handle: %v", err)
 	}
@@ -66,6 +64,4 @@ func (s *Sniffer) Start(ctx context.Context) error {
 }
 
 func (s *Sniffer) Stop() {
-	s.wg.Wait()
-	s.decoder.Close()
 }

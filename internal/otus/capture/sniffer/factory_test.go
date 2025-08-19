@@ -24,7 +24,7 @@ func TestCaptureFactory(t *testing.T) {
 	}
 
 	// 测试创建 AF_PACKET 句柄
-	handle, err := factory.CreateHandle(TypeAFPacket)
+	handle, err := factory.CreateHandle(t.Context(), TypeAFPacket)
 	if err != nil {
 		t.Errorf("Failed to create AF_PACKET handle: %v", err)
 	}
@@ -34,7 +34,7 @@ func TestCaptureFactory(t *testing.T) {
 	}
 
 	// 测试创建不支持的类型
-	_, err = factory.CreateHandle(TypePCAP)
+	_, err = factory.CreateHandle(t.Context(), TypePCAP)
 	if err == nil {
 		t.Errorf("Should fail to create PCAP handle")
 	}
