@@ -11,8 +11,9 @@ import (
 
 func Start(cfg *config.OtusConfig, timeout time.Duration) error {
 	log.Init(cfg.Logger)
-	plugin.SeekAndRegisterModules()
+
 	app := otus.GetAppContext()
+	plugin.SeekAndRegisterModules()
 	app.SeekAndRegisterModules()
 	app.BuildComponents(cfg)
 	defer app.Shutdown()

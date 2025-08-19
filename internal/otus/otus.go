@@ -9,6 +9,7 @@ import (
 	"syscall"
 
 	"firestige.xyz/otus/internal/config"
+	"firestige.xyz/otus/internal/plugin"
 )
 
 var (
@@ -41,8 +42,29 @@ func (a *AppContext) GetContext() context.Context {
 	return a.ctx
 }
 
+func (a *AppContext) GetPlugins(pluginType reflect.Type) []reflect.Value {
+	if moduleMap, exists := a.registry[pluginType]; exists {
+		var plugins []reflect.Value
+		for _, plugin := range moduleMap {
+			plugins = append(plugins, plugin)
+		}
+		return plugins
+	}
+	return nil
+}
+
+// GetPluginByName 根据类型和名称获取特定插件
+func (a *AppContext) GetPluginByName(pluginType reflect.Type, name string) reflect.Value {
+	if moduleMap, exists := a.registry[pluginType]; exists {
+		if plugin, exists := moduleMap[name]; exists {
+			return plugin
+		}
+	}
+	return reflect.Value{}
+}
+
 func (a *AppContext) SeekAndRegisterModules() {
-	// plugin.SeekAndRegisterModules()
+	a.MergeRegistry(plugin.GetRegistedPlugins())
 }
 
 func (a *AppContext) BuildComponents(cfg *config.OtusConfig) {
@@ -63,4 +85,27 @@ func initShutdownListener(cancel context.CancelFunc) {
 		<-signals
 		cancel()
 	}()
+}
+
+func (a *AppContext) MergeRegistry(other map[reflect.Type]map[string]reflect.Value) {
+	newRegistry := make(map[reflect.Type]map[string]reflect.Value)
+
+	// Copy from registry
+	for t, m := range a.registry {
+		newRegistry[t] = make(map[string]reflect.Value)
+		for name, val := range m {
+			newRegistry[t][name] = val
+		}
+	}
+
+	// Merge from other
+	for t, m := range other {
+		if _, exists := newRegistry[t]; !exists {
+			newRegistry[t] = make(map[string]reflect.Value)
+		}
+		for name, val := range m {
+			newRegistry[t][name] = val
+		}
+	}
+	a.registry = newRegistry
 }

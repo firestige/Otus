@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"reflect"
 
-	"firestige.xyz/otus/internal/plugin"
+	"firestige.xyz/otus/internal/otus"
 )
 
 type parserComposite struct {
@@ -23,7 +23,7 @@ func NewParserComposite(parsers ...Parser) Parser {
 
 	// 否则自动发现所有已注册的 parser 插件
 	parserType := reflect.TypeOf((*Parser)(nil)).Elem()
-	pluginValues := plugin.GetPluginsByType(parserType)
+	pluginValues := otus.GetAppContext().GetPlugins(parserType)
 
 	for _, pluginValue := range pluginValues {
 		if pluginValue.IsValid() {
@@ -42,7 +42,7 @@ func NewParserCompositeByNames(names ...string) Parser {
 	parserType := reflect.TypeOf((*Parser)(nil)).Elem()
 
 	for _, name := range names {
-		pluginValue := plugin.GetPluginByName(parserType, name)
+		pluginValue := otus.GetAppContext().GetPluginByName(parserType, name)
 		if pluginValue.IsValid() {
 			if p, ok := pluginValue.Interface().(Parser); ok {
 				composite.parsers = append(composite.parsers, p)

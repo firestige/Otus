@@ -35,48 +35,6 @@ func RegisterPluginType(pluginType reflect.Type) {
 	registry[pluginType] = make(map[string]reflect.Value)
 }
 
-func MergeRegistry(other map[reflect.Type]map[string]reflect.Value) map[reflect.Type]map[string]reflect.Value {
-	newRegistry := make(map[reflect.Type]map[string]reflect.Value)
-
-	// Copy from registry
-	for t, m := range registry {
-		newRegistry[t] = make(map[string]reflect.Value)
-		for name, val := range m {
-			newRegistry[t][name] = val
-		}
-	}
-
-	// Merge from other
-	for t, m := range other {
-		if _, exists := newRegistry[t]; !exists {
-			newRegistry[t] = make(map[string]reflect.Value)
-		}
-		for name, val := range m {
-			newRegistry[t][name] = val
-		}
-	}
-
-	return newRegistry
-}
-
-// GetPluginsByType 根据类型获取所有插件
-func GetPluginsByType(pluginType reflect.Type) []reflect.Value {
-	if moduleMap, exists := registry[pluginType]; exists {
-		var plugins []reflect.Value
-		for _, plugin := range moduleMap {
-			plugins = append(plugins, plugin)
-		}
-		return plugins
-	}
-	return nil
-}
-
-// GetPluginByName 根据类型和名称获取特定插件
-func GetPluginByName(pluginType reflect.Type, name string) reflect.Value {
-	if moduleMap, exists := registry[pluginType]; exists {
-		if plugin, exists := moduleMap[name]; exists {
-			return plugin
-		}
-	}
-	return reflect.Value{}
+func GetRegistedPlugins() map[reflect.Type]map[string]reflect.Value {
+	return registry
 }
