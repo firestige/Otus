@@ -1,0 +1,279 @@
+@startuml SkyWalking Satellite Plugin System Dependencies
+
+!define INTERNAL_COLOR #E8F4FD
+!define PLUGIN_COLOR #FFF2CC
+!define CONFIG_COLOR #D5E8D4
+!define BOOT_COLOR #F8CECC
+
+package "cmd" <<Rectangle>> {
+    [main.go] BOOT_COLOR
+    [command.go] BOOT_COLOR
+}
+
+package "configs" <<Rectangle>> {
+    [satellite_config.yaml] CONFIG_COLOR
+}
+
+package "internal/pkg" <<Rectangle>> {
+    [config] INTERNAL_COLOR
+    [log] INTERNAL_COLOR
+    [plugin] INTERNAL_COLOR
+}
+
+package "internal/satellite" <<Rectangle>> {
+    package "boot" {
+        [boot.go] BOOT_COLOR
+    }
+    
+    package "config" {
+        [satellite_config.go] CONFIG_COLOR
+        [loader.go] CONFIG_COLOR
+    }
+    
+    package "sharing" {
+        [sharing_plugins.go] INTERNAL_COLOR
+    }
+    
+    package "telemetry" {
+        [telemetry.go] INTERNAL_COLOR
+        [metricservice] INTERNAL_COLOR
+        [prometheus] INTERNAL_COLOR
+        [pprof] INTERNAL_COLOR
+        [none] INTERNAL_COLOR
+    }
+    
+    package "module" {
+        package "api" {
+            [module.go] INTERNAL_COLOR
+        }
+        
+        package "gatherer" {
+            [create.go] INTERNAL_COLOR
+            [receiver_gatherer.go] INTERNAL_COLOR
+            [fetcher_gatherer.go] INTERNAL_COLOR
+            package "api" as gatherer_api {
+                [gatherer.go] INTERNAL_COLOR
+                [config.go] INTERNAL_COLOR
+            }
+        }
+        
+        package "processor" {
+            [create.go] INTERNAL_COLOR
+            [processor.go] INTERNAL_COLOR
+            package "api" as processor_api {
+                [processor.go] INTERNAL_COLOR
+                [config.go] INTERNAL_COLOR
+            }
+        }
+        
+        package "sender" {
+            [create.go] INTERNAL_COLOR
+            [sender.go] INTERNAL_COLOR
+            package "api" as sender_api {
+                [sender.go] INTERNAL_COLOR
+                [config.go] INTERNAL_COLOR
+            }
+        }
+    }
+}
+
+package "plugins" <<Rectangle>> {
+    [init.go] PLUGIN_COLOR
+    
+    package "receiver" {
+        [receiver_repository.go] PLUGIN_COLOR
+        package "api" as receiver_api {
+            [receiver.go] PLUGIN_COLOR
+        }
+        package "grpc" {
+            [nativelog] PLUGIN_COLOR
+            [nativetracing] PLUGIN_COLOR
+            [nativemanagement] PLUGIN_COLOR
+            [other receivers...] PLUGIN_COLOR
+        }
+        package "http" {
+            [nativcelog] PLUGIN_COLOR
+        }
+        package "sip" {
+            [sip receiver] PLUGIN_COLOR
+        }
+        package "esl" {
+            [esl receiver] PLUGIN_COLOR
+        }
+    }
+    
+    package "forwarder" {
+        [forwarder_repository.go] PLUGIN_COLOR
+        package "api" as forwarder_api {
+            [forwarder.go] PLUGIN_COLOR
+        }
+        package "grpc" {
+            [nativelog] PLUGIN_COLOR
+            [nativetracing] PLUGIN_COLOR
+            [nativemanagement] PLUGIN_COLOR
+            [other forwarders...] PLUGIN_COLOR
+        }
+        package "kafka" {
+            [nativelog] PLUGIN_COLOR
+        }
+    }
+    
+    package "queue" {
+        [queue_repository.go] PLUGIN_COLOR
+        package "api" as queue_api {
+            [queue.go] PLUGIN_COLOR
+        }
+        package "memory" {
+            [memory queue] PLUGIN_COLOR
+        }
+        package "mmap" {
+            [mmap queue] PLUGIN_COLOR
+        }
+        package "none" {
+            [none queue] PLUGIN_COLOR
+        }
+        package "partition" {
+            [partition queue] PLUGIN_COLOR
+        }
+    }
+    
+    package "server" {
+        [server_repository.go] PLUGIN_COLOR
+        package "api" as server_api {
+            [server.go] PLUGIN_COLOR
+        }
+        package "grpc" {
+            [grpc server] PLUGIN_COLOR
+        }
+        package "http" {
+            [http server] PLUGIN_COLOR
+        }
+        package "local" {
+            [local server] PLUGIN_COLOR
+        }
+    }
+    
+    package "client" {
+        [client_repository.go] PLUGIN_COLOR
+        package "api" as client_api {
+            [client.go] PLUGIN_COLOR
+        }
+        package "grpc" {
+            [grpc client] PLUGIN_COLOR
+        }
+        package "kafka" {
+            [kafka client] PLUGIN_COLOR
+        }
+    }
+    
+    package "filter" {
+        package "api" as filter_api {
+            [filter.go] PLUGIN_COLOR
+        }
+    }
+    
+    package "parser" {
+        package "api" as parser_api {
+            [parser.go] PLUGIN_COLOR
+        }
+    }
+    
+    package "fallbacker" {
+        [fallbacker_repository.go] PLUGIN_COLOR
+        package "api" as fallbacker_api {
+            [fallbacker.go] PLUGIN_COLOR
+        }
+        package "none" {
+            [none fallbacker] PLUGIN_COLOR
+        }
+        package "timer" {
+            [timer fallbacker] PLUGIN_COLOR
+        }
+    }
+    
+    package "fetcher" {
+        [fetcher_repository.go] PLUGIN_COLOR
+        package "api" as fetcher_api {
+            [fetcher.go] PLUGIN_COLOR
+        }
+    }
+}
+
+' === 依赖关系 ===
+
+' 启动流程依赖
+[main.go] --> [boot.go] : starts
+[boot.go] --> [satellite_config.go] : loads config
+[boot.go] --> [sharing_plugins.go] : loads sharing plugins
+[boot.go] --> [gatherer] : creates modules
+[boot.go] --> [sender] : creates modules
+[boot.go] --> [processor] : creates modules
+[boot.go] --> [telemetry.go] : initializes
+
+' 配置依赖
+[satellite_config.yaml] --> [loader.go] : parsed by
+[loader.go] --> [satellite_config.go] : creates
+[satellite_config.go] --> gatherer_api : contains
+[satellite_config.go] --> sender_api : contains
+[satellite_config.go] --> processor_api : contains
+
+' 插件注册依赖
+[boot.go] --> [init.go] : registers plugins
+[init.go] --> [receiver_repository.go] : registers receivers
+[init.go] --> [forwarder_repository.go] : registers forwarders
+[init.go] --> [queue_repository.go] : registers queues
+[init.go] --> [server_repository.go] : registers servers
+[init.go] --> [client_repository.go] : registers clients
+[init.go] --> [fallbacker_repository.go] : registers fallbackers
+
+' 模块创建依赖
+[create.go] --> receiver_api : gets receiver plugin
+[create.go] --> queue_api : gets queue plugin
+[create.go] --> forwarder_api : gets forwarder plugin
+[create.go] --> fallbacker_api : gets fallbacker plugin
+
+' 插件获取依赖
+receiver_api --> [plugin] : uses GetReceiver()
+forwarder_api --> [plugin] : uses GetForwarder()
+queue_api --> [plugin] : uses GetQueue()
+server_api --> [plugin] : uses GetServer()
+client_api --> [plugin] : uses GetClient()
+fallbacker_api --> [plugin] : uses GetFallbacker()
+
+' 共享插件依赖
+[sharing_plugins.go] --> server_api : manages servers
+[sharing_plugins.go] --> client_api : manages clients
+[receiver_gatherer.go] --> [sharing_plugins.go] : uses shared server
+[sender.go] --> [sharing_plugins.go] : uses shared client
+
+' 模块间依赖
+[gatherer] --> [processor] : outputs to
+[processor] --> [sender] : outputs to
+[sender] --> [gatherer] : acks to
+
+' 基础设施依赖
+[log] <-- [boot.go] : uses
+[config] <-- [satellite_config.go] : uses
+[plugin] <-- [boot.go] : uses plugin system
+[plugin] <-- receiver_api : uses
+[plugin] <-- forwarder_api : uses
+[plugin] <-- queue_api : uses
+
+' 插件实现依赖
+[receiver_repository.go] --> [nativelog] : registers
+[receiver_repository.go] --> [nativetracing] : registers
+[receiver_repository.go] --> [nativemanagement] : registers
+[forwarder_repository.go] --> [nativelog] : registers
+[forwarder_repository.go] --> [nativetracing] : registers
+
+' 运行时数据流
+[nativelog] --> [memory queue] : data flow
+[memory queue] --> [processor.go] : data flow
+[processor.go] --> [nativelog] : data flow (forwarder)
+
+note right of [plugin] : 核心插件系统\n- 反射机制\n- 插件注册表\n- 配置注入
+note right of [sharing_plugins.go] : 共享插件管理\n- Server插件共享\n- Client插件共享
+note right of [boot.go] : 启动流程控制\n- 插件注册\n- 模块创建\n- 依赖注入
+note right of [satellite_config.yaml] : 声明式配置\n- plugin_name指定插件\n- 运行时参数配置
+
+@enduml

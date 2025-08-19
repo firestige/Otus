@@ -1,0 +1,253 @@
+@startuml Package Dependencies Hierarchy
+
+!define MAIN_COLOR #FFE6E6
+!define INTERNAL_COLOR #E6F3FF  
+!define PLUGIN_COLOR #E6FFE6
+!define CONFIG_COLOR #FFF0E6
+
+title SkyWalking Satellite 包依赖关系层次图
+
+' === 主程序层 ===
+package "主程序层" MAIN_COLOR {
+    [cmd/main.go]
+}
+
+' === 内部核心包 ===
+package "内部核心包 (internal/)" INTERNAL_COLOR {
+    
+    package "基础设施 (internal/pkg/)" {
+        [config] as pkg_config
+        [log] as pkg_log  
+        [plugin] as pkg_plugin
+    }
+    
+    package "卫星核心 (internal/satellite/)" {
+        
+        package "启动管理" {
+            [boot] as sat_boot
+        }
+        
+        package "配置管理" {
+            [config] as sat_config
+        }
+        
+        package "共享插件管理" {
+            [sharing] as sat_sharing
+        }
+        
+        package "遥测管理" {
+            [telemetry] as sat_telemetry
+            [metricservice] as tel_metric
+            [prometheus] as tel_prom
+            [pprof] as tel_pprof  
+            [none] as tel_none
+        }
+        
+        package "模块定义 (module/)" {
+            [api] as mod_api
+            
+            package "采集器模块" {
+                [gatherer] as mod_gatherer
+                [gatherer/api] as gatherer_api
+            }
+            
+            package "处理器模块" {
+                [processor] as mod_processor
+                [processor/api] as processor_api
+            }
+            
+            package "发送器模块" {
+                [sender] as mod_sender
+                [sender/api] as sender_api
+            }
+        }
+    }
+}
+
+' === 插件包 ===
+package "插件包 (plugins/)" PLUGIN_COLOR {
+    
+    [init.go] as plugin_init
+    
+    package "接收器插件" {
+        [receiver/api] as receiver_api
+        [receiver/repository] as receiver_repo
+        [receiver/grpc/*] as receiver_impl
+        [receiver/http/*] as receiver_http
+        [receiver/sip/*] as receiver_sip
+    }
+    
+    package "转发器插件" {
+        [forwarder/api] as forwarder_api
+        [forwarder/repository] as forwarder_repo
+        [forwarder/grpc/*] as forwarder_grpc
+        [forwarder/kafka/*] as forwarder_kafka
+    }
+    
+    package "队列插件" {
+        [queue/api] as queue_api
+        [queue/repository] as queue_repo
+        [queue/memory] as queue_memory
+        [queue/mmap] as queue_mmap
+        [queue/partition] as queue_partition
+    }
+    
+    package "服务器插件" {
+        [server/api] as server_api
+        [server/repository] as server_repo
+        [server/grpc] as server_grpc
+        [server/http] as server_http
+        [server/local] as server_local
+    }
+    
+    package "客户端插件" {
+        [client/api] as client_api
+        [client/repository] as client_repo
+        [client/grpc] as client_grpc
+        [client/kafka] as client_kafka
+    }
+    
+    package "其他插件" {
+        [filter/api] as filter_api
+        [parser/api] as parser_api
+        [fallbacker/api] as fallbacker_api
+        [fallbacker/repository] as fallbacker_repo
+        [fetcher/api] as fetcher_api
+        [fetcher/repository] as fetcher_repo
+    }
+}
+
+' === 配置文件 ===
+package "配置文件" CONFIG_COLOR {
+    [configs/satellite_config.yaml] as config_yaml
+}
+
+' =====================================
+' === 依赖关系 (从上到下的依赖流) ===
+' =====================================
+
+' 主程序依赖
+[cmd/main.go] --> sat_boot
+
+' 启动模块依赖
+sat_boot --> pkg_log
+sat_boot --> sat_config
+sat_boot --> sat_sharing
+sat_boot --> sat_telemetry
+sat_boot --> plugin_init
+sat_boot --> mod_gatherer
+sat_boot --> mod_processor
+sat_boot --> mod_sender
+
+' 配置管理依赖
+sat_config --> pkg_config
+sat_config --> pkg_plugin
+sat_config --> gatherer_api
+sat_config --> processor_api
+sat_config --> sender_api
+config_yaml --> sat_config
+
+' 共享插件管理依赖
+sat_sharing --> pkg_plugin
+sat_sharing --> server_api
+sat_sharing --> client_api
+
+' 遥测依赖
+sat_telemetry --> tel_metric
+sat_telemetry --> tel_prom
+sat_telemetry --> tel_pprof
+sat_telemetry --> tel_none
+
+' 模块依赖
+mod_gatherer --> gatherer_api
+mod_gatherer --> receiver_api
+mod_gatherer --> queue_api
+mod_gatherer --> server_api
+mod_gatherer --> sat_sharing
+
+mod_processor --> processor_api
+mod_processor --> filter_api
+
+mod_sender --> sender_api
+mod_sender --> forwarder_api
+mod_sender --> fallbacker_api
+mod_sender --> client_api
+mod_sender --> sat_sharing
+
+' 插件系统依赖
+plugin_init --> receiver_repo
+plugin_init --> forwarder_repo
+plugin_init --> queue_repo
+plugin_init --> server_repo
+plugin_init --> client_repo
+plugin_init --> fallbacker_repo
+plugin_init --> fetcher_repo
+
+' 插件API依赖核心plugin包
+receiver_api --> pkg_plugin
+forwarder_api --> pkg_plugin
+queue_api --> pkg_plugin
+server_api --> pkg_plugin
+client_api --> pkg_plugin
+filter_api --> pkg_plugin
+fallbacker_api --> pkg_plugin
+fetcher_api --> pkg_plugin
+
+' 插件仓库依赖
+receiver_repo --> pkg_plugin
+receiver_repo --> receiver_api
+receiver_repo --> receiver_impl
+receiver_repo --> receiver_http
+receiver_repo --> receiver_sip
+
+forwarder_repo --> pkg_plugin
+forwarder_repo --> forwarder_api
+forwarder_repo --> forwarder_grpc
+forwarder_repo --> forwarder_kafka
+
+queue_repo --> pkg_plugin
+queue_repo --> queue_api
+queue_repo --> queue_memory
+queue_repo --> queue_mmap
+queue_repo --> queue_partition
+
+server_repo --> pkg_plugin
+server_repo --> server_api
+server_repo --> server_grpc
+server_repo --> server_http
+server_repo --> server_local
+
+client_repo --> pkg_plugin
+client_repo --> client_api
+client_repo --> client_grpc
+client_repo --> client_kafka
+
+fallbacker_repo --> pkg_plugin
+fallbacker_repo --> fallbacker_api
+
+fetcher_repo --> pkg_plugin
+fetcher_repo --> fetcher_api
+
+' =======================================
+' === 说明注释 ===
+' =======================================
+
+note top of pkg_plugin : **核心插件框架**\n• 插件注册机制\n• 反射动态加载\n• 配置注入\n• 生命周期管理
+
+note top of plugin_init : **插件统一注册**\n• 调用各插件仓库的注册函数\n• 在启动时被boot.go调用
+
+note right of sat_boot : **系统启动协调器**\n• 初始化各个组件\n• 管理启动顺序\n• 处理依赖注入
+
+note bottom of sat_sharing : **共享插件管理器**\n• 管理Server和Client插件\n• 避免资源重复创建\n• 提供插件共享机制
+
+note bottom of config_yaml : **声明式配置**\n• 指定使用的插件名称\n• 配置插件参数\n• 环境变量替换
+
+' === 依赖关系图例 ===
+legend bottom left
+  |= 箭头方向 |= 含义 |
+  | A --> B | A 依赖 B (A 导入 B) |
+  | 实线箭头 | 直接依赖 |
+  | 包颜色 | 功能分层 |
+endlegend
+
+@enduml
