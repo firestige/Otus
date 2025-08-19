@@ -2,10 +2,16 @@ package cmd
 
 import (
 	"os"
+	"time"
 
 	"firestige.xyz/otus/internal/config"
 	"firestige.xyz/otus/internal/otus/boot"
 	"github.com/spf13/cobra"
+)
+
+var (
+	configPath string
+	timeout    time.Duration
 )
 
 var startCmd = &cobra.Command{
@@ -28,6 +34,9 @@ Examples:
 		defer os.Remove("/tmp/otus.pid")
 
 		configPath, err := cmd.Flags().GetString("config")
+		if err != nil {
+			panic(err)
+		}
 		// Load configuration
 		cfg, err := config.Load(configPath)
 		if err != nil {
@@ -47,7 +56,7 @@ Examples:
 }
 
 func init() {
-	startCmd.Flags().StringVarP(nil, "config", "c", "config.yaml", "Path to the configuration file")
-	startCmd.Flags().StringVarP(nil, "timeout", "t", "5s", "Timeout duration for the application")
+	startCmd.Flags().StringVarP(&configPath, "config", "c", "config.yaml", "Path to the configuration file")
+	startCmd.Flags().DurationVarP(&timeout, "timeout", "t", 5*time.Second, "Timeout duration for the application")
 	rootCmd.AddCommand(startCmd)
 }

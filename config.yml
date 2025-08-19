@@ -1,41 +1,52 @@
 log:
   level: info
-  pattern: "%d{2006-01-02 15:04:05} [%p] %c: %m%n"
+  pattern: "%t [%p] %c: %m%n"
+  time: "{2006-01-02 15:04:05}"
+  appender: "console"
 sniffer:
-  interface: any
-  snaplen: 1514
-  local_ip: 127.0.0.1
-sender:
-  - name: skywalking-satellite-reporter
-    remote_addr: 127.0.0.1:11800
-  - name: kafka-reporter
-    broker_addr: 
-pipelines:
-  - name: example
-    sniffer:
-      host:
-      port:
-      transport:
-    decoder:
-    filters:
-      - name:
-      - name:
-    handler:
-      - name:
-    sender:
-      - name:
-      - name: 
-  - name: example
-    sniffer:
-      host:
-      port:
-      transport:
-    decoder:
-    filters:
-      - name:
-      - name:
-    handler:
-      - name:
-    sender:
-      - name: skywalking-satellite-reporter
-      - name: kafka-reporter
+  network_interface: eth0
+  snap_len: 65535
+  buffer_size: 65536
+  timeout: 1000
+  filter: "ip"
+  fanoutId: "123"
+  capture_type: "afpacket"
+codec:
+  max_age: 30
+  max_fragments_num: 100
+  max_ip_size: 1500
+
+# sender:
+#   - name: skywalking-satellite-reporter
+#     remote_addr: 127.0.0.1:11800
+#   - name: kafka-reporter
+#     broker_addr: 
+# pipelines:
+#   - name: example
+#     sniffer:
+#       host:
+#       port:
+#       transport:
+#     decoder:
+#     filters:
+#       - name:
+#       - name:
+#     handler:
+#       - name:
+#     sender:
+#       - name:
+#       - name: 
+#   - name: example
+#     sniffer:
+#       host:
+#       port:
+#       transport:
+#     decoder:
+#     filters:
+#       - name:
+#       - name:
+#     handler:
+#       - name:
+#     sender:
+#       - name: skywalking-satellite-reporter
+#       - name: kafka-reporter

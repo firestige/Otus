@@ -1,5 +1,13 @@
 package config
 
+import (
+	"fmt"
+	"os"
+
+	"firestige.xyz/otus/internal/log"
+	"gopkg.in/yaml.v3"
+)
+
 func Load(path string) (*OtusConfig, error) {
 	var config OtusConfig
 	err := loadConfigFile(path, &config)
@@ -10,6 +18,31 @@ func Load(path string) (*OtusConfig, error) {
 }
 
 func loadConfigFile(path string, otusConfig *OtusConfig) error {
-	// Implement the logic to load the configuration file
+	// 检查文件是否存在
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		return fmt.Errorf("config file does not exist: %s", path)
+	}
+
+	// 读取配置文件内容
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("failed to read config file %s: %w", path, err)
+	}
+
+	// 解析 YAML 内容到配置结构体
+	if err := yaml.Unmarshal(data, otusConfig); err != nil {
+		return fmt.Errorf("failed to parse config file %s: %w", path, err)
+	}
+
+	// 确保 Logger 配置不为空，如果为空则提供默认值
+	if otusConfig.Logger == nil {
+		otusConfig.Logger = &log.LoggerConfig{
+			Level:    "info",
+			Pattern:  "%t [%p] %c: %m%n",
+			Time:     "2006-01-02 15:04:05",
+			Appender: "console",
+		}
+	}
+
 	return nil
 }
