@@ -1,52 +1,39 @@
-log:
-  level: info
-  pattern: "%t [%p] %c: %m%n"
-  time: "{2006-01-02 15:04:05}"
-  appender: "console"
-sniffer:
-  network_interface: eth0
-  snap_len: 65535
-  buffer_size: 65536
-  timeout: 1000
-  filter: "ip"
-  fanoutId: "123"
-  capture_type: "afpacket"
-codec:
-  max_age: 30
-  max_fragments_num: 100
-  max_ip_size: 1500
-
-# sender:
-#   - name: skywalking-satellite-reporter
-#     remote_addr: 127.0.0.1:11800
-#   - name: kafka-reporter
-#     broker_addr: 
-# pipelines:
-#   - name: example
-#     sniffer:
-#       host:
-#       port:
-#       transport:
-#     decoder:
-#     filters:
-#       - name:
-#       - name:
-#     handler:
-#       - name:
-#     sender:
-#       - name:
-#       - name: 
-#   - name: example
-#     sniffer:
-#       host:
-#       port:
-#       transport:
-#     decoder:
-#     filters:
-#       - name:
-#       - name:
-#     handler:
-#       - name:
-#     sender:
-#       - name: skywalking-satellite-reporter
-#       - name: kafka-reporter
+logger:
+  # 基础配置
+  level: "info"           # 日志级别: trace, debug, info, warn, error, fatal, panic
+  pattern: "%time [%level] %caller %func: %msg %field%n"  # 日志格式
+  time: "2006-01-02 15:04:05"  # 时间格式
+  
+  # 输出配置 (支持多个appender)
+  appenders:
+    # 控制台输出
+    - type: "console"
+      level: "debug"      # 可为每个appender设置不同级别
+      
+    # 文件输出
+    - type: "file" 
+      level: "info"
+      options:
+        filename: "logs/otus.log"
+        maxsize: 100        # MB
+        maxage: 30          # 天
+        maxbackups: 10      # 备份文件数
+        compress: true      # 是否压缩
+        
+    # Kafka输出 (待实现)
+    - type: "kafka"
+      level: "warn"
+      options:
+        brokers: ["localhost:9092"]
+        topic: "otus-logs"
+        partition: 0
+        
+  # 格式化选项
+  formatter:
+    enable_colors: true     # 控制台彩色输出
+    full_timestamp: true    # 完整时间戳
+    disable_sorting: false  # 禁用字段排序
+    
+  # 性能选项  
+  buffer_size: 1024        # 缓冲区大小
+  flush_interval: "5s"     # 刷新间隔

@@ -6,13 +6,6 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-type LoggerConfig struct {
-	Pattern  string `mapstructure:"pattern"`
-	Time     string `mapstructure:"time"`
-	Level    string `mapstructure:"level"`
-	Appender string `mapstructure:"appender"`
-}
-
 type logrusAdapter struct {
 	entry *logrus.Entry
 }

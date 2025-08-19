@@ -34,13 +34,18 @@ func loadConfigFile(path string, otusConfig *OtusConfig) error {
 		return fmt.Errorf("failed to parse config file %s: %w", path, err)
 	}
 
-	// 确保 Logger 配置不为空，如果为空则提供默认值
+	// 确保 Logger 配置不为空，如果为空则提供默认值 - 仅以 info 级别输出 console 日志
 	if otusConfig.Logger == nil {
 		otusConfig.Logger = &log.LoggerConfig{
-			Level:    "info",
-			Pattern:  "%t [%p] %c: %m%n",
-			Time:     "2006-01-02 15:04:05",
-			Appender: "console",
+			Level:   "info",
+			Pattern: "%time [%level] %caller: %msg%n",
+			Time:    "2006-01-02 15:04:05",
+			Appenders: []log.AppenderConfig{
+				{
+					Type:  "console",
+					Level: "info",
+				},
+			},
 		}
 	}
 
