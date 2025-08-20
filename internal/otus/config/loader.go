@@ -40,16 +40,6 @@ func Load(path string) (*OtusConfig, error) {
 	return &config, nil
 }
 
-func loadConfigFile(path string, otusConfig *OtusConfig) error {
-	// 这个函数保持向后兼容，内部调用新的 Load 函数
-	config, err := Load(path)
-	if err != nil {
-		return err
-	}
-	*otusConfig = *config
-	return nil
-}
-
 // applyDefaults 应用默认配置
 func applyDefaults(otusConfig *OtusConfig) {
 	// 确保 Logger 配置不为空，如果为空则提供默认值
