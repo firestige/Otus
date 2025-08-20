@@ -21,6 +21,14 @@ type Capture struct {
 	ctx context.Context
 }
 
+func NewCapture() Capture {
+	return Capture{
+		SnifferOpt:  &sniffer.Options{},
+		CodecOpt:    &codec.Options{},
+		packetQueue: make(chan *api.NetPacket, 100),
+	}
+}
+
 func (c *Capture) ConfigSpec() interface{} {
 	return c
 }

@@ -64,6 +64,7 @@ func (a *AppContext) GetPluginByName(pluginType reflect.Type, name string) refle
 
 func (a *AppContext) SeekAndRegisterModules() {
 	a.MergeRegistry(plugin.GetRegistedPlugins())
+
 }
 
 func (a *AppContext) BuildComponents() {

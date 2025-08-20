@@ -1,4 +1,4 @@
-package sender
+package api
 
 import (
 	"firestige.xyz/otus/internal/config"

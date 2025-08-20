@@ -2,10 +2,10 @@ package plugin
 
 import (
 	"firestige.xyz/otus/plugin/parser"
-	"firestige.xyz/otus/plugin/sender"
+	"firestige.xyz/otus/plugin/reporter"
 )
 
 func SeekAndRegisterModules() {
 	parser.RegisterExtendedParserModule()
-	sender.RegisterExtendedSenderModule()
+	reporter.RegisterExtendedReporterModule()
 }
