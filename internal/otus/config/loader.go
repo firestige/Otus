@@ -22,6 +22,10 @@ func Load(path string) (*OtusConfig, error) {
 	v.SetConfigType(strings.TrimPrefix(fileExt, "."))
 	v.AddConfigPath(dir)
 
+	v.SetEnvPrefix("OTUS")
+	v.AutomaticEnv()                                             // 自动读取环境变量
+	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_", "-", "_")) // 替换环境变量中的点和连字符
+
 	// 读取配置文件
 	if err := v.ReadInConfig(); err != nil {
 		return nil, fmt.Errorf("failed to read config file %s: %w", path, err)
