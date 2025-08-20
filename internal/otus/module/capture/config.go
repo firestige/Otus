@@ -2,8 +2,8 @@ package capture
 
 import (
 	"firestige.xyz/otus/internal/config"
-	"firestige.xyz/otus/internal/otus/capture/codec"
-	"firestige.xyz/otus/internal/otus/capture/sniffer"
+	"firestige.xyz/otus/internal/otus/module/capture/codec"
+	"firestige.xyz/otus/internal/otus/module/capture/sniffer"
 )
 
 type Config struct {
