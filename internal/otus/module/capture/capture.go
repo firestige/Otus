@@ -5,8 +5,8 @@ import (
 	"sync"
 
 	"firestige.xyz/otus/internal/otus/api"
-	"firestige.xyz/otus/internal/otus/capture/codec"
-	"firestige.xyz/otus/internal/otus/capture/sniffer"
+	"firestige.xyz/otus/internal/otus/module/capture/codec"
+	"firestige.xyz/otus/internal/otus/module/capture/sniffer"
 )
 
 type Capture struct {

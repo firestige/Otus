@@ -3,11 +3,11 @@ package config
 import (
 	"firestige.xyz/otus/internal/config"
 	"firestige.xyz/otus/internal/log"
-	"firestige.xyz/otus/internal/otus/capture"
 	"firestige.xyz/otus/internal/otus/metrics"
-	"firestige.xyz/otus/internal/otus/sender"
+	"firestige.xyz/otus/internal/otus/module/capture"
+	sender "firestige.xyz/otus/internal/otus/module/sender/api"
 	"firestige.xyz/otus/internal/plugin"
-	"firestige.xyz/otus/internal/processor"
+	processor "firestige.xyz/otus/internal/processor/api"
 )
 
 type OtusConfig struct {

@@ -5,8 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"firestige.xyz/otus/internal/otus/capture"
 	"firestige.xyz/otus/internal/otus/config"
+	"firestige.xyz/otus/internal/otus/module/capture"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v3"
