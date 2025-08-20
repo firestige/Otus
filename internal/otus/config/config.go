@@ -25,6 +25,6 @@ type GlobalConfig struct {
 type PipeConfig struct {
 	CommonConfig *config.CommonFields `mapstructure:"common_config"`
 	Capture      *capture.Config      `mapstructure:"capture"`
-	Processors   []*processor.Config  `mapstructure:"processors"`
+	Processor    *processor.Config    `mapstructure:"processor"`
 	Sender       *sender.Config       `mapstructure:"sender"`
 }

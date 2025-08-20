@@ -6,6 +6,11 @@ import (
 	"github.com/mitchellh/mapstructure"
 )
 
+const (
+	CommonFieldsName = "CommonFields"
+	TagName          = "mapstructure"
+)
+
 type CommonFields struct {
 	PipeName string `mapstructure:"pipe_name"`
 }
