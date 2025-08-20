@@ -36,15 +36,31 @@ logger:
   # 性能选项  
   buffer_size: 1024        # 缓冲区大小
   flush_interval: "5s"     # 刷新间隔
-sniffer:
-  network_interface: eth0
-  snap_len: 65535
-  buffer_size: 65536
-  timeout: 1000
-  filter: "ip"
-  fanoutId: "123"
-  capture_type: "afpacket"
-codec:
-  max_age: 30
-  max_fragments_num: 100
-  max_ip_size: 1500
+global:
+  capture:
+    sniffer:
+      network_interface: eth0
+      snap_len: 65535
+      buffer_size: 65536
+      timeout: 1000
+      filter: "ip"
+      fanout_id: 123
+      capture_type: "afpacket"
+    codec:
+      max_age: 30
+      max_fragments_num: 100
+      max_ip_size: 1500
+pipes:
+  - common_config:
+      name: "sip-capture"
+    capture:
+      worker_count: 2
+    processor:
+      filters:
+        - name: "five-tuple-filter"
+    sender:
+      fallbacker:
+        plugin_name: none-fallbacker
+      reporters:
+        - plugin_name: satellite-trace-grpc-reporter
+

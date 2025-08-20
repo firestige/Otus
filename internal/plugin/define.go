@@ -1,9 +1,8 @@
 package plugin
 
-import "firestige.xyz/otus/internal/config"
+const NameField = "plugin_name"
 
 type Plugin interface {
-	config.Configurable
 	Name() string
 }
 
@@ -12,3 +11,5 @@ type SharablePlugin interface {
 	Start() error
 	Stop() error
 }
+
+type Config map[string]interface{}

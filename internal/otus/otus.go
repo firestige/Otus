@@ -8,7 +8,6 @@ import (
 	"sync"
 	"syscall"
 
-	"firestige.xyz/otus/internal/config"
 	"firestige.xyz/otus/internal/plugin"
 )
 
@@ -67,7 +66,7 @@ func (a *AppContext) SeekAndRegisterModules() {
 	a.MergeRegistry(plugin.GetRegistedPlugins())
 }
 
-func (a *AppContext) BuildComponents(cfg *config.OtusConfig) {
+func (a *AppContext) BuildComponents() {
 
 }
 

@@ -4,8 +4,8 @@ import (
 	"os"
 	"time"
 
-	"firestige.xyz/otus/internal/config"
 	"firestige.xyz/otus/internal/otus/boot"
+	"firestige.xyz/otus/internal/otus/config"
 	"github.com/spf13/cobra"
 )
 

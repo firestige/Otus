@@ -5,6 +5,7 @@ import (
 	"reflect"
 
 	"firestige.xyz/otus/internal/otus"
+	// "firestige.xyz/otus/internal/otus"
 )
 
 type parserComposite struct {

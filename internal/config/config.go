@@ -3,10 +3,12 @@ package config
 import (
 	"context"
 
-	"firestige.xyz/otus/internal/log"
-	"firestige.xyz/otus/internal/otus/capture"
 	"github.com/mitchellh/mapstructure"
 )
+
+type CommonFields struct {
+	PipeName string `mapstructure:"pipe_name"`
+}
 
 type Configurable interface {
 	ConfigSpec() interface{}
@@ -36,9 +38,4 @@ func BuildComponet(name string, configData map[string]interface{}, ctx context.C
 		return nil, err
 	}
 	return comp, nil
-}
-
-type OtusConfig struct {
-	Logger  *log.LoggerConfig `mapstructure:"log"`
-	sniffer *capture.Capture  `mapstructure:"capture"`
 }
