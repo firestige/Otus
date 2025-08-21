@@ -5,7 +5,6 @@ import (
 	"sync"
 
 	otus "firestige.xyz/otus/internal/otus/api"
-	"firestige.xyz/otus/internal/otus/module/capture/api"
 	"firestige.xyz/otus/internal/otus/module/capture/codec"
 	"firestige.xyz/otus/internal/otus/module/capture/sniffer"
 )
@@ -20,14 +19,6 @@ type Capture struct {
 
 	wg  *sync.WaitGroup
 	ctx context.Context
-}
-
-func NewCapture(cfg *Config) api.Capture {
-	return Capture{
-		SnifferOpt:  &sniffer.Options{},
-		CodecOpt:    &codec.Options{},
-		packetQueue: make(chan *otus.NetPacket, 100),
-	}
 }
 
 func (c *Capture) ConfigSpec() interface{} {

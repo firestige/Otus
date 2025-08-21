@@ -1,4 +1,4 @@
-package capture
+package api
 
 import (
 	"firestige.xyz/otus/internal/config"

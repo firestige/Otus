@@ -7,7 +7,7 @@ import (
 	"firestige.xyz/otus/plugins/client/api"
 )
 
-func RegisterClientPlugins() {
+func RegisterExtendedClientModule() {
 	plugin.RegisterPluginType(reflect.TypeOf((*api.Client)(nil)).Elem())
 	clients := []api.Client{}
 	for _, client := range clients {

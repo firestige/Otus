@@ -91,11 +91,11 @@ func (p *SipParser) Name() string {
 	return "sip-parser"
 }
 
-func (p *SipParser) ConfigSpec() interface{} {
-	return &struct{}{} // SIP parser 不需要配置
+func (p *SipParser) DefaultConfig() string {
+	return ``
 }
 
-func (p *SipParser) PostConfig(cfg interface{}, ctx context.Context) error {
+func (p *SipParser) PostConfig(ctx context.Context, cfg interface{}) error {
 	return nil
 }
 

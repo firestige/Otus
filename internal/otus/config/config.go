@@ -4,7 +4,7 @@ import (
 	"firestige.xyz/otus/internal/config"
 	"firestige.xyz/otus/internal/log"
 	"firestige.xyz/otus/internal/otus/metrics"
-	"firestige.xyz/otus/internal/otus/module/capture"
+	capture "firestige.xyz/otus/internal/otus/module/capture/api"
 	sender "firestige.xyz/otus/internal/otus/module/sender/api"
 	"firestige.xyz/otus/internal/plugin"
 	processor "firestige.xyz/otus/internal/processor/api"

@@ -1,4 +1,4 @@
-package capture_test
+package api_test
 
 import (
 	"os"
@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"firestige.xyz/otus/internal/otus/config"
-	"firestige.xyz/otus/internal/otus/module/capture"
+	"firestige.xyz/otus/internal/otus/module/capture/api"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v3"
@@ -57,7 +57,7 @@ func TestCaptureConfigFromRootConfigYml(t *testing.T) {
 }
 
 // validateCaptureConfig 验证 capture 配置的辅助函数
-func validateCaptureConfig(t *testing.T, cfg *capture.Config) {
+func validateCaptureConfig(t *testing.T, cfg *api.Config) {
 	assert.NotNil(t, cfg, "Capture config should not be nil")
 	t.Log("validate capture config")
 	t.Logf("%+v", cfg)
