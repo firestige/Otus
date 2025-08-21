@@ -36,7 +36,7 @@ logger:
   # 性能选项  
   buffer_size: 1024        # 缓冲区大小
   flush_interval: "5s"     # 刷新间隔
-global:
+sharable:
   capture:
     sniffer:
       network_interface: eth0

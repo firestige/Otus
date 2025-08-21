@@ -11,13 +11,13 @@ import (
 )
 
 type OtusConfig struct {
-	Logger  *log.LoggerConfig `mapstructure:"log"`
-	Global  *GlobalConfig     `mapstructure:"global"`
-	Pipes   []*PipeConfig     `mapstructure:"pipes"`
-	Metrics *metrics.Config   `mapstructure:"metrics"`
+	Logger   *log.LoggerConfig `mapstructure:"log"`
+	Sharable *SharableConfig   `mapstructure:"sharable"`
+	Pipes    []*PipeConfig     `mapstructure:"pipes"`
+	Metrics  *metrics.Config   `mapstructure:"metrics"`
 }
 
-type GlobalConfig struct {
+type SharableConfig struct {
 	Capture *capture.Config `mapstructure:"capture"`
 	Clients []plugin.Config `mapstructure:"clients"`
 }

@@ -2,7 +2,7 @@ package sender
 
 import (
 	"firestige.xyz/otus/internal/otus/module/sender/api"
-	"firestige.xyz/otus/plugin/reporter"
+	"firestige.xyz/otus/plugins/reporter"
 )
 
 type Sender struct {

@@ -4,8 +4,8 @@ import (
 	"reflect"
 
 	"firestige.xyz/otus/internal/plugin"
-	"firestige.xyz/otus/plugin/parser/api"
-	"firestige.xyz/otus/plugin/parser/sip"
+	"firestige.xyz/otus/plugins/parser/api"
+	"firestige.xyz/otus/plugins/parser/sip"
 )
 
 func RegisterExtendedParserModule() {

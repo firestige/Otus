@@ -4,7 +4,7 @@ import (
 	"firestige.xyz/otus/internal/otus/module/capture"
 	"firestige.xyz/otus/internal/otus/module/sender"
 	processor "firestige.xyz/otus/internal/processor/api"
-	"firestige.xyz/otus/plugin/filter/api"
+	"firestige.xyz/otus/plugins/filter/api"
 )
 
 type defaultProcessor struct {

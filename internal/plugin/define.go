@@ -4,6 +4,7 @@ const NameField = "plugin_name"
 
 type Plugin interface {
 	Name() string
+	DefaultConfig() string
 }
 
 type SharablePlugin interface {
