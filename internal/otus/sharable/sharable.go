@@ -1,6 +1,7 @@
 package sharable
 
 import (
+	"context"
 	"sync"
 
 	"firestige.xyz/otus/internal/otus/config"
@@ -23,7 +24,7 @@ func Load(cfg *config.SharableConfig) {
 	})
 }
 
-func PostConstruct() error {
+func PostConstruct(ctx context.Context) error {
 	return nil
 }
 

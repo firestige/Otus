@@ -2,6 +2,6 @@ package processor
 
 import "firestige.xyz/otus/internal/processor/api"
 
-func NewProcessor() api.Processor {
+func NewProcessor(cfg *api.Config) api.Processor {
 	return defaultProcessor{}
 }

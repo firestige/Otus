@@ -5,6 +5,7 @@ import (
 )
 
 type Processor interface {
-	SetCapture(m *api.Module)
-	SetSender(m *api.Module)
+	api.Module
+	SetCapture(m api.Module) error
+	SetSender(m api.Module) error
 }

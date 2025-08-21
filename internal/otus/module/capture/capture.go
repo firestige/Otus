@@ -4,7 +4,8 @@ import (
 	"context"
 	"sync"
 
-	"firestige.xyz/otus/internal/otus/api"
+	otus "firestige.xyz/otus/internal/otus/api"
+	"firestige.xyz/otus/internal/otus/module/capture/api"
 	"firestige.xyz/otus/internal/otus/module/capture/codec"
 	"firestige.xyz/otus/internal/otus/module/capture/sniffer"
 )
@@ -15,17 +16,17 @@ type Capture struct {
 
 	sniffer     *sniffer.Sniffer
 	decoder     *codec.Decoder
-	packetQueue chan *api.NetPacket
+	packetQueue chan *otus.NetPacket
 
 	wg  *sync.WaitGroup
 	ctx context.Context
 }
 
-func NewCapture() Capture {
+func NewCapture(cfg *Config) api.Capture {
 	return Capture{
 		SnifferOpt:  &sniffer.Options{},
 		CodecOpt:    &codec.Options{},
-		packetQueue: make(chan *api.NetPacket, 100),
+		packetQueue: make(chan *otus.NetPacket, 100),
 	}
 }
 

@@ -49,8 +49,8 @@ func TestCaptureConfigFromRootConfigYml(t *testing.T) {
 
 	// 验证是否正确注入到 capture.Config
 	// 注意：这里需要根据实际的 OtusConfig 结构进行调整
-	if otusConfig.Global.Capture != nil {
-		validateCaptureConfig(t, otusConfig.Global.Capture)
+	if otusConfig.Sharable.Capture != nil {
+		validateCaptureConfig(t, otusConfig.Sharable.Capture)
 	} else {
 		t.Log("No capture configuration found in loaded config")
 	}
