@@ -14,9 +14,8 @@ type Sniffer struct {
 	decoder *codec.Decoder
 }
 
-func NewSniffer(decoder *codec.Decoder, options *Options, ctx context.Context) *Sniffer {
+func NewSniffer(ctx context.Context, options *Options) *Sniffer {
 	return &Sniffer{
-		decoder: decoder,
 		options: options,
 	}
 }
@@ -64,4 +63,8 @@ func (s *Sniffer) Start(ctx context.Context) error {
 }
 
 func (s *Sniffer) Stop() {
+}
+
+func (s *Sniffer) SetDecoder(d *codec.Decoder) {
+	s.decoder = d
 }

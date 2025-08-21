@@ -21,22 +21,14 @@ type Capture struct {
 	ctx context.Context
 }
 
-func (c *Capture) ConfigSpec() interface{} {
-	return c
-}
-
-func (c *Capture) PostConfig(cfg interface{}, ctx context.Context) error {
-	c.ctx = ctx
-	c.decoder = codec.NewDecoder(c.packetQueue, c.CodecOpt, ctx)
-	c.sniffer = sniffer.NewSniffer(c.decoder, c.SnifferOpt, ctx)
+func (c *Capture) PostConstruct() error {
 
 	c.wg = &sync.WaitGroup{}
 	return nil
 }
 
-func (c *Capture) Start() error {
+func (c *Capture) Boot(ctx context.Context) {
 	if c.sniffer == nil {
-		return nil // Sniffer not configured
 	}
 
 	c.wg.Add(1)
@@ -46,11 +38,9 @@ func (c *Capture) Start() error {
 			// Handle error (e.g., log it)
 		}
 	}()
-
-	return nil
 }
 
-func (c *Capture) Stop() {
+func (c *Capture) Shutdown() {
 	c.wg.Wait()
 	c.sniffer.Stop()
 }

@@ -2,10 +2,6 @@ package codec
 
 import (
 	"fmt"
-	"reflect"
-
-	"firestige.xyz/otus/internal/otus"
-	// "firestige.xyz/otus/internal/otus"
 )
 
 type parserComposite struct {
@@ -14,44 +10,9 @@ type parserComposite struct {
 
 // NewParserComposite 创建解析器组合，自动发现并注册所有可用的 parser 插件
 func NewParserComposite(parsers ...Parser) Parser {
-	composite := &parserComposite{}
-
-	// 如果传入了特定的 parser，则使用传入的
-	if len(parsers) > 0 {
-		composite.parsers = parsers
-		return composite
+	return &parserComposite{
+		parsers: parsers,
 	}
-
-	// 否则自动发现所有已注册的 parser 插件
-	parserType := reflect.TypeOf((*Parser)(nil)).Elem()
-	pluginValues := otus.GetAppContext().GetPlugins(parserType)
-
-	for _, pluginValue := range pluginValues {
-		if pluginValue.IsValid() {
-			if p, ok := pluginValue.Interface().(Parser); ok {
-				composite.parsers = append(composite.parsers, p)
-			}
-		}
-	}
-
-	return composite
-}
-
-// NewParserCompositeByNames 根据指定的 parser 名称创建组合
-func NewParserCompositeByNames(names ...string) Parser {
-	composite := &parserComposite{}
-	parserType := reflect.TypeOf((*Parser)(nil)).Elem()
-
-	for _, name := range names {
-		pluginValue := otus.GetAppContext().GetPluginByName(parserType, name)
-		if pluginValue.IsValid() {
-			if p, ok := pluginValue.Interface().(Parser); ok {
-				composite.parsers = append(composite.parsers, p)
-			}
-		}
-	}
-
-	return composite
 }
 
 func (p *parserComposite) Detect(content []byte) bool {

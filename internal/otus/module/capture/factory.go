@@ -8,9 +8,11 @@ import (
 )
 
 func NewCapture(cfg *api.Config) api.Capture {
-	return Capture{
+	c := &Capture{
 		SnifferOpt:  &sniffer.Options{},
 		CodecOpt:    &codec.Options{},
 		packetQueue: make(chan *otus.NetPacket, 100),
 	}
+	// TODO 从 config 创建 sniff 和 codec 对象传入 capture
+	return c
 }
