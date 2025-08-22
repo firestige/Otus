@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"firestige.xyz/otus/internal/log"
 	"firestige.xyz/otus/internal/otus/api"
@@ -15,6 +16,7 @@ import (
 	client "firestige.xyz/otus/plugins/client/api"
 	fallbacker "firestige.xyz/otus/plugins/fallbacker/api"
 	reporter "firestige.xyz/otus/plugins/reporter/api"
+	"github.com/sirupsen/logrus"
 )
 
 type Sender struct {
@@ -45,7 +47,14 @@ func (s *Sender) PostConstruct() error {
 		}
 	}
 
-	s.inputs = make([]chan *api.OutputPacketContext, 0)
+	s.inputs = make([]chan *api.OutputPacketContext, s.capture.PartitionCount())
+	s.buffers = make([]*buffer.BatchBuffer, s.capture.PartitionCount())
+	s.flushChannel = make([]chan *buffer.BatchBuffer, s.capture.PartitionCount())
+	for partition := 0; partition < s.capture.PartitionCount(); partition++ {
+		s.inputs[partition] = make(chan *api.OutputPacketContext)
+		s.buffers[partition] = buffer.NewBatchBuffer(s.config.MaxBufferSize)
+		s.flushChannel[partition] = make(chan *buffer.BatchBuffer)
+	}
 
 	return nil
 }
@@ -53,22 +62,59 @@ func (s *Sender) PostConstruct() error {
 func (s *Sender) Boot(ctx context.Context) {
 	log.GetLogger().WithField("pipe", s.config.PipeName).Info("sender module is starting...")
 	wg := &sync.WaitGroup{}
-	wg.Add(1)
+	wg.Add(2*s.capture.PartitionCount() + 1)
 	go s.listen(ctx, wg)
+	for partition := 0; partition < s.capture.PartitionCount(); partition++ {
+		go s.store(ctx, partition, wg)
+		go s.flush(ctx, partition, wg)
+	}
 	wg.Wait()
 }
 
-func (s *Sender) store(ctx context.Context, wg *sync.WaitGroup) {
+func (s *Sender) store(ctx context.Context, partition int, wg *sync.WaitGroup) {
 	// TODO 补完待发流程，
 	// 1.当发送速度跟不上上游事件生产速度时，需要暂存
 	// 2.当开始关闭流程时需要暂存到 flush 队列
+	// 不要试图合并两个 defer，此外由于 LIFO 特性，wg.Done 实际上是后执行的那个
+	defer wg.Done()
+	defer log.GetLogger().WithField("pipe", s.config.PipeName).Info("store routine closed")
+
+	childCtx, _ := context.WithCancel(ctx)
+	flushTime := s.config.FlushInterval
+	if flushTime <= 0 {
+		flushTime = defaultSenderFlushTime
+	}
+	timeTicker := time.NewTicker(time.Duration(flushTime) * time.Millisecond)
+	for {
+		if atomic.LoadInt32(&s.blocking) == 1 {
+			time.Sleep(100 * time.Millisecond)
+			log.GetLogger().WithField("pipe", s.config.PipeName).Warn("client disconnected, blocking...")
+			continue
+		}
+		select {
+		case <-childCtx.Done():
+			return
+		case <-timeTicker.C:
+			if s.buffers[partition].Len() >= s.config.MinFlushEvents {
+				s.flushChannel[partition] <- s.buffers[partition]
+				s.buffers[partition] = buffer.NewBatchBuffer(s.config.MaxBufferSize)
+			}
+		case e := <-s.inputs[partition]:
+			if e == nil {
+				continue
+			}
+			s.buffers[partition].Add(e)
+			if s.buffers[partition].Len() == s.config.MaxBufferSize {
+				s.flushChannel[partition] <- s.buffers[partition]
+				s.buffers[partition] = buffer.NewBatchBuffer(s.config.MaxBufferSize)
+			}
+		}
+	}
 }
 
 func (s *Sender) listen(ctx context.Context, wg *sync.WaitGroup) {
-	defer func() {
-		wg.Done()
-		log.GetLogger().WithField("pipe", s.config.PipeName).Info("listen routine closed")
-	}()
+	defer wg.Done()
+	defer log.GetLogger().WithField("pipe", s.config.PipeName).Info("listen routine closed")
 	childCtx, _ := context.WithCancel(ctx)
 	for {
 		select {
@@ -88,10 +134,8 @@ func (s *Sender) listen(ctx context.Context, wg *sync.WaitGroup) {
 }
 
 func (s *Sender) flush(ctx context.Context, partition int, wg *sync.WaitGroup) {
-	defer func() {
-		wg.Done()
-		log.GetLogger().WithField("pipe", s.config.PipeName).Info("flush routine closed")
-	}()
+	defer wg.Done()
+	defer log.GetLogger().WithField("pipe", s.config.PipeName).Info("flush routine closed")
 	childCtx, _ := context.WithCancel(ctx)
 	for {
 		select {
@@ -112,15 +156,61 @@ func (s *Sender) Shutdown() {
 }
 
 func (s *Sender) shutdown0() {
+	log.GetLogger().WithField("pipe", s.config.PipeName).Info("sender module is shutting down...")
+	for _, in := range s.inputs {
+		close(in)
+	}
+	wg := &sync.WaitGroup{}
+	finished := make(chan struct{}, 1)
+	wg.Add(len(s.flushChannel))
+	for partition := range s.buffers {
+		go func(p int) {
+			defer wg.Done()
+			s.consume(s.buffers[p])
+		}(partition)
+	}
+	go func() {
+		wg.Wait()
+		close(finished)
+	}()
 
+	ticker := time.NewTicker(module.ShutdownHookTime)
+	select {
+	case <-ticker.C:
+		for _, buffer := range s.buffers {
+			s.consume(buffer)
+		}
+		return
+	case <-finished:
+		return
+	}
 }
 
 func (s *Sender) consume(batch *buffer.BatchBuffer) {
-	// TODO 待实现
+	if batch.Len() == 0 {
+		return
+	}
+	log.GetLogger().WithFields(logrus.Fields{
+		"pipe":   s.config.PipeName,
+		"offset": batch.Last(),
+		"size":   batch.Len(),
+	}).Info("sender module is flushing a new batch buffer.")
+	packets := make(map[string]api.BatchePacket)
+	// for i := 0; i < batch.Len(); i++ {
+	// 	packetContext := batch.Buf()[i]
+	// 	for _, p := range packetContext.Context {
+	// 		if p.Re
+	// 	}
+	// }
+	for _, r := range s.reporters {
+		// TODO 调用 reporter 发消息
+	}
+
+	s.capture.Ack(batch.Last())
 }
 
-func (s *Sender) InputNetPacketChannel() chan<- *api.OutputPacketContext {
-	return s.inputs[0]
+func (s *Sender) InputNetPacketChannel(partition int) chan<- *api.OutputPacketContext {
+	return s.inputs[partition]
 }
 
 func (s *Sender) SetCapture(m module.Module) error {

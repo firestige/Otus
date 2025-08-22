@@ -12,7 +12,7 @@ type Config struct {
 	FallbackerConfig plugin.Config   `mapstructure:"fallbacker"`
 	ClientName       string          `mapstructure:"client_name"`
 
-	MaxQueueSize     int `mapstructure:"max_queue_size"`
-	MinFlushInterval int `mapstructure:"min_flush_interval"`
-	FlushInterval    int `mapstructure:"flush_interval"`
+	MaxBufferSize  int `mapstructure:"max_buffer_size"`
+	MinFlushEvents int `mapstructure:"min_flush_events"`
+	FlushInterval  int `mapstructure:"flush_interval"`
 }
