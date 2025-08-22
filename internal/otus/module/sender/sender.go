@@ -19,6 +19,8 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
+var defaultSenderFlushTime = 1000
+
 type Sender struct {
 	config *sender.Config
 
@@ -196,17 +198,33 @@ func (s *Sender) consume(batch *buffer.BatchBuffer) {
 		"size":   batch.Len(),
 	}).Info("sender module is flushing a new batch buffer.")
 	packets := make(map[string]api.BatchePacket)
-	// for i := 0; i < batch.Len(); i++ {
-	// 	packetContext := batch.Buf()[i]
-	// 	for _, p := range packetContext.Context {
-	// 		if p.Re
-	// 	}
-	// }
-	for _, r := range s.reporters {
-		// TODO 调用 reporter 发消息
+	for i := 0; i < batch.Len(); i++ {
+		packetContext := batch.Buf()[i]
+		for _, p := range packetContext.Context {
+			protocol := string(p.ApplicationProtoType)
+			packets[protocol] = append(packets[protocol], p)
+		}
 	}
-
-	s.capture.Ack(batch.Last())
+	for _, r := range s.reporters {
+		for protocol, ps := range packets {
+			if r.SupportProtocol() != protocol {
+				continue
+			}
+			if err := r.Report(ps); err == nil {
+				// TODO 发送成功要统计
+				continue
+			} else {
+				log.GetLogger().WithFields(logrus.Fields{
+					"pipe":   s.config.PipeName,
+					"offset": batch.Last(),
+					"size":   batch.Len(),
+				}).Warnf("report packet failure: %v", err)
+			}
+			if !s.fallbacker.Fallback(&ps, r.Report) {
+				// TODO 记录失败
+			}
+		}
+	}
 }
 
 func (s *Sender) InputNetPacketChannel(partition int) chan<- *api.OutputPacketContext {

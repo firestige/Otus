@@ -12,7 +12,8 @@ import (
 type Reporter interface {
 	plugin.Plugin
 	PostConstruct(connection interface{}) error
-	Report() error
+	Report(batch api.BatchePacket) error
+	SupportProtocol() string
 	ReportType()
 }
 

@@ -13,5 +13,5 @@ type Config struct {
 	SnifferConfig *sniffer.Options `mapstructure:"sniffer"`
 	CodecConfig   *codec.Options   `mapstructure:"codec"`
 	ParserConfig  []plugin.Config  `mapstructure:"parsers"`
-	WorkerCount   int              `mapstructure:"worker_count"`
+	Partitions    int              `mapstructure:"partitions"`
 }
