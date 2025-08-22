@@ -7,10 +7,11 @@ import (
 	"sync/atomic"
 
 	"firestige.xyz/otus/internal/log"
-	"firestige.xyz/otus/internal/otus/module/api"
+	"firestige.xyz/otus/internal/otus/api"
+	module "firestige.xyz/otus/internal/otus/module/api"
+	"firestige.xyz/otus/internal/otus/module/buffer"
 	capture "firestige.xyz/otus/internal/otus/module/capture/api"
 	sender "firestige.xyz/otus/internal/otus/module/sender/api"
-	"firestige.xyz/otus/internal/otus/msg"
 	client "firestige.xyz/otus/plugins/client/api"
 	fallbacker "firestige.xyz/otus/plugins/fallbacker/api"
 	reporter "firestige.xyz/otus/plugins/reporter/api"
@@ -23,8 +24,12 @@ type Sender struct {
 	fallbacker fallbacker.Fallbacker
 	client     client.Client
 
-	inputs       []chan *msg.OutputMessage
+	capture capture.Capture
+
+	inputs       []chan *api.OutputPacketContext
 	listener     chan client.ClientStatus
+	flushChannel []chan *buffer.BatchBuffer
+	buffers      []*buffer.BatchBuffer
 	blocking     int32
 	shutdownOnce sync.Once
 }
@@ -40,7 +45,7 @@ func (s *Sender) PostConstruct() error {
 		}
 	}
 
-	s.inputs = make([]chan *msg.OutputMessage, 0)
+	s.inputs = make([]chan *api.OutputPacketContext, 0)
 
 	return nil
 }
@@ -82,7 +87,7 @@ func (s *Sender) listen(ctx context.Context, wg *sync.WaitGroup) {
 	}
 }
 
-func (s *Sender) flush(ctx context.Context, wg *sync.WaitGroup) {
+func (s *Sender) flush(ctx context.Context, partition int, wg *sync.WaitGroup) {
 	defer func() {
 		wg.Done()
 		log.GetLogger().WithField("pipe", s.config.PipeName).Info("flush routine closed")
@@ -93,9 +98,9 @@ func (s *Sender) flush(ctx context.Context, wg *sync.WaitGroup) {
 		case <-childCtx.Done():
 			s.Shutdown()
 			return
-		case m := <-s.flushChannel:
+		case b := <-s.flushChannel[partition]:
 			// TODO flushChannel 需要补完
-			s.consume(m)
+			s.consume(b)
 		}
 	}
 }
@@ -110,15 +115,16 @@ func (s *Sender) shutdown0() {
 
 }
 
-func (s *Sender) consume(batch msg.BatchData) {
+func (s *Sender) consume(batch *buffer.BatchBuffer) {
+	// TODO 待实现
 }
 
-func (s *Sender) InputNetPacketChannel() chan<- *msg.OutputMessage {
+func (s *Sender) InputNetPacketChannel() chan<- *api.OutputPacketContext {
 	return s.inputs[0]
 }
 
-func (s *Sender) SetCapture(m api.Module) error {
-	if c, ok := m.(*capture.Capture); ok {
+func (s *Sender) SetCapture(m module.Module) error {
+	if c, ok := m.(capture.Capture); ok {
 		s.capture = c
 		return nil
 	}

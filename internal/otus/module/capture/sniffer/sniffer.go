@@ -14,12 +14,6 @@ type Sniffer struct {
 	decoder *codec.Decoder
 }
 
-func NewSniffer(ctx context.Context, options *Options) *Sniffer {
-	return &Sniffer{
-		options: options,
-	}
-}
-
 func (s *Sniffer) Start(ctx context.Context) error {
 	factory := HandleFactory()
 	if !factory.IsTypeSupported(s.options.CaptureType) {
@@ -63,8 +57,4 @@ func (s *Sniffer) Start(ctx context.Context) error {
 }
 
 func (s *Sniffer) Stop() {
-}
-
-func (s *Sniffer) SetDecoder(d *codec.Decoder) {
-	s.decoder = d
 }

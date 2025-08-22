@@ -1,7 +1,6 @@
 package codec
 
 import (
-	"context"
 	"net"
 	"time"
 
@@ -33,32 +32,6 @@ type Decoder struct {
 	udp             layers.UDP
 
 	output chan *api.NetPacket
-}
-
-// TODO 补齐Decoder的初始化配置代码
-// parser是从plugin中获取的应用层解析器，这里要想想怎么把plugin的parser注入进来
-// 如果我注定要用IPv4对分片进行重整，还需要录入UDP和TCP的解码么？
-func NewDecoder(output chan *api.NetPacket, opts *Options, ctx context.Context) *Decoder {
-	// 这里是Decoder的初始化代码
-	parser := NewParserComposite()
-	tcphandler := NewTCPHandler(output, parser)
-	udpHandler := NewUDPHandler(output, parser)
-	d := &Decoder{
-		output:  output,
-		handler: NewTransportHandlerComposite(tcphandler, udpHandler),
-	}
-	dlp := gopacket.NewDecodingLayerParser(
-		layers.LayerTypeEthernet,
-		&d.ipv4,
-		&d.tcp,
-		&d.udp)
-	d.parser = dlp
-	d.ipv4Reassembler = NewIPv4Reassembler(ReassemblerOptions{
-		MaxAge:       time.Duration(opts.MaxAge) * time.Second,
-		MaxFragments: opts.MaxFragmentsNum,
-		MaxIPSize:    opts.MaxIPSize,
-	})
-	return d
 }
 
 func (d *Decoder) Decode(data []byte, ci *gopacket.CaptureInfo) error {

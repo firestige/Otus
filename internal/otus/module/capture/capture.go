@@ -21,6 +21,7 @@ type Capture struct {
 	ctx context.Context
 }
 
+// TODO capture的生命周期管理？
 func (c *Capture) PostConstruct() error {
 
 	c.wg = &sync.WaitGroup{}

@@ -1,13 +1,13 @@
 package api
 
 import (
-	"firestige.xyz/otus/internal/otus/module/api"
-	"firestige.xyz/otus/internal/otus/msg"
+	"firestige.xyz/otus/internal/otus/api"
+	module "firestige.xyz/otus/internal/otus/module/api"
 )
 
 type Sender interface {
-	api.Module
+	module.Module
 
-	InputNetPacketChannel() chan<- *msg.OutputMessage
-	SetCapture(c api.Module) error
+	InputNetPacketChannel() chan<- *api.OutputPacketContext
+	SetCapture(c module.Module) error
 }
