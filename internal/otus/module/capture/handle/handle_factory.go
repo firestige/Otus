@@ -1,4 +1,4 @@
-package sniffer
+package handle
 
 import (
 	"context"
@@ -9,15 +9,15 @@ import (
 )
 
 var (
-	factory CaptureHandleFactory
+	factory *CaptureHandleFactory
 	once    *sync.Once
 )
 
 func HandleFactory() *CaptureHandleFactory {
 	once.Do(func() {
-		factory = *NewCaptureHandleFactory()
+		factory = newCaptureHandleFactory()
 	})
-	return &factory
+	return factory
 }
 
 // CaptureHandle 定义抓包句柄接口
@@ -59,7 +59,7 @@ func DefaultCaptureOptions() *Options {
 type CaptureHandleFactory struct{}
 
 // NewCaptureHandleFactory 创建新的工厂实例
-func NewCaptureHandleFactory() *CaptureHandleFactory {
+func newCaptureHandleFactory() *CaptureHandleFactory {
 	return &CaptureHandleFactory{}
 }
 
