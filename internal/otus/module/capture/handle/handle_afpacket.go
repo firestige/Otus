@@ -1,7 +1,6 @@
 package handle
 
 import (
-	"context"
 	"fmt"
 	"net"
 	"os"
@@ -14,32 +13,30 @@ import (
 
 // afpacketHandle AF_PACKET 抓包句柄实现
 type afpacketHandle struct {
-	ctx     context.Context
 	tpacket *afpacket.TPacket
 	options *Options
 }
 
 // NewAFPacketHandle 创建新的 AF_PACKET 抓包句柄
-func NewAFPacketHandle(ctx context.Context) CaptureHandle {
+func NewAFPacketHandle(options *Options) CaptureHandle {
 	return &afpacketHandle{
-		ctx: ctx,
+		options: options,
 	}
 }
 
 // Open 打开 AF_PACKET 抓包句柄
-func (h *afpacketHandle) Open(options *Options) error {
-	if options == nil {
-		options = DefaultCaptureOptions()
+func (h *afpacketHandle) Open() error {
+	if h.options == nil {
+		h.options = DefaultCaptureOptions()
 	}
-	h.options = options
 
 	// 获取网络接口
-	iface, err := net.InterfaceByName(options.NetworkInterface)
+	iface, err := net.InterfaceByName(h.options.NetworkInterface)
 	if err != nil {
-		return fmt.Errorf("failed to get interface %s: %v", options.NetworkInterface, err)
+		return fmt.Errorf("failed to get interface %s: %v", h.options.NetworkInterface, err)
 	}
 
-	framSize, szBlock, numBlock, err := computeFrameSizeAndBlocks(options)
+	framSize, szBlock, numBlock, err := computeFrameSizeAndBlocks(h.options)
 	if err != nil {
 		return fmt.Errorf("failed to compute frame size and blocks: %v", err)
 	}
@@ -50,7 +47,7 @@ func (h *afpacketHandle) Open(options *Options) error {
 		afpacket.OptFrameSize(framSize),
 		afpacket.OptBlockSize(szBlock),
 		afpacket.OptNumBlocks(numBlock),
-		afpacket.OptPollTimeout(time.Duration(options.Timeout)*time.Millisecond),
+		afpacket.OptPollTimeout(time.Duration(h.options.Timeout)*time.Millisecond),
 		afpacket.SocketRaw,
 		afpacket.TPacketVersion3,
 	)
@@ -61,16 +58,16 @@ func (h *afpacketHandle) Open(options *Options) error {
 	h.tpacket = tpacket
 
 	// Fanout 支持
-	if options.FanoutId > 0 {
-		if err := tpacket.SetFanout(afpacket.FanoutHashWithDefrag, options.FanoutId); err != nil {
+	if h.options.FanoutId > 0 {
+		if err := tpacket.SetFanout(afpacket.FanoutHashWithDefrag, h.options.FanoutId); err != nil {
 			return fmt.Errorf("failed to set fanout: %v", err)
 		}
 
 	}
 
 	// 如果有 BPF 过滤器，则设置过滤器
-	if options.Filter != "" {
-		rawBpf, err := utils.CompileBpf(options.Filter, options.SnapLen)
+	if h.options.Filter != "" {
+		rawBpf, err := utils.CompileBpf(h.options.Filter, h.options.SnapLen)
 		if err != nil {
 			return fmt.Errorf("failed to compile BPF filter: %v", err)
 		}

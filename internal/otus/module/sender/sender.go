@@ -8,10 +8,9 @@ import (
 	"time"
 
 	"firestige.xyz/otus/internal/log"
-	"firestige.xyz/otus/internal/otus/api"
+	otus "firestige.xyz/otus/internal/otus/api"
 	module "firestige.xyz/otus/internal/otus/module/api"
 	"firestige.xyz/otus/internal/otus/module/buffer"
-	capture "firestige.xyz/otus/internal/otus/module/capture/api"
 	sender "firestige.xyz/otus/internal/otus/module/sender/api"
 	client "firestige.xyz/otus/plugins/client/api"
 	fallbacker "firestige.xyz/otus/plugins/fallbacker/api"
@@ -28,9 +27,7 @@ type Sender struct {
 	fallbacker fallbacker.Fallbacker
 	client     client.Client
 
-	capture capture.Capture
-
-	inputs       []chan *api.OutputPacketContext
+	inputs       []<-chan *otus.OutputPacketContext
 	listener     chan client.ClientStatus
 	flushChannel []chan *buffer.BatchBuffer
 	buffers      []*buffer.BatchBuffer
@@ -49,12 +46,12 @@ func (s *Sender) PostConstruct() error {
 		}
 	}
 
-	s.inputs = make([]chan *api.OutputPacketContext, s.capture.PartitionCount())
-	s.buffers = make([]*buffer.BatchBuffer, s.capture.PartitionCount())
-	s.flushChannel = make([]chan *buffer.BatchBuffer, s.capture.PartitionCount())
-	for partition := 0; partition < s.capture.PartitionCount(); partition++ {
-		s.inputs[partition] = make(chan *api.OutputPacketContext)
-		s.buffers[partition] = buffer.NewBatchBuffer(s.config.MaxBufferSize)
+	s.inputs = make([]<-chan *otus.OutputPacketContext, s.config.Partition)
+	s.buffers = make([]*buffer.BatchBuffer, s.config.Partition)
+	s.flushChannel = make([]chan *buffer.BatchBuffer, s.config.Partition)
+	for partition := 0; partition < s.config.Partition; partition++ {
+		s.inputs[partition] = make(chan *otus.OutputPacketContext)
+		s.buffers[partition] = buffer.NewBatchBuffer(s.config.MaxBufferSize, partition)
 		s.flushChannel[partition] = make(chan *buffer.BatchBuffer)
 	}
 
@@ -64,9 +61,9 @@ func (s *Sender) PostConstruct() error {
 func (s *Sender) Boot(ctx context.Context) {
 	log.GetLogger().WithField("pipe", s.config.PipeName).Info("sender module is starting...")
 	wg := &sync.WaitGroup{}
-	wg.Add(2*s.capture.PartitionCount() + 1)
+	wg.Add(2*s.config.Partition + 1)
 	go s.listen(ctx, wg)
-	for partition := 0; partition < s.capture.PartitionCount(); partition++ {
+	for partition := 0; partition < s.config.Partition; partition++ {
 		go s.store(ctx, partition, wg)
 		go s.flush(ctx, partition, wg)
 	}
@@ -99,7 +96,7 @@ func (s *Sender) store(ctx context.Context, partition int, wg *sync.WaitGroup) {
 		case <-timeTicker.C:
 			if s.buffers[partition].Len() >= s.config.MinFlushEvents {
 				s.flushChannel[partition] <- s.buffers[partition]
-				s.buffers[partition] = buffer.NewBatchBuffer(s.config.MaxBufferSize)
+				s.buffers[partition] = buffer.NewBatchBuffer(s.config.MaxBufferSize, partition)
 			}
 		case e := <-s.inputs[partition]:
 			if e == nil {
@@ -108,7 +105,7 @@ func (s *Sender) store(ctx context.Context, partition int, wg *sync.WaitGroup) {
 			s.buffers[partition].Add(e)
 			if s.buffers[partition].Len() == s.config.MaxBufferSize {
 				s.flushChannel[partition] <- s.buffers[partition]
-				s.buffers[partition] = buffer.NewBatchBuffer(s.config.MaxBufferSize)
+				s.buffers[partition] = buffer.NewBatchBuffer(s.config.MaxBufferSize, partition)
 			}
 		}
 	}
@@ -159,9 +156,6 @@ func (s *Sender) Shutdown() {
 
 func (s *Sender) shutdown0() {
 	log.GetLogger().WithField("pipe", s.config.PipeName).Info("sender module is shutting down...")
-	for _, in := range s.inputs {
-		close(in)
-	}
 	wg := &sync.WaitGroup{}
 	finished := make(chan struct{}, 1)
 	wg.Add(len(s.flushChannel))
@@ -197,7 +191,7 @@ func (s *Sender) consume(batch *buffer.BatchBuffer) {
 		"offset": batch.Last(),
 		"size":   batch.Len(),
 	}).Info("sender module is flushing a new batch buffer.")
-	packets := make(map[string]api.BatchePacket)
+	packets := make(map[string]otus.BatchePacket)
 	for i := 0; i < batch.Len(); i++ {
 		packetContext := batch.Buf()[i]
 		for _, p := range packetContext.Context {
@@ -227,14 +221,14 @@ func (s *Sender) consume(batch *buffer.BatchBuffer) {
 	}
 }
 
-func (s *Sender) InputNetPacketChannel(partition int) chan<- *api.OutputPacketContext {
-	return s.inputs[partition]
+func (s *Sender) SetInputChannel(partition int, ch <-chan *otus.OutputPacketContext) error {
+	if partition < 0 || partition >= len(s.inputs) {
+		return fmt.Errorf("invalid partition: %d", partition)
+	}
+	s.inputs[partition] = ch
+	return nil
 }
 
-func (s *Sender) SetCapture(m module.Module) error {
-	if c, ok := m.(capture.Capture); ok {
-		s.capture = c
-		return nil
-	}
-	return fmt.Errorf("invalid capture module type: %T", m)
+func (s *Sender) IsChannelSet(partition int) bool {
+	return s.inputs[partition] != nil
 }

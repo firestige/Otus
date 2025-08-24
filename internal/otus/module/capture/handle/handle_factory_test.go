@@ -8,7 +8,7 @@ import (
 // TestCaptureFactory 测试抓包工厂模式
 func TestCaptureFactory(t *testing.T) {
 	// 创建工厂
-	factory := NewCaptureHandleFactory()
+	factory := newCaptureHandleFactory()
 
 	// 测试获取支持的类型
 	supportedTypes := factory.GetSupportedTypes()
@@ -24,7 +24,16 @@ func TestCaptureFactory(t *testing.T) {
 	}
 
 	// 测试创建 AF_PACKET 句柄
-	handle, err := factory.CreateHandle(t.Context(), TypeAFPacket)
+	options := &Options{
+		NetworkInterface: "eth0",
+		SnapLen:          1600,
+		BufferSize:       1024 * 1024,
+		Timeout:          1000,
+		Filter:           "udp port 5060",
+		CaptureType:      TypeAFPacket,
+	}
+
+	handle, err := factory.CreateHandle(options)
 	if err != nil {
 		t.Errorf("Failed to create AF_PACKET handle: %v", err)
 	}
@@ -34,7 +43,11 @@ func TestCaptureFactory(t *testing.T) {
 	}
 
 	// 测试创建不支持的类型
-	_, err = factory.CreateHandle(t.Context(), TypePCAP)
+	pcapOptions := &Options{
+		NetworkInterface: "eth0",
+		CaptureType:      TypePCAP,
+	}
+	_, err = factory.CreateHandle(pcapOptions)
 	if err == nil {
 		t.Errorf("Should fail to create PCAP handle")
 	}

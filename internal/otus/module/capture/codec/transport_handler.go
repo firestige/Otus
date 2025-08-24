@@ -1,7 +1,7 @@
 package codec
 
 import (
-	"firestige.xyz/otus/internal/otus/api"
+	otus "firestige.xyz/otus/internal/otus/api"
 	"github.com/google/gopacket/layers"
 )
 
@@ -39,11 +39,11 @@ func (t *transportHandlerComposite) handle(packet *IPv4Packet) error {
 }
 
 type udpHandler struct {
-	output chan *api.NetPacket
+	output chan<- *otus.OutputPacketContext
 	parser Parser
 }
 
-func NewUDPHandler(output chan *api.NetPacket, p Parser) TransportHandler {
+func NewUDPHandler(output chan<- *otus.OutputPacketContext, p Parser) TransportHandler {
 	return &udpHandler{
 		output: output,
 		parser: p,
@@ -65,17 +65,23 @@ func (u *udpHandler) handle(packet *IPv4Packet) error {
 	}
 	// 单个UDP包可能含有多个应用层消息（主要针对其他协议为了提高吞吐量，SIP不存在这种情况）
 	for len(payload) > 0 {
+		fiveTuple := extractFiveTuple(packet)
 		msg, n, err := u.parser.Extract(payload)
 		if err != nil {
 			return err
 		}
-		fiveTuple := extractFiveTuple(packet)
-		u.output <- &api.NetPacket{
+		p := &otus.NetPacket{
 			Protocol:  layers.IPProtocolUDP,
 			Timestamp: packet.Timestamp.UnixNano(),
 			FiveTuple: &fiveTuple,
 			Payload:   msg,
 		}
+		ctx := make(map[string]*otus.NetPacket)
+		ctx[string(p.ApplicationProtoType)] = p
+		outputCtx := &otus.OutputPacketContext{
+			Context: ctx,
+		}
+		u.output <- outputCtx
 		payload = payload[n:]
 	}
 	return nil
@@ -85,18 +91,22 @@ type tcpHandler struct {
 	assembly TCPAssembly // TCP assembly负责所有TCP处理逻辑
 }
 
-func NewTCPHandler(output chan *api.NetPacket, p Parser) TransportHandler {
-	// 创建consumer函数，将重组后的消息封装为NetPacket发送到output
-	consumer := func(data []byte, fiveTuple *api.FiveTuple, timestamp int64) error {
-		netPacket := &api.NetPacket{
+func NewTCPHandler(output chan<- *otus.OutputPacketContext, p Parser) TransportHandler {
+	// 创建consumer函数，将重组后的消息封装为OutputPacketContext发送到output
+	consumer := func(data []byte, fiveTuple *otus.FiveTuple, timestamp int64) error {
+		p := &otus.NetPacket{
 			Protocol:  layers.IPProtocolTCP,
 			Timestamp: timestamp,
 			FiveTuple: fiveTuple,
 			Payload:   data,
 		}
-
+		ctx := make(map[string]*otus.NetPacket)
+		ctx[string(p.ApplicationProtoType)] = p
+		outputCtx := &otus.OutputPacketContext{
+			Context: ctx,
+		}
 		select {
-		case output <- netPacket:
+		case output <- outputCtx:
 			return nil
 		default:
 			return nil // 如果通道满了，静默丢弃

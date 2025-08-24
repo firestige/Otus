@@ -12,7 +12,8 @@ const (
 )
 
 type CommonFields struct {
-	PipeName string `mapstructure:"pipe_name"`
+	PipeName  string `mapstructure:"pipe_name"`
+	Partition int    `mapstructure:"partition"`
 }
 
 type Configurable interface {

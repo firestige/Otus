@@ -5,12 +5,13 @@ import (
 	"fmt"
 	"sync"
 	"sync/atomic"
-	"time"
 
 	"firestige.xyz/otus/internal/log"
 	otus "firestige.xyz/otus/internal/otus/api"
 	capture "firestige.xyz/otus/internal/otus/module/capture/api"
+	"firestige.xyz/otus/internal/otus/module/capture/codec"
 	"firestige.xyz/otus/internal/otus/module/capture/handle"
+	parser "firestige.xyz/otus/plugins/parser/api"
 	"github.com/sirupsen/logrus"
 )
 
@@ -19,7 +20,7 @@ type Capture struct {
 
 	partitionCount int
 	partitions     []*Partition
-	outputChannels []chan *otus.BatchePacket
+	outputChannels []chan<- *otus.OutputPacketContext
 
 	shutdownOnce sync.Once
 	running      int32
@@ -29,11 +30,8 @@ type Partition struct {
 	id            int
 	fanoutGroupID uint16
 	handle        handle.CaptureHandle
-	outputCh      chan *otus.BatchePacket
-
-	batchSize    int
-	batchTimeout time.Duration
-	currentBatch []*otus.BatchePacket
+	decoder       *codec.Decoder
+	outputCh      chan<- *otus.OutputPacketContext
 }
 
 // TODO capture的生命周期管理？
@@ -41,27 +39,74 @@ func (c *Capture) PostConstruct() error {
 	log.GetLogger().WithField("pipe", c.config.PipeName).Info("capture module is preparing...")
 
 	for i := 0; i < c.partitionCount; i++ {
-		if c.outputChannels[i] == nil {
-			c.outputChannels[i] = make(chan *otus.BatchePacket, c.partitions[i].batchSize)
+		if c.IsChannelSet(i) {
+			c.partitions[i].outputCh = c.outputChannels[i]
 		}
-		c.partitions[i].outputCh = c.outputChannels[i]
 	}
 
-	for i, partition := range c.partitions {
-		factory := handle.HandleFactory()
-		if !factory.IsTypeSupported(c.config.HandleConfig.CaptureType) {
-			return fmt.Errorf("Unsupport Handle")
+	for _, partition := range c.partitions {
+		if err := c.buildPartitionComponents(partition, c.config); err != nil {
+			return fmt.Errorf("failed to build partition %d components: %w", partition.id, err)
 		}
-		handle, err := factory.CreateHandle(context.Background(), c.config.HandleConfig.CaptureType)
-		if err != nil {
-			return fmt.Errorf("Failed to create handle for partition %d: %w", i, err)
+
+		// 如果 handle 实现了 PostConstruct，也调用它
+		if postConstructable, ok := partition.handle.(interface{ PostConstruct() error }); ok {
+			if err := postConstructable.PostConstruct(); err != nil {
+				return fmt.Errorf("failed to post construct handle for partition %d: %w", partition.id, err)
+			}
 		}
-		partition.handle = handle
 	}
 	log.GetLogger().WithFields(logrus.Fields{
 		"pipe":       c.config.PipeName,
 		"partitions": c.partitionCount,
 	}).Infof("%s capture module is prepared", c.config.HandleConfig.CaptureType)
+	return nil
+}
+
+// 延迟构建分区组件，在 PostConstruct 阶段调用
+func (c *Capture) buildPartitionComponents(partition *Partition, cfg *capture.Config) error {
+	// 构建 parsers
+	parsers := make([]codec.Parser, 0)
+	for _, parserCfg := range cfg.ParserConfig {
+		// TODO satellite 如何实现只需要name 就可以加载的？
+		parsers = append(parsers, parser.GetParser(parserCfg))
+	}
+
+	// 创建 parser composite
+	parserComposite := codec.NewParserComposite(parsers...)
+
+	// 获取分区对应的 packetQueue（这时候已经初始化了）
+	packetQueue := c.getPartitionPacketQueue(partition.id)
+
+	// 创建 transport handlers
+	tcpHandler := codec.NewTCPHandler(packetQueue, parserComposite)
+	udpHandler := codec.NewUDPHandler(packetQueue, parserComposite)
+	transportHandler := codec.NewTransportHandlerComposite(tcpHandler, udpHandler)
+
+	// 创建 decoder
+	decoder := codec.NewDecoder(cfg.CodecConfig)
+	decoder.SetTransportHandler(transportHandler)
+
+	// 创建 handle
+	handle, err := handle.HandleFactory().CreateHandle(cfg.HandleConfig)
+	if err != nil {
+		return err
+	}
+
+	// 绑定到分区
+	partition.handle = handle
+	partition.decoder = decoder
+
+	return nil
+}
+
+// 获取分区对应的 packet queue
+func (c *Capture) getPartitionPacketQueue(partitionID int) chan<- *otus.OutputPacketContext {
+	// 这里可以是分区专用的队列，或者共享队列
+	if partitionID < len(c.outputChannels) && c.outputChannels[partitionID] != nil {
+		return c.outputChannels[partitionID]
+	}
+	// 或者返回一个默认的临时队列，稍后在 SetOutputChannel 中替换
 	return nil
 }
 
@@ -103,4 +148,26 @@ func (c *Capture) runPartition(ctx context.Context, partition *Partition, wg *sy
 
 func (c *Capture) Shutdown() {
 
+}
+
+func (c *Capture) PartitionCount() int {
+	return c.config.Partition
+}
+
+func (c *Capture) SetOutputChannel(partition int, ch chan<- *otus.OutputPacketContext) error {
+	if partition < 0 || partition >= c.partitionCount {
+		return fmt.Errorf("invalid partition index: %d", partition)
+	}
+	if ch == nil {
+		return fmt.Errorf("output channel cannot be nil")
+	}
+	if c.outputChannels[partition] != nil {
+		return fmt.Errorf("output channel for partition %d is already set", partition)
+	}
+	c.outputChannels[partition] = ch
+	return nil
+}
+
+func (c *Capture) IsChannelSet(partition int) bool {
+	return c.outputChannels[partition] != nil
 }

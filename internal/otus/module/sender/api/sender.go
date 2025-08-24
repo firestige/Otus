@@ -8,6 +8,8 @@ import (
 type Sender interface {
 	module.Module
 
-	InputNetPacketChannel(partition int) chan<- *otus.OutputPacketContext
-	SetCapture(c module.Module) error
+	// SetInputChannel 由pipe注入输入通道（消费端读取）
+	SetInputChannel(partition int, ch <-chan *otus.OutputPacketContext) error
+	// IsChannelSet 检查指定分区的通道是否已设置
+	IsChannelSet(partition int) bool
 }

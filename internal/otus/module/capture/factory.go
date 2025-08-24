@@ -1,8 +1,6 @@
 package capture
 
 import (
-	"time"
-
 	otus "firestige.xyz/otus/internal/otus/api"
 	capture "firestige.xyz/otus/internal/otus/module/capture/api"
 )
@@ -31,7 +29,7 @@ import (
 // }
 
 func NewCapture(cfg *capture.Config) capture.Capture {
-	partitionCount := cfg.Partitions
+	partitionCount := cfg.Partition
 	if partitionCount < 1 {
 		partitionCount = 1
 	}
@@ -40,18 +38,36 @@ func NewCapture(cfg *capture.Config) capture.Capture {
 		config:         cfg,
 		partitionCount: partitionCount,
 		partitions:     make([]*Partition, partitionCount),
-		outputChannels: make([]chan *otus.BatchePacket, partitionCount),
+		outputChannels: make([]chan<- *otus.OutputPacketContext, partitionCount),
 	}
 
 	for i := 0; i < partitionCount; i++ {
 		capture.partitions[i] = &Partition{
 			id:            i,
 			fanoutGroupID: uint16(cfg.HandleConfig.FanoutId),
-			batchSize:     cfg.batchSize,
-			batchTimeout:  time.Duration(cfg.HandleConfig.Timeout) * time.Millisecond,
-			currentBatch:  make([]*otus.BatchePacket, 0, cfg.batchSize),
+			// 推迟partition初始化到Capture.PostConstruct中完成，那时再进行handle、decoder和共享channel的绑定
 		}
-		capture.outputChannels[i] = capture.partitions[i].outputCh
 	}
 	return capture
 }
+
+// func buildPartition(id int, cfg *capture.Config) *Partition {
+// 	parsers := make([]codec.Parser, 0)
+// 	for _, c := range cfg.ParserConfig {
+// 		// TODO satellite 如何实现只需要name 就可以加载的？
+// 		parsers = append(parsers, parser.GetParser(c))
+// 	}
+// 	parser := codec.NewParserComposite(parsers...)
+// 	tcphandler := codec.NewTCPHandler(c.packetQueue, parser)
+// 	udphandler := codec.NewUDPHandler(c.packetQueue, parser)
+// 	handler := codec.NewTransportHandlerComposite(tcphandler, udphandler)
+// 	decoder := codec.NewDecoder(cfg.CodecConfig)
+// 	decoder.SetTransportHandler(handler)
+// 	handle, _ := handle.HandleFactory().CreateHandle(cfg.HandleConfig)
+// 	return &Partition{
+// 		id:            id,
+// 		fanoutGroupID: uint16(cfg.HandleConfig.FanoutId),
+// 		handle:        handle,
+// 		decoder:       decoder,
+// 	}
+// }

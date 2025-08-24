@@ -5,15 +5,6 @@ import (
 	"strings"
 )
 
-// CaptureType 定义抓包类型
-type CaptureType string
-
-const (
-	TypeAFPacket CaptureType = "afpacket"
-	TypePCAP     CaptureType = "pcap"
-	TypeXDP      CaptureType = "xdp"
-)
-
 type Options struct {
 	NetworkInterface string      `mapstructure:"network_interface"` // 网络接口名称
 	SnapLen          int         `mapstructure:"snap_len"`          // 捕获长度

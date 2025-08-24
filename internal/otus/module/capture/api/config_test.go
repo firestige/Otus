@@ -65,8 +65,8 @@ func validateCaptureConfig(t *testing.T, cfg *api.Config) {
 		t.Logf("PipeName: %s", cfg.CommonFields.PipeName)
 	}
 
-	if cfg.SnifferConfig != nil {
-		t.Logf("SnifferConfig: %+v", cfg.SnifferConfig)
+	if cfg.HandleConfig != nil {
+		t.Logf("SnifferConfig: %+v", cfg.HandleConfig)
 		// 这里可以添加具体的 sniffer 配置验证
 	}
 

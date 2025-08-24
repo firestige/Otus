@@ -13,6 +13,5 @@ type Config struct {
 	HandleConfig *handle.Options `mapstructure:"handle"`
 	CodecConfig  *codec.Options  `mapstructure:"codec"`
 	ParserConfig []plugin.Config `mapstructure:"parsers"`
-	Partitions   int             `mapstructure:"partitions"`
 	FanoutID     uint16          `mapstructure:"fanout_id"`
 }

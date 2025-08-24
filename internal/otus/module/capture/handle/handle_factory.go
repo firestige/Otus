@@ -1,11 +1,8 @@
 package handle
 
 import (
-	"context"
 	"fmt"
 	"sync"
-
-	"github.com/google/gopacket"
 )
 
 var (
@@ -18,21 +15,6 @@ func HandleFactory() *CaptureHandleFactory {
 		factory = newCaptureHandleFactory()
 	})
 	return factory
-}
-
-// CaptureHandle 定义抓包句柄接口
-type CaptureHandle interface {
-	// Open 打开抓包句柄
-	Open(options *Options) error
-
-	// ReadPacket 读取数据包
-	ReadPacket() ([]byte, gopacket.CaptureInfo, error)
-
-	// Close 关闭抓包句柄
-	Close() error
-
-	// GetType 获取抓包类型
-	GetType() CaptureType
 }
 
 // CaptureOptions 抓包选项配置
@@ -64,16 +46,16 @@ func newCaptureHandleFactory() *CaptureHandleFactory {
 }
 
 // CreateHandle 根据类型创建抓包句柄
-func (f *CaptureHandleFactory) CreateHandle(ctx context.Context, captureType CaptureType) (CaptureHandle, error) {
-	switch captureType {
+func (f *CaptureHandleFactory) CreateHandle(options *Options) (CaptureHandle, error) {
+	switch options.CaptureType {
 	case TypeAFPacket:
-		return NewAFPacketHandle(ctx), nil
+		return NewAFPacketHandle(options), nil
 	case TypePCAP:
 		return nil, fmt.Errorf("PCAP capture type not implemented yet")
 	case TypeXDP:
 		return nil, fmt.Errorf("XDP capture type not implemented yet")
 	default:
-		return nil, fmt.Errorf("unsupported capture type: %s", captureType)
+		return nil, fmt.Errorf("unsupported capture type: %s", options.CaptureType)
 	}
 }
 
