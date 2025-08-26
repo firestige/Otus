@@ -8,6 +8,7 @@ import (
 
 	"firestige.xyz/otus/internal/config"
 	"firestige.xyz/otus/internal/log"
+	"firestige.xyz/otus/internal/otus/module/pipeline"
 	"firestige.xyz/otus/internal/plugin"
 	"github.com/spf13/viper"
 )
@@ -34,7 +35,7 @@ func Load(path string) (*OtusConfig, error) {
 		return nil, fmt.Errorf("failed to read config file %s: %w", path, err)
 	}
 
-	var config *OtusConfig
+	config := &OtusConfig{}
 
 	// 使用 viper 的 Unmarshal，自动处理 mapstructure
 	if err := v.Unmarshal(config); err != nil {
@@ -67,14 +68,12 @@ func applyDefaults(otusConfig *OtusConfig) {
 }
 
 // propagateCommonFieldsInPipes propagates the common fields to every module and the dependency plugin.
-func propagateCommonFieldsInPipes(pipes []*PipeConfig) {
+func propagateCommonFieldsInPipes(pipes []*pipeline.Config) {
 	for _, pipe := range pipes {
-		pipe.Capture.CommonFields = pipe.CommonConfig
-		pipe.Processor.CommonFields = pipe.CommonConfig
-		pipe.Sender.CommonFields = pipe.CommonConfig
-		propagateCommonFieldsInStruct(pipe.Capture, pipe.CommonConfig)
-		propagateCommonFieldsInStruct(pipe.Processor, pipe.CommonConfig)
-		propagateCommonFieldsInStruct(pipe.Sender, pipe.CommonConfig)
+		pipe.CaptureConfig.CommonFields = pipe.CommonConfig
+		pipe.SenderConfig.CommonFields = pipe.CommonConfig
+		propagateCommonFieldsInStruct(pipe.CaptureConfig, pipe.CommonConfig)
+		propagateCommonFieldsInStruct(pipe.SenderConfig, pipe.CommonConfig)
 	}
 }
 

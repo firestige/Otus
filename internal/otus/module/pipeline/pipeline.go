@@ -21,7 +21,7 @@ type Pipeline interface {
 }
 
 type Config struct {
-	*config.CommonFields
+	CommonConfig *config.CommonFields `mapstructure:"common_config"`
 
 	CaptureConfig *capture.Config `mapstructure:"capture"`
 	SenderConfig  *sender.Config  `mapstructure:"sender"`
@@ -97,22 +97,22 @@ func (p *pipe) Boot(ctx context.Context) {
 	defer p.mu.Unlock()
 
 	if p.isRunning {
-		log.GetLogger().WithField("pipe", p.config.PipeName).Warn("pipeline already running")
+		log.GetLogger().WithField("pipe", p.config.CommonConfig.PipeName).Warn("pipeline already running")
 		return
 	}
 
 	if len(p.channels) == 0 {
-		log.GetLogger().WithField("pipe", p.config.PipeName).Error("channels not created")
+		log.GetLogger().WithField("pipe", p.config.CommonConfig.PipeName).Error("channels not created")
 		return
 	}
 
 	for i := 0; i < p.config.Partitions; i++ {
 		if !p.capture.IsChannelSet(i) {
-			log.GetLogger().WithField("pipe", p.config.PipeName).WithField("partition", i).Error("capture output channel not set")
+			log.GetLogger().WithField("pipe", p.config.CommonConfig.PipeName).WithField("partition", i).Error("capture output channel not set")
 			return
 		}
 		if !p.sender.IsChannelSet(i) {
-			log.GetLogger().WithField("pipe", p.config.PipeName).WithField("partition", i).Error("sender input channel not set")
+			log.GetLogger().WithField("pipe", p.config.CommonConfig.PipeName).WithField("partition", i).Error("sender input channel not set")
 			return
 		}
 	}
@@ -131,7 +131,7 @@ func (p *pipe) Shutdown() {
 	defer p.mu.Unlock()
 
 	if !p.isRunning {
-		log.GetLogger().WithField("pipe", p.config.PipeName).Warn("pipeline not running")
+		log.GetLogger().WithField("pipe", p.config.CommonConfig.PipeName).Warn("pipeline not running")
 		return
 	}
 
@@ -146,7 +146,7 @@ func (p *pipe) Shutdown() {
 	// 最后关闭所有通道
 	for i, ch := range p.channels {
 		close(ch)
-		log.GetLogger().WithField("pipe", p.config.PipeName).WithField("partition", i).Info("closed channel")
+		log.GetLogger().WithField("pipe", p.config.CommonConfig.PipeName).WithField("partition", i).Info("closed channel")
 	}
 	p.channels = nil
 }
