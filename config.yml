@@ -1,10 +1,8 @@
-logger:
-  # 基础配置
-  level: "debug"           # 日志级别: trace, debug, info, warn, error, fatal, panic
-  pattern: "%time[%caller][%func][%goroutine][%level][%field] - %msg\n"  # 日志格式
-  time: "2006-01-02 15:04:05"  # 时间格式
-  
-  # 输出配置 (支持多个appender)
+# Logger configuration (log.LoggerConfig)
+log:
+  level: "info"
+  pattern: "%time[%caller][%func][%goroutine][%level][%field] - %msg\n"
+  time: "2006-01-02 15:04:05"
   appenders:
     # 控制台输出
     - type: "console"
@@ -29,38 +27,50 @@ logger:
         
   # 格式化选项
   formatter:
-    enable_colors: true     # 控制台彩色输出
-    full_timestamp: true    # 完整时间戳
-    disable_sorting: false  # 禁用字段排序
-    
-  # 性能选项  
-  buffer_size: 1024        # 缓冲区大小
-  flush_interval: "5s"     # 刷新间隔
+    enable_colors: true
+    full_timestamp: true
+    disable_sorting: false
+  buffer_size: 1024
+  flush_interval: "5s"
+
+# Sharable configuration (SharableConfig)  
 sharable:
-  capture:
-    sniffer:
-      network_interface: eth0
-      snap_len: 65535
-      buffer_size: 65536
-      timeout: 1000
-      filter: "ip"
-      fanout_id: 123
-      capture_type: "afpacket"
-    codec:
-      max_age: 30
-      max_fragments_num: 100
-      max_ip_size: 1500
+  clients: []
+
+# Pipeline configurations (pipeline.Config array)
 pipes:
   - common_config:
-      name: "sip-capture"
+      pipe_name: "sip-capture"
+      partitions: 1
+      fanout_id: 123
     capture:
-      worker_count: 2
-    processor:
-      filters:
-        - name: "five-tuple-filter"
+      handle:
+        network_interface: "eth0"
+        snap_len: 65535
+        buffer_size: 65536
+        timeout: 1000
+        filter: "ip"
+        fanout_id: 123
+        capture_type: "afpacket"
+      codec:
+        max_age: 30
+        max_fragments_num: 100
+        max_ip_size: 1500
+      parsers: 
+        - name: "sip-parser"
+          type: "sip"
+      fanout_id: 123
     sender:
+      reporters: 
       fallbacker:
-        plugin_name: none-fallbacker
-      reporters:
-        - plugin_name: satellite-trace-grpc-reporter
+        plugin_name: "none-fallbacker"
+      client_name: ""
+      max_buffer_size: 1024
+      min_flush_events: 10
+      flush_interval: 5
+    buffer_size: 1024
+
+
+# Metrics configuration (metrics.Config - empty struct)
+metrics:
 

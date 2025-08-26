@@ -32,7 +32,7 @@ type Sender struct {
 	flushChannel []chan *buffer.BatchBuffer
 	buffers      []*buffer.BatchBuffer
 	blocking     int32
-	shutdownOnce sync.Once
+	shutdownOnce *sync.Once
 }
 
 func (s *Sender) PostConstruct() error {

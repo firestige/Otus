@@ -7,6 +7,7 @@ import (
 
 	"firestige.xyz/otus/internal/config"
 	"firestige.xyz/otus/internal/log"
+	"github.com/sirupsen/logrus"
 	"github.com/spf13/viper"
 )
 
@@ -17,21 +18,27 @@ func init() {
 }
 
 func RegisterPlugin(plugin Plugin) {
-	pluginType := reflect.TypeOf(plugin).Elem() // 获取接口类型
-	successFlag := false
+	v := reflect.ValueOf(plugin)
+	log.GetLogger().Infof("register plugin: %s", plugin.Name())
+	success := false
 
-	// 遍历所有已注册的类型，找到匹配的接口
-	for registeredType, moduleMap := range registry {
-		if reflect.TypeOf(plugin).Implements(registeredType) {
-			moduleMap[plugin.Name()] = reflect.ValueOf(plugin)
-			log.GetLogger().WithField("category", registeredType.Name()).WithField("module", plugin.Name()).Debug("Registered module")
-			successFlag = true
-			break
+	for pCategory, pReg := range registry {
+		if v.Type().Implements(pCategory) {
+			log.GetLogger().Infof("pcategory: %s, pReg is %+v", pCategory.String(), pReg)
+			pReg[plugin.Name()] = v
+			log.GetLogger().WithFields(logrus.Fields{
+				"category":    v.Type().String(),
+				"plugin_name": plugin.Name(),
+			}).Debug("register plugin success")
+			success = true
 		}
 	}
 
-	if !successFlag {
-		log.GetLogger().WithField("category", pluginType.Name()).WithField("module", plugin.Name()).Error("Module register failed")
+	if !success {
+		log.GetLogger().WithFields(logrus.Fields{
+			"category":    v.Type().String(),
+			"plugin_name": plugin.Name(),
+		}).Error("plugin is not allowed to register")
 	}
 }
 
@@ -44,16 +51,26 @@ func GetRegistedPlugins() map[reflect.Type]map[string]reflect.Value {
 }
 
 func Get(pluginType reflect.Type, cfg Config) Plugin {
-	if moduleMap, exists := registry[pluginType]; exists {
-		for _, plugin := range moduleMap {
-			if p, ok := plugin.Interface().(Plugin); ok {
-				Initializing(p, cfg)
-				return p
-			}
-		}
+	pluginName := findName(cfg)
+	value, ok := registry[pluginType][pluginName]
+	if !ok {
+		panic(fmt.Errorf("cannot find plugin %s of type %s", pluginName, pluginType.Name()))
 	}
-	log.GetLogger().WithField("category", pluginType.Name()).Error("No suitable module found")
-	return nil
+	t := value.Type()
+	if t.Kind() == reflect.Ptr {
+		t = t.Elem()
+	}
+	plugin := reflect.New(t).Interface().(Plugin)
+	Initializing(plugin, cfg)
+	return plugin
+}
+
+func findName(cfg Config) string {
+	name, ok := cfg[NameField]
+	if !ok {
+		panic(fmt.Errorf("the config must have a field named %s", NameField))
+	}
+	return name.(string)
 }
 
 func GetPluginByName(pluginType reflect.Type, name string) reflect.Value {

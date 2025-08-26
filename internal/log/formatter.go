@@ -50,11 +50,14 @@ func getCaller(entry *logrus.Entry) string {
 	// fallback: 使用runtime
 	_, file, line, ok := runtime.Caller(8)
 	if ok {
-		slashIdx := strings.LastIndex(file, "/")
-		if slashIdx != -1 && slashIdx+1 < len(file) {
-			file = file[slashIdx+1:]
+		// 取路径的倒数三层（如果不足三层则全部返回）
+		parts := strings.Split(file, "/")
+		start := 0
+		if len(parts) > 3 {
+			start = len(parts) - 3
 		}
-		return fmt.Sprintf("unknown/%s:%d", file, line)
+		last := strings.Join(parts[start:], "/")
+		return fmt.Sprintf("%s:%d", last, line)
 	}
 	return "unknown"
 }

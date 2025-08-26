@@ -38,7 +38,7 @@ func Start(cfg *config.OtusConfig, timeout time.Duration) error {
 
 	if pipes, err := initPipes(cfg); err != nil {
 		return err
-	} else if err := preparePipes(ctx, pipes); err != nil {
+	} else if err := preparePipes(pipes); err != nil {
 		return err
 	} else if err := sharable.Start(); err != nil {
 		return err
@@ -72,13 +72,13 @@ func initPipes(cfg *config.OtusConfig) (container, error) {
 	return container, nil
 }
 
-func preparePipes(ctx context.Context, pipes container) error {
+func preparePipes(pipes container) error {
 	log.GetLogger().Info("otus is prepare to start")
-	preparePipes := make([]pipeline.Pipeline, 0)
+	preparedPipes := make([]pipeline.Pipeline, 0)
 	for ns, pipe := range pipes {
-		preparePipes = append(preparePipes, pipe)
+		preparedPipes = append(preparedPipes, pipe)
 		if err := pipe.PostConstruct(); err != nil {
-			for _, p := range preparePipes {
+			for _, p := range preparedPipes {
 				p.Shutdown()
 			}
 			log.GetLogger().

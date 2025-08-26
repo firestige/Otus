@@ -8,6 +8,7 @@ import (
 
 type Filter interface {
 	plugin.Plugin
+	Filter(data []byte) ([]byte, error)
 }
 
 func GetFilter(cfg plugin.Config) Filter {

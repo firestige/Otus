@@ -46,14 +46,6 @@ func TestCaptureConfigFromRootConfigYml(t *testing.T) {
 	require.NoError(t, err, "Failed to load config using config.Load()")
 
 	t.Logf("Loaded OtusConfig: %+v", otusConfig)
-
-	// 验证是否正确注入到 capture.Config
-	// 注意：这里需要根据实际的 OtusConfig 结构进行调整
-	if otusConfig.Sharable.Capture != nil {
-		validateCaptureConfig(t, otusConfig.Sharable.Capture)
-	} else {
-		t.Log("No capture configuration found in loaded config")
-	}
 }
 
 // validateCaptureConfig 验证 capture 配置的辅助函数
