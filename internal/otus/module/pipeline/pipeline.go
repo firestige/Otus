@@ -61,7 +61,6 @@ func (p *pipe) CreateChannels(bufferSize int) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	log.GetLogger().Info("Creating channels")
 	if p.capture == nil || p.sender == nil {
 		return fmt.Errorf("module not set")
 	}
@@ -73,15 +72,18 @@ func (p *pipe) CreateChannels(bufferSize int) error {
 	}
 
 	p.channels = make([]chan *otus.OutputPacketContext, partitions)
+	log.GetLogger().Infof("Creating channels with partitions: %d", partitions)
 	for i := 0; i < partitions; i++ {
 		ch := make(chan *otus.OutputPacketContext, bufferSize)
 		p.channels[i] = ch
 
 		if err := p.sender.SetInputChannel(i, ch); err != nil {
+			log.GetLogger().Errorf("Failed to set input channel for partition %d: %v", i, err)
 			return fmt.Errorf("failed to set input channel for partition %d: %w", i, err)
 		}
 
 		if err := p.capture.SetOutputChannel(i, ch); err != nil {
+			log.GetLogger().Errorf("Failed to set output channel for partition %d: %v", i, err)
 			return fmt.Errorf("failed to set output channel for partition %d: %w", i, err)
 		}
 	}

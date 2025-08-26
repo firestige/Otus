@@ -42,9 +42,6 @@ func (s *Sender) PostConstruct() error {
 		}
 	}
 
-	s.inputs = make([]<-chan *otus.OutputPacketContext, s.config.Partition)
-	s.buffers = make([]*buffer.BatchBuffer, s.config.Partition)
-	s.flushChannel = make([]chan *buffer.BatchBuffer, s.config.Partition)
 	for partition := 0; partition < s.config.Partition; partition++ {
 		s.inputs[partition] = make(chan *otus.OutputPacketContext)
 		s.buffers[partition] = buffer.NewBatchBuffer(s.config.MaxBufferSize, partition)
@@ -200,6 +197,7 @@ func (s *Sender) SetInputChannel(partition int, ch <-chan *otus.OutputPacketCont
 		return fmt.Errorf("invalid partition: %d", partition)
 	}
 	s.inputs[partition] = ch
+	log.GetLogger().Infof("set channel for partition: %d", partition)
 	return nil
 }
 

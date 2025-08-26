@@ -69,6 +69,7 @@ pipes:
       min_flush_events: 10
       flush_interval: 5
     buffer_size: 1024
+    partitions: 1
 
 
 # Metrics configuration (metrics.Config - empty struct)

@@ -142,12 +142,47 @@ func (c *Capture) runPartition(ctx context.Context, partition *Partition, wg *sy
 			"partition": partition.id,
 		}).Info("partition capture routine closed")
 	}()
-
-	//
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+			data, ci, err := partition.handle.ReadPacket()
+			if err != nil {
+				log.GetLogger().WithFields(logrus.Fields{
+					"pipe":      c.config.PipeName,
+					"partition": partition.id,
+					"error":     err,
+				}).Error("error reading packet")
+				continue
+			}
+			err = partition.decoder.Decode(data, &ci)
+			if err != nil {
+				log.GetLogger().WithFields(logrus.Fields{
+					"pipe":      c.config.PipeName,
+					"partition": partition.id,
+					"error":     err,
+				}).Error("error decoding packet")
+			}
+		}
+	}
 }
 
 func (c *Capture) Shutdown() {
-
+	log.GetLogger().WithField("pipe", c.config.PipeName).Info("capture module is shutting down...")
+	c.shutdownOnce.Do(func() {
+		atomic.StoreInt32(&c.running, 0)
+		for _, partition := range c.partitions {
+			if err := partition.handle.Close(); err != nil {
+				log.GetLogger().WithFields(logrus.Fields{
+					"pipe":      c.config.PipeName,
+					"partition": partition.id,
+					"error":     err,
+				}).Error("error closing handle")
+			}
+		}
+	})
+	log.GetLogger().WithField("pipe", c.config.PipeName).Info("capture module is shutting down complete")
 }
 
 func (c *Capture) PartitionCount() int {
