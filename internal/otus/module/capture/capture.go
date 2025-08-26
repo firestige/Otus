@@ -151,7 +151,7 @@ func (c *Capture) Shutdown() {
 }
 
 func (c *Capture) PartitionCount() int {
-	return c.config.Partition
+	return c.config.CommonFields.Partition
 }
 
 func (c *Capture) SetOutputChannel(partition int, ch chan<- *otus.OutputPacketContext) error {
@@ -165,6 +165,7 @@ func (c *Capture) SetOutputChannel(partition int, ch chan<- *otus.OutputPacketCo
 		return fmt.Errorf("output channel for partition %d is already set", partition)
 	}
 	c.outputChannels[partition] = ch
+	log.GetLogger().Infof("set channel for partition %d", partition)
 	return nil
 }
 

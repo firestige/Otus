@@ -61,6 +61,7 @@ func (p *pipe) CreateChannels(bufferSize int) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
+	log.GetLogger().Info("Creating channels")
 	if p.capture == nil || p.sender == nil {
 		return fmt.Errorf("module not set")
 	}

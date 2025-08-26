@@ -41,7 +41,7 @@ sharable:
 pipes:
   - common_config:
       pipe_name: "sip-capture"
-      partitions: 1
+      partition: 1
       fanout_id: 123
     capture:
       handle:
