@@ -13,7 +13,6 @@ import (
 	"firestige.xyz/otus/internal/otus/config"
 	"firestige.xyz/otus/internal/otus/metrics"
 	"firestige.xyz/otus/internal/otus/module/pipeline"
-	"firestige.xyz/otus/internal/otus/sharable"
 	plugin "firestige.xyz/otus/plugins"
 )
 
@@ -30,17 +29,9 @@ func Start(cfg *config.OtusConfig, timeout time.Duration) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	initShutdownListener(cancel)
 
-	sharable.Load(cfg.Sharable)
-	if err := sharable.PostConstruct(ctx); err != nil {
-		return fmt.Errorf("failed to post-construct sharable module: %w", err)
-	}
-	defer sharable.Close()
-
 	if pipes, err := initPipes(cfg); err != nil {
 		return err
 	} else if err := preparePipes(pipes); err != nil {
-		return err
-	} else if err := sharable.Start(); err != nil {
 		return err
 	} else {
 		bootPipes(ctx, pipes)

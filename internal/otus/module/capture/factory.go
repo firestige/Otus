@@ -1,6 +1,9 @@
 package capture
 
 import (
+	"encoding/json"
+
+	"firestige.xyz/otus/internal/log"
 	otus "firestige.xyz/otus/internal/otus/api"
 	capture "firestige.xyz/otus/internal/otus/module/capture/api"
 )
@@ -32,6 +35,13 @@ func NewCapture(cfg *capture.Config) capture.Capture {
 	partitionCount := cfg.Partition
 	if partitionCount < 1 {
 		partitionCount = 1
+	}
+
+	// 使用 json.MarshalIndent 递归打印（注意：仅导出字段会被序列化）
+	if b, err := json.MarshalIndent(cfg, "", "  "); err == nil {
+		log.GetLogger().Infof("capture config: %s", string(b))
+	} else {
+		log.GetLogger().WithField("err", err).Infof("capture config marshal error")
 	}
 
 	capture := &Capture{

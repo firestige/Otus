@@ -36,6 +36,8 @@ type Logger interface {
 	IsTraceEnabled() bool
 	IsDebugEnabled() bool
 	IsInfoEnabled() bool
+
+	GetEntry() interface{}
 }
 
 var (

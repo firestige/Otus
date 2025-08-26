@@ -7,7 +7,7 @@ import (
 
 var (
 	factory *CaptureHandleFactory
-	once    *sync.Once
+	once    sync.Once
 )
 
 func HandleFactory() *CaptureHandleFactory {

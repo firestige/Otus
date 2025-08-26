@@ -75,3 +75,7 @@ func (l *logrusAdapter) IsDebugEnabled() bool {
 func (l *logrusAdapter) IsInfoEnabled() bool {
 	return l.entry.Logger.IsLevelEnabled(logrus.InfoLevel)
 }
+
+func (l *logrusAdapter) GetEntry() interface{} {
+	return l.entry
+}

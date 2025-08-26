@@ -3,6 +3,8 @@ package sip
 import (
 	"bytes"
 	"context"
+
+	"firestige.xyz/otus/internal/config"
 )
 
 // SIP方法常量
@@ -27,6 +29,7 @@ var sipMethods = [][]byte{
 var sipVersion = []byte("SIP/2.0")
 
 type SipParser struct {
+	config.CommonFields
 	// TCP Assembly已经处理了缓冲和重组，这里不需要额外的buffer
 }
 
@@ -103,6 +106,6 @@ func (p *SipParser) Start() error {
 	return nil
 }
 
-func (p *SipParser) Stop() error {
+func (p *SipParser) Close() error {
 	return nil
 }

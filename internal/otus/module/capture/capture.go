@@ -151,7 +151,7 @@ func (c *Capture) Shutdown() {
 }
 
 func (c *Capture) PartitionCount() int {
-	return c.config.CommonFields.Partition
+	return c.config.Partition
 }
 
 func (c *Capture) SetOutputChannel(partition int, ch chan<- *otus.OutputPacketContext) error {

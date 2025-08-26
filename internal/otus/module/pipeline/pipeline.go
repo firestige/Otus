@@ -90,6 +90,8 @@ func (p *pipe) CreateChannels(bufferSize int) error {
 
 func (p *pipe) PostConstruct() error {
 	p.CreateChannels(p.config.BufferSize)
+	p.sender.PostConstruct()
+	p.capture.PostConstruct()
 	return nil
 }
 

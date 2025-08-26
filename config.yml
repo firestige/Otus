@@ -35,8 +35,8 @@ log:
 
 # Sharable configuration (SharableConfig)  
 sharable:
-  clients: []
-
+  clients:
+    - plugin_name: "stub-client"
 # Pipeline configurations (pipeline.Config array)
 pipes:
   - common_config:
@@ -57,7 +57,7 @@ pipes:
         max_fragments_num: 100
         max_ip_size: 1500
       parsers: 
-        - name: "sip-parser"
+        - plugin_name: "sip-parser"
           type: "sip"
       fanout_id: 123
     sender:

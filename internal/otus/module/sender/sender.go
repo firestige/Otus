@@ -12,7 +12,6 @@ import (
 	module "firestige.xyz/otus/internal/otus/module/api"
 	"firestige.xyz/otus/internal/otus/module/buffer"
 	sender "firestige.xyz/otus/internal/otus/module/sender/api"
-	client "firestige.xyz/otus/plugins/client/api"
 	fallbacker "firestige.xyz/otus/plugins/fallbacker/api"
 	reporter "firestige.xyz/otus/plugins/reporter/api"
 	"github.com/sirupsen/logrus"
@@ -25,10 +24,8 @@ type Sender struct {
 
 	reporters  []reporter.Reporter
 	fallbacker fallbacker.Fallbacker
-	client     client.Client
 
 	inputs       []<-chan *otus.OutputPacketContext
-	listener     chan client.ClientStatus
 	flushChannel []chan *buffer.BatchBuffer
 	buffers      []*buffer.BatchBuffer
 	blocking     int32
@@ -38,9 +35,8 @@ type Sender struct {
 func (s *Sender) PostConstruct() error {
 	log.GetLogger().WithField("pipe", s.config.PipeName).Info("sender module is preparing...")
 
-	s.client.RegisterListener(s.listener)
 	for _, reporter := range s.reporters {
-		err := reporter.PostConstruct(s.client.GetConnectedClient())
+		err := reporter.PostConstruct()
 		if err != nil {
 			return err
 		}
@@ -62,7 +58,6 @@ func (s *Sender) Boot(ctx context.Context) {
 	log.GetLogger().WithField("pipe", s.config.PipeName).Info("sender module is starting...")
 	wg := &sync.WaitGroup{}
 	wg.Add(2*s.config.Partition + 1)
-	go s.listen(ctx, wg)
 	for partition := 0; partition < s.config.Partition; partition++ {
 		go s.store(ctx, partition, wg)
 		go s.flush(ctx, partition, wg)
@@ -106,27 +101,6 @@ func (s *Sender) store(ctx context.Context, partition int, wg *sync.WaitGroup) {
 			if s.buffers[partition].Len() == s.config.MaxBufferSize {
 				s.flushChannel[partition] <- s.buffers[partition]
 				s.buffers[partition] = buffer.NewBatchBuffer(s.config.MaxBufferSize, partition)
-			}
-		}
-	}
-}
-
-func (s *Sender) listen(ctx context.Context, wg *sync.WaitGroup) {
-	defer wg.Done()
-	defer log.GetLogger().WithField("pipe", s.config.PipeName).Info("listen routine closed")
-	childCtx, _ := context.WithCancel(ctx)
-	for {
-		select {
-		case <-childCtx.Done():
-			return
-		case status := <-s.listener:
-			switch status {
-			case client.Connected:
-				log.GetLogger().WithField("pipe", s.config.PipeName).Info("client connected")
-				atomic.StoreInt32(&s.blocking, 0)
-			case client.Disconnect:
-				log.GetLogger().WithField("pipe", s.config.PipeName).Info("client disconnected")
-				atomic.StoreInt32(&s.blocking, 1)
 			}
 		}
 	}

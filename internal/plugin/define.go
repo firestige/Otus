@@ -9,8 +9,9 @@ type Plugin interface {
 
 type SharablePlugin interface {
 	Plugin
+	PostConstruct() error
 	Start() error
-	Stop() error
+	Close() error
 }
 
 type Config map[string]interface{}
