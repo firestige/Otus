@@ -31,8 +31,11 @@ func (t *transportHandlerComposite) support(packet *IPv4Packet) bool {
 }
 
 func (t *transportHandlerComposite) handle(packet *IPv4Packet) error {
+	log.GetLogger().Infof("Handling packet: %+v", packet)
+	log.GetLogger().Infof("Available handlers: %d", len(t.handlers))
 	for _, handler := range t.handlers {
 		if handler.support(packet) {
+			log.GetLogger().Infof("Handler %T supports the packet", handler)
 			return handler.handle(packet)
 		}
 	}
@@ -59,18 +62,20 @@ func (u *udpHandler) support(packet *IPv4Packet) bool {
 func (u *udpHandler) handle(packet *IPv4Packet) error {
 	payload := packet.Payload
 
-	if !u.parser.Detect(payload) {
+	if !u.parser.Detect(payload[8:]) {
 		// 快速探测，不能处理的消息直接返回错误
 		// TODO: 这里可以考虑添加日志记录，另外，应该根据探测结果返回异常，这里直接返回SIP错误是不够的
+		log.GetLogger().Infof("UDP packet is not SIP: %+v", packet)
 		return ErrNotSIP
 	}
 	// 单个UDP包可能含有多个应用层消息（主要针对其他协议为了提高吞吐量，SIP不存在这种情况）
 	for len(payload) > 0 {
 		fiveTuple := extractFiveTuple(packet)
-		msg, n, err := u.parser.Extract(payload)
+		msg, n, err := u.parser.Extract(payload[8:])
 		if err != nil {
 			return err
 		}
+		log.GetLogger().Infof("UDP parsed message: %s", string(msg))
 		p := &otus.NetPacket{
 			Protocol:  layers.IPProtocolUDP,
 			Timestamp: packet.Timestamp.UnixNano(),
