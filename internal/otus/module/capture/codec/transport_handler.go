@@ -1,6 +1,7 @@
 package codec
 
 import (
+	"firestige.xyz/otus/internal/log"
 	otus "firestige.xyz/otus/internal/otus/api"
 	"github.com/google/gopacket/layers"
 )
@@ -81,6 +82,7 @@ func (u *udpHandler) handle(packet *IPv4Packet) error {
 		outputCtx := &otus.OutputPacketContext{
 			Context: ctx,
 		}
+		log.GetLogger().Debugf("UDP parsed packet: %+v", p)
 		u.output <- outputCtx
 		payload = payload[n:]
 	}

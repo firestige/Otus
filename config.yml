@@ -47,7 +47,7 @@ pipes:
       handle:
         network_interface: "eth0"
         snap_len: 65535
-        buffer_size: 65536
+        buffer_size: 8388608
         timeout: 1000
         filter: "ip"
         fanout_id: 123

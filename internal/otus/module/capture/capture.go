@@ -142,28 +142,55 @@ func (c *Capture) runPartition(ctx context.Context, partition *Partition, wg *sy
 			"partition": partition.id,
 		}).Info("partition capture routine closed")
 	}()
+	err := partition.handle.Open()
+	if err != nil {
+		log.GetLogger().WithFields(logrus.Fields{
+			"pipe":      c.config.PipeName,
+			"partition": partition.id,
+			"error":     err,
+		}).Error("error opening handle")
+		return
+	}
+	packetSource := partition.handle.GetTPacketSource()
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		default:
-			data, ci, err := partition.handle.ReadPacket()
-			if err != nil {
-				log.GetLogger().WithFields(logrus.Fields{
-					"pipe":      c.config.PipeName,
-					"partition": partition.id,
-					"error":     err,
-				}).Error("error reading packet")
+		case packet, ok := <-packetSource.Packets():
+			if !ok {
+				return
+			}
+			if packet == nil {
 				continue
 			}
-			err = partition.decoder.Decode(data, &ci)
-			if err != nil {
-				log.GetLogger().WithFields(logrus.Fields{
-					"pipe":      c.config.PipeName,
-					"partition": partition.id,
-					"error":     err,
-				}).Error("error decoding packet")
-			}
+			log.GetLogger().Infof("packet captured: %d bytes", len(packet.Data()))
+			// default:
+
+			// data, ci, err := partition.handle.ReadPacket()
+			// if err != nil {
+			// 	// 忽略超时错误；其它错误记录并继续
+			// 	if errors.Is(err, pcap.NextErrorTimeoutExpired) ||
+			// 		errors.Is(err, afpacket.ErrTimeout) ||
+			// 		strings.Contains(strings.ToLower(err.Error()), "timeout") {
+			// 		// 超时，不视为错误
+			// 		continue
+			// 	}
+			// 	log.GetLogger().WithFields(logrus.Fields{
+			// 		"pipe":      c.config.PipeName,
+			// 		"partition": partition.id,
+			// 		"error":     err,
+			// 	}).Error("error reading packet")
+			// 	continue
+			// }
+			// log.GetLogger().Infof("packet captured: %d bytes", len(data))
+			// err = partition.decoder.Decode(data, &ci)
+			// if err != nil {
+			// 	log.GetLogger().WithFields(logrus.Fields{
+			// 		"pipe":      c.config.PipeName,
+			// 		"partition": partition.id,
+			// 		"error":     err,
+			// 	}).Error("error decoding packet")
+			// }
 		}
 	}
 }

@@ -24,4 +24,6 @@ type CaptureHandle interface {
 
 	// GetType 获取抓包类型
 	GetType() CaptureType
+
+	GetTPacketSource() *gopacket.PacketSource
 }

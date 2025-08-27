@@ -127,8 +127,17 @@ func (p *pipe) Boot(ctx context.Context) {
 
 	// go p.monitorStats()
 
-	p.sender.Boot(p.ctx)
-	p.capture.Boot(p.ctx)
+	wg := &sync.WaitGroup{}
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		p.sender.Boot(p.ctx)
+	}()
+	go func() {
+		defer wg.Done()
+		p.capture.Boot(p.ctx)
+	}()
+	wg.Wait()
 }
 
 func (p *pipe) Shutdown() {
