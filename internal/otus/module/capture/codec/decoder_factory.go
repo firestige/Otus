@@ -11,6 +11,7 @@ func NewDecoder(opts *Options) *Decoder {
 	d := &Decoder{}
 	dlp := gopacket.NewDecodingLayerParser(
 		layers.LayerTypeEthernet,
+		&layers.Ethernet{},
 		&d.ipv4,
 		&d.tcp,
 		&d.udp)

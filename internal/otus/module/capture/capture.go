@@ -2,7 +2,9 @@ package capture
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -12,6 +14,8 @@ import (
 	"firestige.xyz/otus/internal/otus/module/capture/codec"
 	"firestige.xyz/otus/internal/otus/module/capture/handle"
 	parser "firestige.xyz/otus/plugins/parser/api"
+	"github.com/google/gopacket/afpacket"
+	"github.com/google/gopacket/pcap"
 	"github.com/sirupsen/logrus"
 )
 
@@ -151,46 +155,46 @@ func (c *Capture) runPartition(ctx context.Context, partition *Partition, wg *sy
 		}).Error("error opening handle")
 		return
 	}
-	packetSource := partition.handle.GetTPacketSource()
+	// packetSource := partition.handle.GetTPacketSource()
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case packet, ok := <-packetSource.Packets():
-			if !ok {
-				return
-			}
-			if packet == nil {
-				continue
-			}
-			log.GetLogger().Infof("packet captured: %d bytes", len(packet.Data()))
-			// default:
-
-			// data, ci, err := partition.handle.ReadPacket()
-			// if err != nil {
-			// 	// 忽略超时错误；其它错误记录并继续
-			// 	if errors.Is(err, pcap.NextErrorTimeoutExpired) ||
-			// 		errors.Is(err, afpacket.ErrTimeout) ||
-			// 		strings.Contains(strings.ToLower(err.Error()), "timeout") {
-			// 		// 超时，不视为错误
+			// case packet, ok := <-packetSource.Packets():
+			// 	if !ok {
+			// 		return
+			// 	}
+			// 	if packet == nil {
 			// 		continue
 			// 	}
-			// 	log.GetLogger().WithFields(logrus.Fields{
-			// 		"pipe":      c.config.PipeName,
-			// 		"partition": partition.id,
-			// 		"error":     err,
-			// 	}).Error("error reading packet")
-			// 	continue
-			// }
-			// log.GetLogger().Infof("packet captured: %d bytes", len(data))
-			// err = partition.decoder.Decode(data, &ci)
-			// if err != nil {
-			// 	log.GetLogger().WithFields(logrus.Fields{
-			// 		"pipe":      c.config.PipeName,
-			// 		"partition": partition.id,
-			// 		"error":     err,
-			// 	}).Error("error decoding packet")
-			// }
+			// 	log.GetLogger().Infof("packet captured: %d bytes", len(packet.Data()))
+		default:
+
+			data, ci, err := partition.handle.ReadPacket()
+			if err != nil {
+				// 忽略超时错误；其它错误记录并继续
+				if errors.Is(err, pcap.NextErrorTimeoutExpired) ||
+					errors.Is(err, afpacket.ErrTimeout) ||
+					strings.Contains(strings.ToLower(err.Error()), "timeout") {
+					// 超时，不视为错误
+					continue
+				}
+				log.GetLogger().WithFields(logrus.Fields{
+					"pipe":      c.config.PipeName,
+					"partition": partition.id,
+					"error":     err,
+				}).Error("error reading packet")
+				continue
+			}
+			log.GetLogger().Infof("packet captured: %d bytes", len(data))
+			err = partition.decoder.Decode(data, &ci)
+			if err != nil {
+				log.GetLogger().WithFields(logrus.Fields{
+					"pipe":      c.config.PipeName,
+					"partition": partition.id,
+					"error":     err,
+				}).Error("error decoding packet")
+			}
 		}
 	}
 }
