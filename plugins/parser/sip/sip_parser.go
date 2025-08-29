@@ -3,6 +3,9 @@ package sip
 import (
 	"bytes"
 	"context"
+	"fmt"
+	"strconv"
+	"strings"
 
 	"firestige.xyz/otus/internal/config"
 )
@@ -59,29 +62,110 @@ func (p *SipParser) Detect(data []byte) bool {
 }
 
 // Extract 从数据中提取完整的SIP消息
-// 由于TCP Assembly已经处理了流重组，这里直接处理完整的数据流
-// SIP消息以双CRLF（\r\n\r\n）结束
+// 严格按照SIP协议解析：先找到头部结束位置，然后根据Content-Length提取完整消息体
 func (p *SipParser) Extract(data []byte) (msg []byte, consumed int, err error) {
 	if len(data) == 0 {
 		return nil, 0, nil
 	}
 
-	// 查找消息结束标记（双CRLF）
-	endMarker := []byte("\r\n\r\n")
-	endIndex := bytes.Index(data, endMarker)
+	// 查找头部结束标记（双CRLF）
+	headerEndMarker := []byte("\r\n\r\n")
+	headerEndIndex := bytes.Index(data, headerEndMarker)
 
-	if endIndex == -1 {
-		// 没有找到完整消息，返回需要更多数据
-		// TCP Assembly会继续提供更多数据
+	if headerEndIndex == -1 {
+		// 没有找到头部结束标记，需要更多数据
 		return nil, 0, nil
 	}
 
-	// 找到完整消息，包含双CRLF
-	messageEnd := endIndex + len(endMarker)
-	message := make([]byte, messageEnd)
-	copy(message, data[:messageEnd])
+	// 头部结束位置（不包含双CRLF）
+	headerEnd := headerEndIndex
+	bodyStart := headerEndIndex + len(headerEndMarker)
 
-	return message, messageEnd, nil
+	// 解析头部，查找Content-Length
+	headerData := data[:headerEnd]
+	contentLength, err := p.parseContentLength(headerData)
+	if err != nil {
+		return nil, 0, fmt.Errorf("invalid SIP message: %w", err)
+	}
+
+	// 计算完整消息长度
+	totalMessageLength := bodyStart + contentLength
+
+	// 检查是否有足够的数据
+	if len(data) < totalMessageLength {
+		// 数据不完整，需要更多数据
+		return nil, 0, nil
+	}
+
+	// 提取完整消息
+	message := make([]byte, totalMessageLength)
+	copy(message, data[:totalMessageLength])
+
+	return message, totalMessageLength, nil
+}
+
+// parseContentLength 解析SIP头部中的Content-Length字段
+func (p *SipParser) parseContentLength(headerData []byte) (int, error) {
+	headerStr := string(headerData)
+
+	// SIP头部是大小写不敏感的
+	lines := strings.Split(headerStr, "\r\n")
+
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+
+		lineLower := strings.ToLower(line)
+
+		// 检查Content-Length头部（支持缩写形式 l:）
+		if strings.HasPrefix(lineLower, "content-length:") {
+			return p.extractContentLengthValue(line, "content-length:")
+		} else if strings.HasPrefix(lineLower, "l:") {
+			return p.extractContentLengthValue(line, "l:")
+		}
+	}
+
+	// 如果没有找到Content-Length头部，默认为0（没有消息体）
+	return 0, nil
+}
+
+// extractContentLengthValue 提取Content-Length的值
+func (p *SipParser) extractContentLengthValue(line, prefix string) (int, error) {
+	// 安全地检查长度
+	if len(line) <= len(prefix) {
+		return 0, fmt.Errorf("invalid Content-Length header: %s", line)
+	}
+
+	// 使用大小写不敏感的查找来定位分隔符的位置
+	colonIndex := strings.Index(strings.ToLower(line), strings.ToLower(prefix))
+	if colonIndex == -1 {
+		return 0, fmt.Errorf("Content-Length prefix not found: %s", line)
+	}
+
+	// 提取冒号后的值
+	valueStart := colonIndex + len(prefix)
+	if valueStart >= len(line) {
+		return 0, fmt.Errorf("no value found for Content-Length: %s", line)
+	}
+
+	valueStr := strings.TrimSpace(line[valueStart:])
+	if valueStr == "" {
+		return 0, fmt.Errorf("empty Content-Length value: %s", line)
+	}
+
+	// 解析数字
+	contentLength, err := strconv.Atoi(valueStr)
+	if err != nil {
+		return 0, fmt.Errorf("invalid Content-Length value: %s", valueStr)
+	}
+
+	if contentLength < 0 {
+		return 0, fmt.Errorf("negative Content-Length value: %d", contentLength)
+	}
+
+	return contentLength, nil
 }
 
 // Reset 重置解析器状态
