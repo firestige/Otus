@@ -29,12 +29,12 @@ func Start(cfg *config.OtusConfig, timeout time.Duration) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	initShutdownListener(cancel)
 
-	if pipes, err := initPipes(cfg); err != nil {
+	if pipes, err := initPipes(ctx, cfg); err != nil {
 		return err
 	} else if err := preparePipes(pipes); err != nil {
 		return err
 	} else {
-		bootPipes(ctx, pipes)
+		bootPipes(pipes)
 		return nil
 	}
 }
@@ -48,7 +48,7 @@ func initShutdownListener(cancel context.CancelFunc) {
 	}()
 }
 
-func initPipes(cfg *config.OtusConfig) (container, error) {
+func initPipes(ctx context.Context, cfg *config.OtusConfig) (container, error) {
 	log.GetLogger().Info("otus is initializing...")
 	for _, aCfg := range cfg.Pipes {
 		if aCfg.CaptureConfig == nil || aCfg.SenderConfig == nil {
@@ -57,7 +57,7 @@ func initPipes(cfg *config.OtusConfig) (container, error) {
 	}
 	container := make(container)
 	for _, aCfg := range cfg.Pipes {
-		pipe := pipeline.NewPipeline(aCfg)
+		pipe := pipeline.NewPipeline(ctx, aCfg)
 		container[aCfg.CommonConfig.PipeName] = pipe
 	}
 	return container, nil
@@ -81,14 +81,14 @@ func preparePipes(pipes container) error {
 	return nil
 }
 
-func bootPipes(ctx context.Context, pipes container) {
+func bootPipes(pipes container) {
 	log.GetLogger().Info("otus is starting...")
 	wg := &sync.WaitGroup{}
 	for _, pipe := range pipes {
 		wg.Add(1)
 		go func(p pipeline.Pipeline) {
 			defer wg.Done()
-			p.Boot(ctx)
+			p.Boot()
 		}(pipe)
 	}
 	wg.Wait()

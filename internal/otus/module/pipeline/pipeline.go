@@ -97,7 +97,7 @@ func (p *pipe) PostConstruct() error {
 	return nil
 }
 
-func (p *pipe) Boot(ctx context.Context) {
+func (p *pipe) Boot() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
@@ -121,8 +121,6 @@ func (p *pipe) Boot(ctx context.Context) {
 			return
 		}
 	}
-
-	p.ctx, p.cancel = context.WithCancel(ctx)
 	p.isRunning = true
 
 	// go p.monitorStats()
@@ -131,11 +129,11 @@ func (p *pipe) Boot(ctx context.Context) {
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		p.sender.Boot(p.ctx)
+		p.sender.Boot()
 	}()
 	go func() {
 		defer wg.Done()
-		p.capture.Boot(p.ctx)
+		p.capture.Boot()
 	}()
 	wg.Wait()
 }

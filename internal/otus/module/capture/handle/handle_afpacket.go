@@ -70,7 +70,7 @@ func (h *afpacketHandle) Open() error {
 		afpacket.OptFrameSize(framSize),
 		afpacket.OptBlockSize(szBlock),
 		afpacket.OptNumBlocks(numBlock),
-		afpacket.OptPollTimeout(pcap.BlockForever),
+		afpacket.OptPollTimeout(100*time.Millisecond),
 		afpacket.SocketRaw,
 		afpacket.TPacketVersion3,
 	)

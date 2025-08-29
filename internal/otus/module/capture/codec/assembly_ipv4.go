@@ -1,6 +1,7 @@
 package codec
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net"
@@ -43,6 +44,8 @@ type IPv4Reassembler struct {
 	maxAge        time.Duration
 	maxFragments  int
 	maxIPSize     uint16
+	ctx           context.Context
+	cancel        context.CancelFunc
 }
 
 // ReassemblerOptions 重组器选项
@@ -53,7 +56,7 @@ type ReassemblerOptions struct {
 }
 
 // NewIPv4Reassembler 创建IPv4分片重组器
-func NewIPv4Reassembler(opts ReassemblerOptions) *IPv4Reassembler {
+func NewIPv4Reassembler(ctx context.Context, opts ReassemblerOptions) *IPv4Reassembler {
 	if opts.MaxAge == 0 {
 		opts.MaxAge = 30 * time.Second
 	}
@@ -64,14 +67,18 @@ func NewIPv4Reassembler(opts ReassemblerOptions) *IPv4Reassembler {
 		opts.MaxIPSize = 65535 // 最大IP包大小
 	}
 
+	ctx, cancel := context.WithCancel(ctx)
 	r := &IPv4Reassembler{
 		fragmentFlows: make(map[IPv4FlowKey]*IPv4FragmentBuffer),
 		maxAge:        opts.MaxAge,
 		maxFragments:  opts.MaxFragments,
 		maxIPSize:     opts.MaxIPSize,
+		ctx:           ctx,
+		cancel:        cancel,
 	}
 
 	// 启动清理协程
+	// TODO 协程没有退出机制，需要监听 ctx 当退出时停止
 	go r.startCleanupRoutine()
 	return r
 }
@@ -269,8 +276,13 @@ func (r *IPv4Reassembler) startCleanupRoutine() {
 	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
 
-	for range ticker.C {
-		r.cleanup()
+	for {
+		select {
+		case <-r.ctx.Done():
+			return
+		case <-ticker.C:
+			r.cleanup()
+		}
 	}
 }
 

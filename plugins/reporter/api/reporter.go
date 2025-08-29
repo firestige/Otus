@@ -12,12 +12,12 @@ import (
 type Reporter interface {
 	plugin.Plugin
 	PostConstruct() error
-	Report(batch api.BatchePacket) error
+	Report(batch api.BatchPacket) error
 	SupportProtocol() string
 	ReportType()
 }
 
-type ReporterFunc func(batch api.BatchePacket) error
+type ReporterFunc func(batch api.BatchPacket) error
 
 func GetReporter(cfg plugin.Config) Reporter {
 	return plugin.Get(reflect.TypeOf((*Reporter)(nil)).Elem(), cfg).(Reporter)

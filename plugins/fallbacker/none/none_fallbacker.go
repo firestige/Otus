@@ -27,6 +27,6 @@ func (f *Fallbacker) DefaultConfig() string {
 	return ``
 }
 
-func (f *Fallbacker) Fallback(data *otus.BatchePacket, reporter reporter.ReporterFunc) bool {
+func (f *Fallbacker) Fallback(data *otus.BatchPacket, reporter reporter.ReporterFunc) bool {
 	return true
 }

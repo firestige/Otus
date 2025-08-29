@@ -1,6 +1,7 @@
 package sender
 
 import (
+	"context"
 	"sync"
 
 	otus "firestige.xyz/otus/internal/otus/api"
@@ -10,12 +11,15 @@ import (
 	reporter "firestige.xyz/otus/plugins/reporter/api"
 )
 
-func NewSender(cfg *sender.Config) sender.Sender {
+func NewSender(ctx context.Context, cfg *sender.Config) sender.Sender {
+	ctx, cancel := context.WithCancel(ctx)
 	s := &Sender{
 		config:       cfg,
 		reporters:    make([]reporter.Reporter, 0),
 		fallbacker:   fallbacker.GetFallbacker(cfg.FallbackerConfig),
 		shutdownOnce: &sync.Once{},
+		ctx:          ctx,
+		cancel:       cancel,
 	}
 	for _, r := range s.config.ReporterConfig {
 		s.reporters = append(s.reporters, reporter.GetReporter(r))

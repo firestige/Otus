@@ -28,6 +28,8 @@ type Capture struct {
 
 	shutdownOnce sync.Once
 	running      int32
+	ctx          context.Context
+	cancel       context.CancelFunc
 }
 
 type Partition struct {
@@ -88,7 +90,7 @@ func (c *Capture) buildPartitionComponents(partition *Partition, cfg *capture.Co
 	transportHandler := codec.NewTransportHandlerComposite(tcpHandler, udpHandler)
 
 	// 创建 decoder
-	decoder := codec.NewDecoder(cfg.CodecConfig)
+	decoder := codec.NewDecoder(c.ctx, cfg.CodecConfig)
 	decoder.SetTransportHandler(transportHandler)
 
 	// 创建 handle
@@ -114,7 +116,7 @@ func (c *Capture) getPartitionPacketQueue(partitionID int) chan<- *otus.OutputPa
 	return nil
 }
 
-func (c *Capture) Boot(ctx context.Context) {
+func (c *Capture) Boot() {
 	log.GetLogger().WithField("pipe", c.config.PipeName).Info("capture module is starting...")
 
 	atomic.StoreInt32(&c.running, 1)
@@ -124,7 +126,7 @@ func (c *Capture) Boot(ctx context.Context) {
 
 	// 启动每个partition 的 go routine
 	for i, partition := range c.partitions {
-		go c.runPartition(ctx, partition, wg)
+		go c.runPartition(partition, wg)
 		log.GetLogger().WithFields(logrus.Fields{
 			"pipe":      c.config.PipeName,
 			"partition": i,
@@ -135,7 +137,7 @@ func (c *Capture) Boot(ctx context.Context) {
 	log.GetLogger().WithField("pipe", c.config.PipeName).Info("capture module stopped")
 }
 
-func (c *Capture) runPartition(ctx context.Context, partition *Partition, wg *sync.WaitGroup) {
+func (c *Capture) runPartition(partition *Partition, wg *sync.WaitGroup) {
 	defer wg.Done()
 	defer func() {
 		if partition.outputCh != nil {
@@ -158,7 +160,7 @@ func (c *Capture) runPartition(ctx context.Context, partition *Partition, wg *sy
 	// packetSource := partition.handle.GetTPacketSource()
 	for {
 		select {
-		case <-ctx.Done():
+		case <-c.ctx.Done():
 			return
 			// case packet, ok := <-packetSource.Packets():
 			// 	if !ok {

@@ -23,7 +23,7 @@ type FiveTuple struct {
 	Protocol layers.IPProtocol // IP protocol (e.g., TCP, UDP)
 }
 
-type BatchePacket []*NetPacket
+type BatchPacket []*NetPacket
 
 // 消息上下文
 

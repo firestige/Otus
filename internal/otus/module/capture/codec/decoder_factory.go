@@ -1,13 +1,14 @@
 package codec
 
 import (
+	"context"
 	"time"
 
 	"github.com/google/gopacket"
 	"github.com/google/gopacket/layers"
 )
 
-func NewDecoder(opts *Options) *Decoder {
+func NewDecoder(ctx context.Context, opts *Options) *Decoder {
 	d := &Decoder{}
 	dlp := gopacket.NewDecodingLayerParser(
 		layers.LayerTypeEthernet,
@@ -16,7 +17,7 @@ func NewDecoder(opts *Options) *Decoder {
 		&d.tcp,
 		&d.udp)
 	d.parser = dlp
-	d.ipv4Reassembler = NewIPv4Reassembler(ReassemblerOptions{
+	d.ipv4Reassembler = NewIPv4Reassembler(ctx, ReassemblerOptions{
 		MaxAge:       time.Duration(opts.MaxAge) * time.Second,
 		MaxFragments: opts.MaxFragmentsNum,
 		MaxIPSize:    opts.MaxIPSize,

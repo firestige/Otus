@@ -1,6 +1,7 @@
 package capture
 
 import (
+	"context"
 	"encoding/json"
 
 	"firestige.xyz/otus/internal/log"
@@ -31,7 +32,7 @@ import (
 // 	return c
 // }
 
-func NewCapture(cfg *capture.Config) capture.Capture {
+func NewCapture(ctx context.Context, cfg *capture.Config) capture.Capture {
 	partitionCount := cfg.Partition
 	if partitionCount < 1 {
 		partitionCount = 1
@@ -44,11 +45,14 @@ func NewCapture(cfg *capture.Config) capture.Capture {
 		log.GetLogger().WithField("err", err).Infof("capture config marshal error")
 	}
 
+	ctx, cancel := context.WithCancel(ctx)
 	capture := &Capture{
 		config:         cfg,
 		partitionCount: partitionCount,
 		partitions:     make([]*Partition, partitionCount),
 		outputChannels: make([]chan<- *otus.OutputPacketContext, partitionCount),
+		ctx:            ctx,
+		cancel:         cancel,
 	}
 
 	for i := 0; i < partitionCount; i++ {

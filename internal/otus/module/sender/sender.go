@@ -30,6 +30,8 @@ type Sender struct {
 	buffers      []*buffer.BatchBuffer
 	blocking     int32
 	shutdownOnce *sync.Once
+	ctx          context.Context
+	cancel       context.CancelFunc
 }
 
 func (s *Sender) PostConstruct() error {
@@ -51,51 +53,65 @@ func (s *Sender) PostConstruct() error {
 	return nil
 }
 
-func (s *Sender) Boot(ctx context.Context) {
+func (s *Sender) Boot() {
 	log.GetLogger().WithField("pipe", s.config.PipeName).Info("sender module is starting...")
 	wg := &sync.WaitGroup{}
-	wg.Add(2*s.config.Partition + 1)
+	wg.Add(2 * s.config.Partition)
 	for partition := 0; partition < s.config.Partition; partition++ {
-		go s.store(ctx, partition, wg)
-		go s.flush(ctx, partition, wg)
+		log.GetLogger().WithField("pipe", s.config.PipeName).WithField("partition", partition).Info("starting sender routines...")
+		go s.store(partition, wg)
+		go s.flush(partition, wg)
 	}
 	wg.Wait()
+	log.GetLogger().Info("Sender closed")
 }
 
-func (s *Sender) store(ctx context.Context, partition int, wg *sync.WaitGroup) {
+func (s *Sender) store(partition int, wg *sync.WaitGroup) {
 	// TODO 补完待发流程，
 	// 1.当发送速度跟不上上游事件生产速度时，需要暂存
 	// 2.当开始关闭流程时需要暂存到 flush 队列
 	// 不要试图合并两个 defer，此外由于 LIFO 特性，wg.Done 实际上是后执行的那个
 	defer wg.Done()
-	defer log.GetLogger().WithField("pipe", s.config.PipeName).Info("store routine closed")
+	defer log.GetLogger().WithField("pipe", s.config.PipeName).WithField("partition", partition).Info("store routine closed")
 
-	childCtx, _ := context.WithCancel(ctx)
+	log.GetLogger().WithField("pipe", s.config.PipeName).WithField("partition", partition).Info("store routine started")
+	childCtx, _ := context.WithCancel(s.ctx)
 	flushTime := s.config.FlushInterval
 	if flushTime <= 0 {
 		flushTime = defaultSenderFlushTime
 	}
+	log.GetLogger().WithField("pipe", s.config.PipeName).WithField("partition", partition).Infof("using flush time: %d ms", flushTime)
 	timeTicker := time.NewTicker(time.Duration(flushTime) * time.Millisecond)
 	for {
+		log.GetLogger().WithField("pipe", s.config.PipeName).WithField("partition", partition).Info("waiting for new event or flush timer...")
 		if atomic.LoadInt32(&s.blocking) == 1 {
 			time.Sleep(100 * time.Millisecond)
-			log.GetLogger().WithField("pipe", s.config.PipeName).Warn("client disconnected, blocking...")
+			log.GetLogger().WithField("pipe", s.config.PipeName).WithField("partition", partition).Warn("client disconnected, blocking...")
 			continue
 		}
+		log.GetLogger().WithField("pipe", s.config.PipeName).WithField("partition", partition).Info("waiting for new event...")
 		select {
 		case <-childCtx.Done():
 			return
 		case <-timeTicker.C:
+			log.GetLogger().WithField("pipe", s.config.PipeName).WithField("partition", partition).Info("time ticker triggered...")
+			//打印当前 chan 的长度
+			log.GetLogger().WithField("pipe", s.config.PipeName).WithField("partition", partition).Infof("received new event, current input channel length: %d", len(s.inputs[partition]))
 			if s.buffers[partition].Len() >= s.config.MinFlushEvents {
+				log.GetLogger().WithField("pipe", s.config.PipeName).WithField("partition", partition).Infof("time ticker triggered, flushing %d events", s.buffers[partition].Len())
 				s.flushChannel[partition] <- s.buffers[partition]
 				s.buffers[partition] = buffer.NewBatchBuffer(s.config.MaxBufferSize, partition)
 			}
 		case e := <-s.inputs[partition]:
+			//打印当前 chan 的长度
+			log.GetLogger().WithField("pipe", s.config.PipeName).WithField("partition", partition).Infof("received new event, current input channel length: %d", len(s.inputs[partition]))
 			if e == nil {
+				log.GetLogger().WithField("pipe", s.config.PipeName).WithField("partition", partition).Warn("get nil, continue")
 				continue
 			}
 			s.buffers[partition].Add(e)
 			if s.buffers[partition].Len() == s.config.MaxBufferSize {
+				log.GetLogger().WithField("pipe", s.config.PipeName).WithField("partition", partition).Infof("max buffer size reached, flushing %d events", s.buffers[partition].Len())
 				s.flushChannel[partition] <- s.buffers[partition]
 				s.buffers[partition] = buffer.NewBatchBuffer(s.config.MaxBufferSize, partition)
 			}
@@ -103,10 +119,10 @@ func (s *Sender) store(ctx context.Context, partition int, wg *sync.WaitGroup) {
 	}
 }
 
-func (s *Sender) flush(ctx context.Context, partition int, wg *sync.WaitGroup) {
+func (s *Sender) flush(partition int, wg *sync.WaitGroup) {
 	defer wg.Done()
-	defer log.GetLogger().WithField("pipe", s.config.PipeName).Info("flush routine closed")
-	childCtx, _ := context.WithCancel(ctx)
+	defer log.GetLogger().WithField("pipe", s.config.PipeName).WithField("partition", partition).Info("flush routine closed")
+	childCtx, _ := context.WithCancel(s.ctx)
 	for {
 		select {
 		case <-childCtx.Done():
@@ -114,6 +130,7 @@ func (s *Sender) flush(ctx context.Context, partition int, wg *sync.WaitGroup) {
 			return
 		case b := <-s.flushChannel[partition]:
 			// TODO flushChannel 需要补完
+			log.GetLogger().Infof("flushing a new batch buffer with size: %d", b.Len())
 			s.consume(b)
 		}
 	}
@@ -162,7 +179,7 @@ func (s *Sender) consume(batch *buffer.BatchBuffer) {
 		"offset": batch.Last(),
 		"size":   batch.Len(),
 	}).Info("sender module is flushing a new batch buffer.")
-	packets := make(map[string]otus.BatchePacket)
+	packets := make(map[string]otus.BatchPacket)
 	for i := 0; i < batch.Len(); i++ {
 		packetContext := batch.Buf()[i]
 		for _, p := range packetContext.Context {

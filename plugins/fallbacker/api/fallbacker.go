@@ -10,7 +10,7 @@ import (
 
 type Fallbacker interface {
 	plugin.Plugin
-	Fallback(data *api.BatchePacket, reporter reporter.ReporterFunc) bool
+	Fallback(data *api.BatchPacket, reporter reporter.ReporterFunc) bool
 }
 
 func GetFallbacker(cfg plugin.Config) Fallbacker {
