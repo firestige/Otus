@@ -45,7 +45,6 @@ func (s *Sender) PostConstruct() error {
 	}
 
 	for partition := 0; partition < s.config.Partition; partition++ {
-		s.inputs[partition] = make(chan *otus.OutputPacketContext)
 		s.buffers[partition] = buffer.NewBatchBuffer(s.config.MaxBufferSize, partition)
 		s.flushChannel[partition] = make(chan *buffer.BatchBuffer)
 	}
@@ -189,6 +188,7 @@ func (s *Sender) consume(batch *buffer.BatchBuffer) {
 	}
 	for _, r := range s.reporters {
 		for protocol, ps := range packets {
+			log.GetLogger().Infof("protocol is: %s", protocol)
 			if r.SupportProtocol() != protocol {
 				continue
 			}
@@ -214,10 +214,14 @@ func (s *Sender) SetInputChannel(partition int, ch <-chan *otus.OutputPacketCont
 		return fmt.Errorf("invalid partition: %d", partition)
 	}
 	s.inputs[partition] = ch
-	log.GetLogger().Infof("set channel for partition: %d", partition)
+	log.GetLogger().Infof("set channel for partition: %d, ch: %p", partition, ch)
 	return nil
 }
 
 func (s *Sender) IsChannelSet(partition int) bool {
 	return s.inputs[partition] != nil
+}
+
+func (s *Sender) GetInputChannel(i int) <-chan *otus.OutputPacketContext {
+	return s.inputs[i]
 }
