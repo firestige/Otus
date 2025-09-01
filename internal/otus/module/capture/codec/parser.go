@@ -40,7 +40,7 @@ type Parser interface {
 	//   - If no complete message is available, implementations may
 	//     return (nil, 0, nil) or a well-documented error indicating
 	//     that more data is required.
-	Extract(content []byte) (msg []byte, consumed int, err error)
+	Extract(content []byte) (msg []byte, consumed int, applicationProtocolType string, err error)
 
 	// Reset clears the parser's internal state so it can begin parsing
 	// a new independent stream.

@@ -63,9 +63,9 @@ func (p *SipParser) Detect(data []byte) bool {
 
 // Extract 从数据中提取完整的SIP消息
 // 严格按照SIP协议解析：先找到头部结束位置，然后根据Content-Length提取完整消息体
-func (p *SipParser) Extract(data []byte) (msg []byte, consumed int, err error) {
+func (p *SipParser) Extract(data []byte) (msg []byte, consumed int, ptype string, err error) {
 	if len(data) == 0 {
-		return nil, 0, nil
+		return nil, 0, "SIP", nil
 	}
 
 	// 查找头部结束标记（双CRLF）
@@ -74,7 +74,7 @@ func (p *SipParser) Extract(data []byte) (msg []byte, consumed int, err error) {
 
 	if headerEndIndex == -1 {
 		// 没有找到头部结束标记，需要更多数据
-		return nil, 0, nil
+		return nil, 0, "SIP", nil
 	}
 
 	// 头部结束位置（不包含双CRLF）
@@ -85,7 +85,7 @@ func (p *SipParser) Extract(data []byte) (msg []byte, consumed int, err error) {
 	headerData := data[:headerEnd]
 	contentLength, err := p.parseContentLength(headerData)
 	if err != nil {
-		return nil, 0, fmt.Errorf("invalid SIP message: %w", err)
+		return nil, 0, "SIP", fmt.Errorf("invalid SIP message: %w", err)
 	}
 
 	// 计算完整消息长度
@@ -94,14 +94,14 @@ func (p *SipParser) Extract(data []byte) (msg []byte, consumed int, err error) {
 	// 检查是否有足够的数据
 	if len(data) < totalMessageLength {
 		// 数据不完整，需要更多数据
-		return nil, 0, nil
+		return nil, 0, "SIP", nil
 	}
 
 	// 提取完整消息
 	message := make([]byte, totalMessageLength)
 	copy(message, data[:totalMessageLength])
 
-	return message, totalMessageLength, nil
+	return message, totalMessageLength, "SIP", nil
 }
 
 // parseContentLength 解析SIP头部中的Content-Length字段

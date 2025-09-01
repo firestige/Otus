@@ -37,7 +37,7 @@ func (c *Console) Report(batch otus.BatchPacket) error {
 
 // 这个地方的 Protocol 后面应该被常量替代
 func (c *Console) SupportProtocol() string {
-	return "sip"
+	return "SIP"
 }
 
 func (c *Console) ReportType() {

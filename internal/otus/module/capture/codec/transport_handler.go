@@ -71,16 +71,17 @@ func (u *udpHandler) handle(packet *IPv4Packet) error {
 	// 单个UDP包可能含有多个应用层消息（主要针对其他协议为了提高吞吐量，SIP不存在这种情况）
 	for len(payload) > 0 {
 		fiveTuple := extractFiveTuple(packet)
-		msg, n, err := u.parser.Extract(payload[8:])
+		msg, n, ptype, err := u.parser.Extract(payload[8:])
 		if err != nil {
 			return err
 		}
 		log.GetLogger().Infof("UDP parsed message: %s", string(msg))
 		p := &otus.NetPacket{
-			Protocol:  layers.IPProtocolUDP,
-			Timestamp: packet.Timestamp.UnixNano(),
-			FiveTuple: &fiveTuple,
-			Payload:   msg,
+			Protocol:             layers.IPProtocolUDP,
+			Timestamp:            packet.Timestamp.UnixNano(),
+			FiveTuple:            &fiveTuple,
+			Payload:              msg,
+			ApplicationProtoType: ptype,
 		}
 		ctx := make(map[string]*otus.NetPacket)
 		ctx[string(p.ApplicationProtoType)] = p
@@ -100,12 +101,13 @@ type tcpHandler struct {
 
 func NewTCPHandler(output chan<- *otus.OutputPacketContext, p Parser) TransportHandler {
 	// 创建consumer函数，将重组后的消息封装为OutputPacketContext发送到output
-	consumer := func(data []byte, fiveTuple *otus.FiveTuple, timestamp int64) error {
+	consumer := func(data []byte, fiveTuple *otus.FiveTuple, ptype string, timestamp int64) error {
 		p := &otus.NetPacket{
-			Protocol:  layers.IPProtocolTCP,
-			Timestamp: timestamp,
-			FiveTuple: fiveTuple,
-			Payload:   data,
+			Protocol:             layers.IPProtocolTCP,
+			ApplicationProtoType: ptype,
+			Timestamp:            timestamp,
+			FiveTuple:            fiveTuple,
+			Payload:              data,
 		}
 		ctx := make(map[string]*otus.NetPacket)
 		ctx[string(p.ApplicationProtoType)] = p

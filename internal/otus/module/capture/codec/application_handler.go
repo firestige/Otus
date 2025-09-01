@@ -24,13 +24,13 @@ func (p *parserComposite) Detect(content []byte) bool {
 	return false
 }
 
-func (p *parserComposite) Extract(content []byte) (msg []byte, consumed int, err error) {
+func (p *parserComposite) Extract(content []byte) (msg []byte, consumed int, ptype string, err error) {
 	for _, parser := range p.parsers {
 		if parser.Detect(content) {
 			return parser.Extract(content)
 		}
 	}
-	return nil, 0, fmt.Errorf("no parser found for content")
+	return nil, 0, "", fmt.Errorf("no parser found for content")
 }
 
 func (p *parserComposite) Reset() {

@@ -16,7 +16,7 @@ import (
 //   - timestamp: 数据包时间戳（纳秒）
 //
 // tcpHandler通过传入此函数来决定如何处理重组后的数据
-type TCPStreamConsumerFunc func(data []byte, fiveTuple *api.FiveTuple, timestamp int64) error
+type TCPStreamConsumerFunc func(data []byte, fiveTuple *api.FiveTuple, ptype string, timestamp int64) error
 
 // TCPAssembly 接口，屏蔽底层gopacket实现细节
 // 负责TCP segment的重组、流量重整、消息的有序性和完整性保证
@@ -180,7 +180,7 @@ func (s *tcpStream) ReassemblyComplete() {
 	if s.consumer != nil && s.fiveTuple != nil && len(s.buffer) > 0 {
 		// 如果还有剩余数据且没有parser，直接发送
 		if s.parser == nil {
-			s.consumer(s.buffer, s.fiveTuple, s.timestamp)
+			s.consumer(s.buffer, s.fiveTuple, "", s.timestamp)
 		} else {
 			s.extractMessages()
 		}
@@ -194,7 +194,7 @@ func (s *tcpStream) extractMessages() {
 			break // parser无法识别，等待更多数据
 		}
 
-		msg, consumed, err := s.parser.Extract(s.buffer)
+		msg, consumed, ptype, err := s.parser.Extract(s.buffer)
 		if err != nil {
 			break // 解析错误，停止处理
 		}
@@ -205,7 +205,7 @@ func (s *tcpStream) extractMessages() {
 
 		// 发送提取出的消息
 		if msg != nil {
-			s.consumer(msg, s.fiveTuple, s.timestamp)
+			s.consumer(msg, s.fiveTuple, ptype, s.timestamp)
 		}
 
 		// 移除已处理的数据

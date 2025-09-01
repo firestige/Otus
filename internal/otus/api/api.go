@@ -11,7 +11,7 @@ type NetPacket struct {
 	Protocol             layers.IPProtocol // IP protocol (e.g., TCP, UDP, STCP)
 	FiveTuple            *FiveTuple
 	Timestamp            int64  //accurate to nanosecond
-	ApplicationProtoType byte   // application protocol (e.g. SIP, RTP)
+	ApplicationProtoType string // application protocol (e.g. SIP, RTP)
 	Payload              []byte // content
 }
 
@@ -41,6 +41,6 @@ func (c *OutputPacketContext) Get(applicationProtocol string) (*NetPacket, error
 }
 
 func (c *OutputPacketContext) Set(packet *NetPacket) {
-	applicationProtocol := string(packet.ApplicationProtoType)
+	applicationProtocol := packet.ApplicationProtoType
 	c.Context[applicationProtocol] = packet
 }
