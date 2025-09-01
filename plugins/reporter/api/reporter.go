@@ -14,7 +14,6 @@ type Reporter interface {
 	PostConstruct() error
 	Report(batch api.BatchPacket) error
 	SupportProtocol() string
-	ReportType()
 }
 
 type ReporterFunc func(batch api.BatchPacket) error

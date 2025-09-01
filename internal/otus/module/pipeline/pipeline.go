@@ -10,12 +10,14 @@ import (
 	otus "firestige.xyz/otus/internal/otus/api"
 	module "firestige.xyz/otus/internal/otus/module/api"
 	capture "firestige.xyz/otus/internal/otus/module/capture/api"
+	processor "firestige.xyz/otus/internal/otus/module/processor/api"
 	sender "firestige.xyz/otus/internal/otus/module/sender/api"
 )
 
 type Pipeline interface {
 	module.Module
 	SetCapture(capture capture.Capture)
+	SetProcessor(processor processor.Processor)
 	SetSender(sender sender.Sender)
 	CreateChannels(bufferSize int) error
 }
@@ -23,8 +25,9 @@ type Pipeline interface {
 type Config struct {
 	CommonConfig *config.CommonFields `mapstructure:"common_config"`
 
-	CaptureConfig *capture.Config `mapstructure:"capture"`
-	SenderConfig  *sender.Config  `mapstructure:"sender"`
+	CaptureConfig   *capture.Config   `mapstructure:"capture"`
+	ProcessorConfig *processor.Config `mapstructure:"processor"`
+	SenderConfig    *sender.Config    `mapstructure:"sender"`
 
 	BufferSize int    `mapstructure:"buffer_size"`
 	Partitions int    `mapstructure:"partitions"`
@@ -34,9 +37,10 @@ type Config struct {
 type pipe struct {
 	config *Config
 
-	capture  capture.Capture
-	sender   sender.Sender
-	channels []chan *otus.OutputPacketContext
+	capture   capture.Capture
+	sender    sender.Sender
+	processor processor.Processor
+	channels  []chan *otus.OutputPacketContext
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -55,6 +59,12 @@ func (p *pipe) SetSender(sender sender.Sender) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.sender = sender
+}
+
+func (p *pipe) SetProcessor(processor processor.Processor) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.processor = processor
 }
 
 func (p *pipe) CreateChannels(bufferSize int) error {
