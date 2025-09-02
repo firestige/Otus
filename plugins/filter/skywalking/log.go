@@ -1,4 +1,4 @@
-package skywalkingtracing
+package skywalking
 
 import (
 	gosiplog "github.com/ghettovoice/gosip/log"

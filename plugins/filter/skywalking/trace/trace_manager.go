@@ -6,9 +6,9 @@ import (
 	"sync"
 
 	"firestige.xyz/otus/internal/log"
-	"firestige.xyz/otus/plugins/reporter/skywalkingtracing/sniffdata"
-	"firestige.xyz/otus/plugins/reporter/skywalkingtracing/types"
-	"firestige.xyz/otus/plugins/reporter/skywalkingtracing/utils"
+	"firestige.xyz/otus/plugins/filter/skywalking/sniffdata"
+	"firestige.xyz/otus/plugins/filter/skywalking/types"
+	"firestige.xyz/otus/plugins/filter/skywalking/utils"
 	agent "skywalking.apache.org/repo/goapi/collect/language/agent/v3"
 	v1 "skywalking.apache.org/repo/goapi/satellite/data/v1"
 )

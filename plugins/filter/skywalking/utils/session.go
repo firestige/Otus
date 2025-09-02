@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"firestige.xyz/otus/plugins/reporter/skywalkingtracing/types"
+	"firestige.xyz/otus/plugins/filter/skywalking/types"
 )
 
 func BuildTransactionID(msg types.SipMessage) string {

@@ -5,6 +5,7 @@ import (
 	"sync"
 
 	"firestige.xyz/otus/internal/otus/module/capture"
+	"firestige.xyz/otus/internal/otus/module/processor"
 	"firestige.xyz/otus/internal/otus/module/sender"
 )
 
@@ -27,9 +28,11 @@ func NewPipeline(ctx context.Context, cfg *Config) Pipeline {
 
 	capture := capture.NewCapture(ctx, cfg.CaptureConfig)
 	sender := sender.NewSender(ctx, cfg.SenderConfig)
+	processor := processor.NewProcessor(ctx, cfg.ProcessorConfig)
 
 	pipe.SetCapture(capture)
 	pipe.SetSender(sender)
+	pipe.SetProcessor(processor)
 
 	return pipe
 }

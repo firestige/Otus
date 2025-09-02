@@ -1,11 +1,11 @@
-package skywalkingtracing
+package skywalking
 
 import (
 	"strings"
 
 	"firestige.xyz/otus/internal/log"
-	"firestige.xyz/otus/plugins/reporter/skywalkingtracing/types"
-	"firestige.xyz/otus/plugins/reporter/skywalkingtracing/utils"
+	"firestige.xyz/otus/plugins/filter/skywalking/types"
+	"firestige.xyz/otus/plugins/filter/skywalking/utils"
 	"github.com/ghettovoice/gosip/sip"
 	"github.com/ghettovoice/gosip/sip/parser"
 	"github.com/sirupsen/logrus"

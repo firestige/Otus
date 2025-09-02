@@ -1,6 +1,6 @@
 package transaction
 
-import "firestige.xyz/otus/plugins/reporter/skywalkingtracing/types"
+import "firestige.xyz/otus/plugins/filter/skywalking/types"
 
 type TimerName string
 

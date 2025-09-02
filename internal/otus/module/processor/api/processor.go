@@ -1,13 +1,12 @@
 package api
 
 import (
-	otus "firestige.xyz/otus/internal/otus/api"
+	"firestige.xyz/otus/internal/otus/event"
 	module "firestige.xyz/otus/internal/otus/module/api"
 )
 
 type Processor interface {
 	module.Module
-	Process(packet *otus.NetPacket)
-	GetInputChannel(partition int) (chan *otus.NetPacket, error)
-	GetOutputChannel(partition int) (chan *otus.NetPacket, error)
+	GetInputChannel(partition int) (chan *event.EventContext, error)
+	GetOutputChannel(partition int) (chan *event.EventContext, error)
 }
