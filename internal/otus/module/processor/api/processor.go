@@ -8,4 +8,6 @@ import (
 type Processor interface {
 	module.Module
 	Process(packet *otus.NetPacket)
+	GetInputChannel(partition int) (chan *otus.NetPacket, error)
+	GetOutputChannel(partition int) (chan *otus.NetPacket, error)
 }
