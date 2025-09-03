@@ -4,6 +4,9 @@ import (
 	"fmt"
 
 	"firestige.xyz/otus/internal/log"
+	"firestige.xyz/otus/plugins/filter/skywalking/event"
+	"firestige.xyz/otus/plugins/filter/skywalking/session/dialog"
+	"firestige.xyz/otus/plugins/filter/skywalking/session/transaction"
 	"firestige.xyz/otus/plugins/filter/skywalking/sniffdata"
 	"firestige.xyz/otus/plugins/filter/skywalking/types"
 	"firestige.xyz/otus/plugins/filter/skywalking/utils"
@@ -24,6 +27,14 @@ func NewTraceListener(serviceName, serviceInstanceId string, submit func(*v1.Sni
 		manager:           NewTraceManager(serviceName, serviceInstanceId),
 		submit:            submit,
 	}
+}
+
+func (l *TraceListener) Init() {
+	event.Subscribe(dialog.EventCreateDialog, l.onDialogCreated)
+	event.Subscribe(dialog.EventTerminateDialog, l.onDialogTerminated)
+	event.Subscribe(transaction.EventCreateTransaction, l.onTransactionCreated)
+	event.Subscribe(transaction.EventTerminateTransaction, l.onTransactionTerminated)
+	event.Subscribe(transaction.EventTransactionTimeout, l.onTransactionTimeout)
 }
 
 func (l *TraceListener) OnRequest(req types.SipRequest, ua types.UAType) {

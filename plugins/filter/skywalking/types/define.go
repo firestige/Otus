@@ -24,3 +24,15 @@ type WithConnection interface {
 type SessionListener interface {
 	OnRequest(req SipRequest, ua UAType)
 }
+
+type SipEvents string
+
+var (
+	OnRequest               SipEvents = "request"
+	OnResponse              SipEvents = "response"
+	OnDialogCreated         SipEvents = "dialog_created"
+	OnDialogStateChanged    SipEvents = "dialog_state_changed"
+	OnDialogTerminated      SipEvents = "dialog_terminated"
+	OnTransactionCreated    SipEvents = "transaction_created"
+	OnTransactionTerminated SipEvents = "transaction_terminated"
+)

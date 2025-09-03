@@ -37,7 +37,10 @@ func (sh *SessionHandler) RegisterListener(listener interface{}) {
 }
 
 func (sh *SessionHandler) HandleMessage(msg types.SipMessage) {
-	log.GetLogger().WithField("Call-id", msg.CallID()).WithField("CSeq", msg.CSeq()).Debugf("Handling SIP message: %s", msg.StartLine())
+	log.GetLogger().
+		WithField("Call-id", msg.CallID()).
+		WithField("CSeq", msg.CSeq()).
+		Debugf("Handling SIP message: %s", msg.StartLine())
 	// 1. Session Listener 处理
 	if msg.IsRequest() {
 		for _, listener := range sh.listeners {

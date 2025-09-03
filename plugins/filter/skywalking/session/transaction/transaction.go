@@ -4,6 +4,7 @@ import "firestige.xyz/otus/plugins/filter/skywalking/types"
 
 type TimerName string
 
+// 抓包场景，我们一般不考虑重转，只处理需要终止事务的 timer
 const (
 	// ​用途​：控制 ​INVITE 请求的重传间隔。
 	// ​默认值​：初始值 T1（通常 500ms），每次重传后翻倍（指数退避），最大不超过 T2（通常 4s）。
@@ -87,6 +88,6 @@ const (
 
 type Transaction interface {
 	types.Transaction
-	StartTimer(TimerName, TimerSpan)
-	CancelTimer(TimerName)
+	StartTimer(name TimerName, duration TimerSpan)
+	CancelTimer(name TimerName)
 }

@@ -1,6 +1,9 @@
 package transaction
 
 import (
+	"time"
+
+	"firestige.xyz/otus/internal/eventbus"
 	"firestige.xyz/otus/internal/log"
 	"firestige.xyz/otus/plugins/filter/skywalking/types"
 	"firestige.xyz/otus/plugins/filter/skywalking/utils"
@@ -13,10 +16,11 @@ type TransactionContext struct {
 	ua           types.UAType
 	req          types.SipRequest
 	lastResponse types.SipResponse
-	createAt     int64                   // 创建时间
-	updatedAt    int64                   // 更新时间
-	err          error                   // 错误信息
-	timerMap     map[TimerName]TimerSpan // 定时器映射
+	createAt     int64                     // 创建时间
+	updatedAt    int64                     // 更新时间
+	err          error                     // 错误信息
+	timerMap     map[TimerName]*time.Timer // 定时器映射
+	eventBus     eventbus.EventBus
 }
 
 func NewTransaction(req types.SipRequest, state TransactionState) *TransactionContext {
@@ -32,39 +36,63 @@ func NewTransaction(req types.SipRequest, state TransactionState) *TransactionCo
 		req:       req,
 		createAt:  req.CreatedAt(),
 		updatedAt: req.CreatedAt(),
-		timerMap:  make(map[TimerName]TimerSpan),
+		timerMap:  make(map[TimerName]*time.Timer),
 	}
-
 }
 
 func (ctx *TransactionContext) HandleMessage(msg types.SipMessage) error {
-	newState, err := ctx.state.HandleMessage(ctx, msg)
+	err := ctx.state.handleMessage(ctx, msg)
 	if err != nil {
 		return err
 	}
-
-	ctx.transitionTo(newState)
 	return nil
 }
 
 func (ctx *TransactionContext) transitionTo(newState TransactionState) {
 	currentStateName := ctx.state.Name()
 	newStateName := newState.Name()
-	ctx.state.Exit(ctx)
+	ctx.state.exit(ctx)
 	ctx.state = newState
-	newState.Enter(ctx)
+	newState.enter(ctx)
 	if currentStateName != newStateName {
 		ctx.updatedAt = utils.CurrentTimeMillis() // 更新更新时间
 	}
 	log.GetLogger().WithField("Transaction-ID", ctx.ID()).Infof("Transitioned transaction state, from %s to %s", currentStateName, newStateName)
 }
 
-func (ctx *TransactionContext) StartTimer(name TimerName, span TimerSpan) {
-
+func (ctx *TransactionContext) createTransactionEvent() *eventbus.Event {
+	return nil
 }
 
-func (ctx *TransactionContext) CancelTimer(name TimerName) {
+func (ctx *TransactionContext) StartTimer(name TimerName, span TimerSpan) {
+	timer := time.AfterFunc(time.Duration(span)*time.Millisecond, func() {
+		ctx.cancelTimer(name)
+		ctx.timeout()
+	})
+	ctx.timerMap[name] = timer
+}
 
+func (ctx *TransactionContext) cancelTimer(name TimerName) {
+	if timer, exists := ctx.timerMap[name]; exists {
+		timer.Stop()
+		delete(ctx.timerMap, name)
+	}
+}
+
+func (ctx *TransactionContext) resetTimer(name TimerName) {
+	if timer, exists := ctx.timerMap[name]; exists {
+		timer.Reset(time.Duration(timer.C) * time.Millisecond)
+	}
+}
+
+func (ctx *TransactionContext) timeout() {
+	ctx.state.transmitTimeout(ctx)
+	ctx.cancelTimer(TimerB)
+	ctx.cancelTimer(TimerF)
+	ctx.cancelTimer(TimerH)
+	ctx.cancelTimer(TimerI)
+	ctx.cancelTimer(TimerJ)
+	ctx.cancelTimer(TimerK)
 }
 
 func (ctx *TransactionContext) State() TransactionState {

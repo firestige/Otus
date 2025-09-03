@@ -26,7 +26,11 @@ func (s *EarlyState) IsTerminated() bool {
 }
 
 func (s *EarlyState) Enter(ctx *DialogContext) {
-	// 初始化对话状态
+	// 初始化对话状态，什么都不做
+}
+
+func (s *EarlyState) Exit(ctx *DialogContext) {
+	// 清理对话状态
 }
 
 func (s *EarlyState) HandleMessage(ctx *DialogContext, msg types.SipMessage) (DialogState, error) {
@@ -60,10 +64,6 @@ func (s *EarlyState) HandleMessage(ctx *DialogContext, msg types.SipMessage) (Di
 		}
 	}
 	return s, fmt.Errorf("EarlyState: unhandled message type %T", msg)
-}
-
-func (s *EarlyState) Exit(ctx *DialogContext) {
-	// 清理对话状态
 }
 
 type ConfirmedState struct{}

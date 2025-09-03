@@ -138,3 +138,6 @@ func (ctx *DialogContext) RemoteTag() string {
 func (ctx *DialogContext) Metadatas() map[string]string {
 	return ctx.metaData
 }
+
+func (ctx *DialogContext) 
+

@@ -10,9 +10,22 @@ import (
 type TransactionState interface {
 	Name() string
 	IsTerminated() bool // 是否为终止状态
-	HandleMessage(ctx *TransactionContext, msg types.SipMessage) (TransactionState, error)
-	Enter(ctx *TransactionContext)
-	Exit(ctx *TransactionContext)
+	transmitTimeout(ctx *TransactionContext)
+	handleMessage(ctx *TransactionContext, msg types.SipMessage) error
+	enter(ctx *TransactionContext)
+	exit(ctx *TransactionContext)
+}
+
+func NewTransactionState(ctx *TransactionContext, msg types.SipMessage) (TransactionState, error) {
+	req, ok := msg.(types.SipRequest)
+	if !ok {
+		return nil, fmt.Errorf("Transaction should start with Request")
+	}
+	if req.Method() == types.MethodInvite {
+		return &InviteCallingState{}, nil
+	} else {
+		return &NonInviteTryingState{}, nil
+	}
 }
 
 // ---- Non-INVITE Transaction States ----
@@ -21,6 +34,14 @@ type NonInviteTryingState struct{}
 
 func (s *NonInviteTryingState) Name() string {
 	return "NonInviteTryingState"
+}
+
+func (s *NonInviteTryingState) IsTerminated() bool {
+	return false
+}
+
+func (s *NonInviteTryingState) transmitTimeout(ctx *TransactionContext) {
+	ctx.transitionTo(&NonInviteTerminatedState{})
 }
 
 func (s *NonInviteTryingState) Enter(ctx *TransactionContext) {
