@@ -19,7 +19,6 @@ type Pipeline interface {
 	SetCapture(capture capture.Capture)
 	SetProcessor(processor processor.Processor)
 	SetSender(sender sender.Sender)
-	CreateChannels(bufferSize int) error
 }
 
 type Config struct {
@@ -67,7 +66,7 @@ func (p *pipe) SetProcessor(processor processor.Processor) {
 	p.processor = processor
 }
 
-func (p *pipe) CreateChannels(bufferSize int) error {
+func (p *pipe) bindChannels() error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
@@ -81,18 +80,16 @@ func (p *pipe) CreateChannels(bufferSize int) error {
 
 	}
 
-	p.channels = make([]chan *otus.OutputPacketContext, partitions)
 	log.GetLogger().Infof("Creating channels with partitions: %d", partitions)
 	for i := 0; i < partitions; i++ {
-		ch := make(chan *otus.OutputPacketContext, bufferSize)
-		p.channels[i] = ch
-
-		if err := p.sender.SetInputChannel(i, ch); err != nil {
+		out := p.processor.GetOutputChannel(i)
+		if err := p.sender.SetInputChannel(i, out); err != nil {
 			log.GetLogger().Errorf("Failed to set input channel for partition %d: %v", i, err)
 			return fmt.Errorf("failed to set input channel for partition %d: %w", i, err)
 		}
 
-		if err := p.capture.SetOutputChannel(i, ch); err != nil {
+		in := p.processor.GetInputChannel(i)
+		if err := p.capture.SetOutputChannel(i, in); err != nil {
 			log.GetLogger().Errorf("Failed to set output channel for partition %d: %v", i, err)
 			return fmt.Errorf("failed to set output channel for partition %d: %w", i, err)
 		}
@@ -101,7 +98,7 @@ func (p *pipe) CreateChannels(bufferSize int) error {
 }
 
 func (p *pipe) PostConstruct() error {
-	p.CreateChannels(p.config.BufferSize)
+	p.bindChannels()
 	p.sender.PostConstruct()
 	p.capture.PostConstruct()
 	return nil

@@ -9,7 +9,7 @@ import (
 	"sync/atomic"
 
 	"firestige.xyz/otus/internal/log"
-	otus "firestige.xyz/otus/internal/otus/api"
+	"firestige.xyz/otus/internal/otus/event"
 	capture "firestige.xyz/otus/internal/otus/module/capture/api"
 	"firestige.xyz/otus/internal/otus/module/capture/codec"
 	"firestige.xyz/otus/internal/otus/module/capture/handle"
@@ -24,7 +24,7 @@ type Capture struct {
 
 	partitionCount int
 	partitions     []*Partition
-	outputChannels []chan<- *otus.OutputPacketContext
+	outputChannels []chan<- *event.EventContext
 
 	shutdownOnce sync.Once
 	running      int32
@@ -37,7 +37,7 @@ type Partition struct {
 	fanoutGroupID uint16
 	handle        handle.CaptureHandle
 	decoder       *codec.Decoder
-	outputCh      chan<- *otus.OutputPacketContext
+	outputCh      chan<- *event.EventContext
 }
 
 // TODO capture的生命周期管理？
@@ -107,7 +107,7 @@ func (c *Capture) buildPartitionComponents(partition *Partition, cfg *capture.Co
 }
 
 // 获取分区对应的 packet queue
-func (c *Capture) getPartitionPacketQueue(partitionID int) chan<- *otus.OutputPacketContext {
+func (c *Capture) getPartitionPacketQueue(partitionID int) chan<- *event.EventContext {
 	// 这里可以是分区专用的队列，或者共享队列
 	if partitionID < len(c.outputChannels) && c.outputChannels[partitionID] != nil {
 		return c.outputChannels[partitionID]
@@ -222,7 +222,7 @@ func (c *Capture) PartitionCount() int {
 	return c.config.Partition
 }
 
-func (c *Capture) SetOutputChannel(partition int, ch chan<- *otus.OutputPacketContext) error {
+func (c *Capture) SetOutputChannel(partition int, ch chan<- *event.EventContext) error {
 	if partition < 0 || partition >= c.partitionCount {
 		return fmt.Errorf("invalid partition index: %d", partition)
 	}

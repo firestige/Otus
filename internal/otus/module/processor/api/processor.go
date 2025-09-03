@@ -7,6 +7,6 @@ import (
 
 type Processor interface {
 	module.Module
-	GetInputChannel(partition int) (chan *event.EventContext, error)
-	GetOutputChannel(partition int) (chan *event.EventContext, error)
+	GetInputChannel(partition int) chan *event.EventContext
+	GetOutputChannel(partition int) chan *event.EventContext
 }
