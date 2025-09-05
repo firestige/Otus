@@ -29,6 +29,31 @@ func NewTraceManager(serviceName, serviceInstanceId string) *TraceManager {
 	}
 }
 
+// GetTraceContextByRefID 根据引用ID获取追踪上下文
+// refID 可以是以下两种类型之一：
+//  1. dialogID: 格式为 "call-id+from-tag"，用于标识 SIP 对话
+//     生成方法请参考 utils.BuildDialogID
+//  2. transactionID: 格式为 "call-id+cesq+branch"，用于标识 SIP 事务
+//     生成方法请参考 utils.BuildTransactionID
+//
+// 参数:
+//
+//	refID - 引用标识符，可以是对话ID或事务ID
+//
+// 返回值:
+//
+//	*TraceContext - 找到的追踪上下文，如果不存在则为nil
+//	bool - 是否找到对应的追踪上下文
+//
+// 另请参见: utils.BuildDialogID, utils.BuildTransactionID
+func (m *TraceManager) GetTraceContextByRefID(id string) (*TraceContext, bool) {
+	ctx, exists := m.traceContext.Load(id)
+	if !exists {
+		return nil, false
+	}
+	return ctx.(*TraceContext), true
+}
+
 func (m *TraceManager) GetTraceContextByTraceID(traceID string) (*TraceContext, bool) {
 	ctx, exists := m.traceContext.Load(traceID)
 	if !exists {

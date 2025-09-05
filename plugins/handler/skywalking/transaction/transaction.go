@@ -67,23 +67,12 @@ const (
 )
 
 // TransactionEvent 定义所有可能的事件
-type TransactionEvent int
+type TransactionEvent string
 
 const (
-	EventSendRequest    TransactionEvent = iota // 发送请求（UAC侧初始动作）
-	EventReceiveRequest                         // 收到请求（UAS侧初始动作）
-	EventSend1xx                                // 发送1xx临时响应（UAS侧）
-	EventSendFinal                              // 发送最终响应（2xx-6xx，UAS侧）
-	EventReceive1xx                             // 收到1xx临时响应（UAC侧）
-	EventReceive2xx                             // 收到2xx响应（UAC侧）
-	EventReceiveFinal                           // 收到最终响应（2xx-6xx，UAC侧）
-	EventTimerJ                                 // 非INVITE事务UAS侧，发送最终响应后启动的定时器（等待重传请求，防止丢包，RFC 3261 17.2.2）
-	EventTimerK                                 // 非INVITE事务UAC侧，收到最终响应后启动的定时器（清理事务，RFC 3261 17.1.2.2）
-	EventSendACK                                // 发送ACK（INVITE事务UAC侧，3xx-6xx响应后）
-	EventReceiveACK                             // 收到ACK（INVITE事务UAS侧，3xx-6xx响应后）
-	EventTimerG                                 // INVITE事务UAS侧，重传最终响应的定时器（RFC 3261 17.2.1）
-	EventTimerH                                 // INVITE事务UAS侧，等待ACK的超时定时器（RFC 3261 17.2.1）
-	EventTimerI                                 // INVITE事务UAS侧，收到ACK后等待终结的定时器（RFC 3261 17.2.1）
+	EventTransactionCreated    TransactionEvent = "TransactionCreated"
+	EventTransactionTerminated TransactionEvent = "TransactionTerminated"
+	EventTransactionTimeout    TransactionEvent = "TransactionTimeout"
 )
 
 type Transaction interface {

@@ -1,9 +1,11 @@
 package event
 
 import (
+	"fmt"
 	"sync"
 
 	"firestige.xyz/otus/internal/eventbus"
+	processor "firestige.xyz/otus/internal/otus/module/processor/api"
 )
 
 var (
@@ -22,13 +24,17 @@ func Publish(event *eventbus.Event) error {
 	return bus.Publish(event)
 }
 
-func Subscribe() {
-	return bus.Subscribe()
+func Subscribe(topic string, handle processor.HandleFunc) {
+	bus.Subscribe(topic, warp(handle))
 }
 
-func OnTransactionCreated(handle func()) {
-	topic :=
-		bus.Subscribe(eventbus.EventTypeTransactionCreated, func(event eventbus.Event) {
-			handle()
-		})
+func warp(handle processor.HandleFunc) eventbus.Handler {
+	return func(event *eventbus.Event) error {
+		ex, ok := event.Payload.(processor.Exchange)
+		if !ok {
+			return fmt.Errorf("invalid payload type")
+		}
+		handle(&ex)
+		return nil
+	}
 }
