@@ -66,6 +66,7 @@ func (l *TraceListener) onDialogTerminated(ex *processor.Exchange) {
 	otus.SetValue(e, "trace_context", ctx.segment)
 	// 通过 ex 把消息发送出去
 	ex.CopyWith(e).Submit()
+	l.releaseTraceContextIfPossible(ctx)
 }
 
 func (l *TraceListener) onDialogTimeout(ex *processor.Exchange) {
@@ -84,6 +85,7 @@ func (l *TraceListener) onDialogTimeout(ex *processor.Exchange) {
 	otus.SetValue(e, "trace_context", ctx.segment)
 	// 通过 ex 把消息发送出去
 	ex.CopyWith(e).Submit()
+	l.releaseTraceContextIfPossible(ctx)
 }
 
 func (l *TraceListener) onTransactionCreated(ex *processor.Exchange) {
@@ -117,6 +119,7 @@ func (l *TraceListener) onTransactionTerminated(ex *processor.Exchange) {
 	otus.SetValue(e, "trace_context", ctx.segment)
 	// 通过 ex 把消息发送出去
 	ex.CopyWith(e).Submit()
+	l.releaseTraceContextIfPossible(ctx)
 }
 
 func (l *TraceListener) onTransactionTimeout(ex *processor.Exchange) {
@@ -135,4 +138,11 @@ func (l *TraceListener) onTransactionTimeout(ex *processor.Exchange) {
 	otus.SetValue(e, "trace_context", ctx.segment)
 	// 通过 ex 把消息发送出去
 	ex.CopyWith(e).Submit()
+	l.releaseTraceContextIfPossible(ctx)
+}
+
+func (l *TraceListener) releaseTraceContextIfPossible(ctx *TraceContext) {
+	if ctx.canBeReleased() {
+		l.manager.ReleaseTraceContext(ctx)
+	}
 }

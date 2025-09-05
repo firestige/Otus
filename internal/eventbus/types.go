@@ -6,9 +6,9 @@ import (
 
 // Event 事件结构
 type Event struct {
-	Topic string      `json:"topic"`
-	Key   string      `json:"key"` // 改名为Key，更通用
-	Ctx   interface{} `json:"ctx"`
+	Topic   string      `json:"topic"`
+	Key     string      `json:"key"` // 改名为Key，更通用
+	Payload interface{} `json:"payload"`
 }
 
 // Handler 事件处理器
