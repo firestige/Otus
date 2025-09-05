@@ -3,8 +3,8 @@ package dialog
 import (
 	"fmt"
 
-	"firestige.xyz/otus/plugins/filter/skywalking/types"
-	"firestige.xyz/otus/plugins/filter/skywalking/utils"
+	"firestige.xyz/otus/plugins/handler/skywalking/types"
+	"firestige.xyz/otus/plugins/handler/skywalking/utils"
 )
 
 type DialogState interface {

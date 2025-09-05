@@ -1,4 +1,4 @@
-package trace
+package tracing
 
 import (
 	"fmt"
@@ -12,14 +12,6 @@ import (
 	agent "skywalking.apache.org/repo/goapi/collect/language/agent/v3"
 	v1 "skywalking.apache.org/repo/goapi/satellite/data/v1"
 )
-
-type TraceContext struct {
-	traceID   string
-	idMapping []string // 序号是span ID，内容是Dialog ID或者Transaction ID，特殊的，idMapping[0]是Call-ID
-	segment   *agent.SegmentObject
-
-	isInitalized bool // 是否已经初始化
-}
 
 type TraceManager struct {
 	serviceName       string

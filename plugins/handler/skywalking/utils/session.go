@@ -33,14 +33,9 @@ func CreateTransactionType(req types.SipRequest) types.TransactionType {
 //
 // returns:
 //   - string: constructed dialog ID
-func BuildDialogID(msg types.SipMessage, earlyDialog bool) string {
+func BuildDialogID(msg types.SipMessage) string {
 	// 使用 Call-ID 和 From-Tag 作为事务 ID 的基础
 	callID := msg.CallID()
 	_, fromTag := ExtractURIAndTag(msg.From())
-	_, toTag := ExtractURIAndTag(msg.To())
-	if earlyDialog {
-		return fmt.Sprintf("%s|%s", callID, fromTag)
-	} else {
-		return fmt.Sprintf("%s|%s|%s", callID, fromTag, toTag)
-	}
+	return fmt.Sprintf("%s|%s", callID, fromTag)
 }

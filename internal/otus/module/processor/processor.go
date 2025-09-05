@@ -2,18 +2,18 @@ package processor
 
 import (
 	"context"
-	"fmt"
 	"sync"
 
 	"firestige.xyz/otus/internal/otus/event"
+	"firestige.xyz/otus/internal/otus/module/processor/api"
 	processor "firestige.xyz/otus/internal/otus/module/processor/api"
-	filter "firestige.xyz/otus/plugins/filter/api"
+	handler "firestige.xyz/otus/plugins/handler/api"
 )
 
 type Processor struct {
 	config *processor.Config
 
-	filters []filter.Filter
+	handlers []handler.Handler
 
 	inputs  []chan *event.EventContext
 	outputs []chan *event.EventContext
@@ -26,23 +26,23 @@ type Processor struct {
 }
 
 type partition struct {
-	input   chan *event.EventContext
-	output  chan *event.EventContext
-	filters []filter.Filter
+	input    chan *event.EventContext
+	output   chan *event.EventContext
+	handlers []handler.Handler
 }
 
-func (p *Processor) GetInputChannel(partition int) (chan *event.EventContext, error) {
+func (p *Processor) GetInputChannel(partition int) chan *event.EventContext {
 	if partition < 0 || partition >= len(p.inputs) {
-		return nil, fmt.Errorf("invalid partition")
+		return nil
 	}
-	return p.inputs[partition], nil
+	return p.inputs[partition]
 }
 
-func (p *Processor) GetOutputChannel(partition int) (chan *event.EventContext, error) {
+func (p *Processor) GetOutputChannel(partition int) chan *event.EventContext {
 	if partition < 0 || partition >= len(p.outputs) {
-		return nil, fmt.Errorf("invalid partition")
+		return nil
 	}
-	return p.outputs[partition], nil
+	return p.outputs[partition]
 }
 
 func (p *partition) run(ctx context.Context) {
@@ -54,16 +54,17 @@ func (p *partition) run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case event := <-p.input:
-			for _, filter := range p.filters {
-				filter.Filter(event)
+			ex := api.NewExchange(event, p.output)
+			for _, h := range p.handlers {
+				h.Handle(ex)
 			}
-			p.output <- event
 		}
 	}
 
 }
 
 func (p *Processor) PostConstruct() error {
+
 	return nil
 }
 

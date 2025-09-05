@@ -1,6 +1,6 @@
 package dialog
 
-import "firestige.xyz/otus/plugins/filter/skywalking/types"
+import "firestige.xyz/otus/plugins/handler/skywalking/types"
 
 // DialogEvent 定义所有可能的事件
 type DialogEvent int

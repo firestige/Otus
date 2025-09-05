@@ -8,5 +8,5 @@ import (
 type Config struct {
 	*config.CommonFields
 
-	FilterConfigs []plugin.Config `mapstructure:"filters"`
+	HandlerConfigs []plugin.Config `mapstructure:"handlers"`
 }

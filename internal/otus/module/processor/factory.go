@@ -6,14 +6,14 @@ import (
 
 	"firestige.xyz/otus/internal/otus/event"
 	processor "firestige.xyz/otus/internal/otus/module/processor/api"
-	filter "firestige.xyz/otus/plugins/filter/api"
+	handler "firestige.xyz/otus/plugins/handler/api"
 )
 
 func NewProcessor(ctx context.Context, cfg *processor.Config) processor.Processor {
 	ctx, cancel := context.WithCancel(ctx)
 	p := &Processor{
 		config:     cfg,
-		filters:    make([]filter.Filter, 0),
+		handlers:   make([]handler.Handler, 0),
 		inputs:     make([]chan *event.EventContext, cfg.CommonFields.Partition),
 		outputs:    make([]chan *event.EventContext, cfg.CommonFields.Partition),
 		partitions: make([]*partition, cfg.CommonFields.Partition),
@@ -21,8 +21,8 @@ func NewProcessor(ctx context.Context, cfg *processor.Config) processor.Processo
 		cancel:     cancel,
 		wg:         &sync.WaitGroup{},
 	}
-	for _, filterCfg := range cfg.FilterConfigs {
-		p.filters = append(p.filters, filter.GetFilter(filterCfg))
+	for _, handlerCfg := range cfg.HandlerConfigs {
+		p.handlers = append(p.handlers, handler.GetHandler(handlerCfg))
 	}
 	return p
 }
