@@ -6,14 +6,8 @@ import (
 	"firestige.xyz/otus/plugins/handler/skywalking/types"
 )
 
-type DialogListener interface {
-	OnDialogCreated(ex *processor.Exchange)
-	OnDialogTerminated(ex *processor.Exchange)
-}
-
 type Handler struct {
-	dm        DialogManager
-	listeners []DialogListener
+	dm DialogManager
 }
 
 func (h *Handler) Handle(ex *processor.Exchange) error {
@@ -40,5 +34,5 @@ func (h *Handler) Handle(ex *processor.Exchange) error {
 			}
 		}
 	}
-	return errß
+	return err
 }

@@ -20,10 +20,6 @@ func NewDialogManager() *DialogManager {
 	}
 }
 
-func (dm *DialogManager) RegisterListener(listener types.DialogListener) {
-	dm.listeners = append(dm.listeners, listener)
-}
-
 func (dm *DialogManager) CreateDialog(req types.SipRequest) *DialogContext {
 	ctx, err := NewDialogContext(req)
 	if err != nil {
