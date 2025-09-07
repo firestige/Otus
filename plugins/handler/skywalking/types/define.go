@@ -36,3 +36,13 @@ var (
 	OnTransactionCreated    SipEvents = "transaction_created"
 	OnTransactionTerminated SipEvents = "transaction_terminated"
 )
+
+type WithValue interface {
+	WithValue(key string, value interface{}) WithValue
+	Value(key string) interface{}
+	ValueAsString(key string) string
+	ValueAsInt(key string) int
+	ValueAsInt64(key string) int64
+	ValueAsBool(key string) bool
+	Values() map[string]interface{}
+}
