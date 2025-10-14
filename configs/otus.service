@@ -1,0 +1,32 @@
+[Unit]
+Description=Otus Service Daemon
+Documentation=https://github.com/firestige/otus
+After=network.target
+
+[Service]
+Type=simple
+User=firestige
+Group=firestige
+
+# 前台运行模式
+ExecStart=/usr/local/bin/otus start --foreground
+ExecStop=/usr/local/bin/otus stop
+ExecReload=/usr/local/bin/otus reload
+
+Restart=on-failure
+RestartSec=5s
+
+# 安全加固
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/tmp
+
+# 日志
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=otus
+
+[Install]
+WantedBy=multi-user.target

@@ -1,32 +1,22 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
-	"os"
-	"strconv"
-	"syscall"
 
 	"github.com/spf13/cobra"
 )
 
 var stopCmd = &cobra.Command{
 	Use:   "stop",
-	Short: "Stop the Otus Packet server",
-	Run: func(cmd *cobra.Command, args []string) {
-		data, err := os.ReadFile("/tmp/otus.pid")
-		if err != nil {
-			panic(err)
+	Short: "Stop the service",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		ctx := context.Background()
+		if err := cli.Stop(ctx); err != nil {
+			return fmt.Errorf("failed to stop: %w", err)
 		}
-		pid, err := strconv.Atoi(string(data))
-		if err != nil {
-			fmt.Print("invalid pid file")
-			return
-		}
-		err = syscall.Kill(pid, syscall.SIGTERM)
-		if err != nil {
-			panic(err)
-		}
-		fmt.Println("Stopped Otus Packet server with PID:", pid)
+		fmt.Println("✓ Service stopped successfully")
+		return nil
 	},
 }
 

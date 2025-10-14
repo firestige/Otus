@@ -5,4 +5,5 @@ RUN apt-get update && apt-get install -y \
     openjdk-17-jdk \
     graphviz \
     libpcap-dev \
+    protobuf-compiler \
     && rm -rf /var/lib/apt/lists/*
