@@ -17,6 +17,13 @@ build:
 	@echo "Building ${BINARY_NAME}..."
 	go build -o ${BINARY_NAME} main.go
 
+# 构建插件
+build-plugins:
+	@echo "Building plugins..."
+	@./scripts/build_plugins.sh gatherers pcap
+	@./scripts/build_plugins.sh processors dns_processor
+	@./scripts/build_plugins.sh outputs file_output
+
 # 安装
 install: build
 	@echo "Installing ${BINARY_NAME} to ${INSTALL_PATH}..."
