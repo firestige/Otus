@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	pb "firestige.xyz/otus/pkg/pb"
+	pb "firestige.xyz/otus/internal/pb"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )

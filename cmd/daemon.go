@@ -7,8 +7,8 @@ import (
 	"os/signal"
 	"syscall"
 
+	pb "firestige.xyz/otus/internal/pb"
 	"firestige.xyz/otus/internal/rpc"
-	pb "firestige.xyz/otus/pkg/pb"
 	"google.golang.org/grpc"
 )
 

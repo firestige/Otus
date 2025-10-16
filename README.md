@@ -13,7 +13,7 @@ go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
 ### generate protobuf code
 
 ```bash
-protoc --go_out=. --go-grpc_out=. api/v1/daemon.proto
+protoc --go_out=. --go-grpc_out=. internal/proto/daemon.proto
 ```
 
 ## Structure

@@ -1,7 +1,7 @@
 syntax = "proto3";
 
 package daemon.v1;
-option go_package = "pkg/pb;pb";
+option go_package = "internal/pb;pb";
 
 service DaemonService {
     rpc Start(StartRequest) returns (Response);

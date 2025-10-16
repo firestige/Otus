@@ -6,7 +6,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	pb "firestige.xyz/otus/pkg/pb"
+	pb "firestige.xyz/otus/internal/pb"
 )
 
 const version = "1.0.0"
