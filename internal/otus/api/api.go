@@ -3,6 +3,7 @@ package api
 import (
 	"net"
 
+	"github.com/google/gopacket"
 	"github.com/google/gopacket/layers"
 )
 
@@ -24,4 +25,8 @@ type FiveTuple struct {
 	DstIP    net.IP
 	DstPort  uint16
 	Protocol layers.IPProtocol // IP protocol (e.g., TCP, UDP)
+}
+
+type PacketsSource interface {
+	ReadPacket() ([]byte, gopacket.CaptureInfo, error)
 }
