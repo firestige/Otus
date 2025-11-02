@@ -31,7 +31,7 @@ func (p *Pipeline) Init(ctx context.Context) {
 		part := newPartition(i, p)
 		part.dataSource = datasource.NewSource(nil)
 		// todo: initialize packetHandler and senders
-		part.packetHandler = newPacketHandler(nil)
+		part.packetHandler = newPacketHandler()
 		p.partitions = append(p.partitions, part)
 	}
 	p.ctx, p.cancel = context.WithCancel(ctx)

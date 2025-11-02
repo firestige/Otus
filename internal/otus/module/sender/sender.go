@@ -6,6 +6,8 @@ import (
 
 type Sender struct {
 	// implementation details
+	forwarder interface{}
+	client    interface{}
 }
 
 func (s *Sender) Send(packet *otus.Exchange) error {
