@@ -1,10 +1,19 @@
 package api
 
-import "context"
+import (
+	"context"
+
+	"github.com/google/gopacket"
+)
 
 type Source interface {
 	Start(ctx context.Context) error
+	ReadPacket() (data []byte, info gopacket.CaptureInfo, err error)
 	Stop() error
+}
+
+type Decoder interface {
+	Decode(data []byte, info gopacket.CaptureInfo) (*NetPacket, error)
 }
 
 type Processor interface {

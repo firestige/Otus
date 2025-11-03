@@ -5,17 +5,16 @@ import (
 	"fmt"
 
 	otus "firestige.xyz/otus/internal/otus/api"
-	module "firestige.xyz/otus/internal/otus/module/api"
-	"github.com/google/gopacket"
 )
 
 type partition struct {
 	id   int
 	name string
 
-	dataSource    module.DataSource
-	packetHandler *packetHandler
-	senders       []module.Sender
+	source    otus.Source
+	decoder   otus.Decoder
+	processor otus.Processor
+	sinks     []otus.Sink
 }
 
 func newPartition(id int, p *Pipeline) *partition {
@@ -38,23 +37,33 @@ func (p *partition) String() string {
 }
 
 func (p *partition) Start(ctx context.Context) {
-	p.dataSource.Boot()
+	p.source.Start(ctx)
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		default:
 			// 处理数据包的逻辑
-			data, info, err := p.dataSource.ReadPacket()
+			data, info, err := p.source.ReadPacket()
 			if err != nil {
 				// 处理错误
 				continue
 			}
 			// 处理数据包
-			exchange := p.buildExchange(data, info)
-			p.packetHandler.handle(exchange)
-			for _, sender := range p.senders {
-				sender.Send(exchange)
+			packet, err := p.decoder.Decode(data, info)
+
+			if err != nil {
+				// 处理解码错误
+				continue
+			}
+
+			exchange := &otus.Exchange{
+				Packet:  packet,
+				Context: make(map[string]interface{}),
+			}
+			p.processor.Process(exchange)
+			for _, sink := range p.sinks {
+				sink.Send(exchange)
 			}
 		}
 	}
@@ -62,13 +71,8 @@ func (p *partition) Start(ctx context.Context) {
 
 func (p *partition) Stop() {
 	// 停止数据源和发送器
-	p.dataSource.Stop()
-	for _, sender := range p.senders {
-		sender.Shutdown()
+	p.source.Stop()
+	for _, sender := range p.sinks {
+		sender.Close()
 	}
-}
-
-func (p *partition) buildExchange(data []byte, ci gopacket.CaptureInfo) *otus.Exchange {
-	// Todo: 构建 Exchange 对象的逻辑
-	return &otus.Exchange{}
 }

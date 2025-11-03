@@ -6,16 +6,25 @@ import (
 	"github.com/google/gopacket/layers"
 )
 
+type ComponentType string
+
+const (
+	ComponentTypeSource    ComponentType = "source"
+	ComponentTypeDecoder   ComponentType = "decoder"
+	ComponentTypeProcessor ComponentType = "processor"
+	ComponentTypeSink      ComponentType = "sink"
+)
+
 type Exchange struct {
-	packet  *NetPacket
-	context map[string]interface{}
+	Packet  *NetPacket
+	Context map[string]interface{}
 }
 
 type NetPacket struct {
 	FiveTuple *FiveTuple
 	Timestamp int64  //accurate to nanosecond
 	Protocol  string // application protocol (e.g. SIP, RTP)
-	Payload   []byte // content
+	Raw       []byte // raw packet bytes including link layer header
 }
 
 type FiveTuple struct {

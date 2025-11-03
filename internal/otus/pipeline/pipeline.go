@@ -4,12 +4,17 @@ import (
 	"context"
 	"sync"
 
-	"firestige.xyz/otus/internal/otus/module/datasource"
+	"firestige.xyz/otus/internal/otus/config"
+	"firestige.xyz/otus/internal/otus/factory"
 )
 
 type PipelineConfig struct {
-	name           string
+	Name           string
 	PartitionCount int
+	SourceCfg      config.SourceConfig
+	DecoderCfg     config.DecoderConfig
+	ProcessorCfg   config.ProcessorConfig
+	SinkCfgs       []config.SinkConfig
 }
 
 type Pipeline struct {
@@ -22,22 +27,32 @@ type Pipeline struct {
 	wg     *sync.WaitGroup
 }
 
-func (p *Pipeline) Name() string {
-	return p.cfg.name
+func NewPipeline(cfg *PipelineConfig) *Pipeline {
+	return &Pipeline{
+		cfg:        cfg,
+		partitions: make([]*partition, 0),
+		wg:         &sync.WaitGroup{},
+	}
 }
 
-func (p *Pipeline) Init(ctx context.Context) {
+func (p *Pipeline) Name() string {
+	return p.cfg.Name
+}
+
+func (p *Pipeline) Init() {
 	for i := 0; i < p.cfg.PartitionCount; i++ {
 		part := newPartition(i, p)
-		part.dataSource = datasource.NewSource(nil)
-		// todo: initialize packetHandler and senders
-		part.packetHandler = newPacketHandler()
+		part.source = factory.GetSource(p.cfg.SourceCfg)
+		part.decoder = factory.GetDecoder(p.cfg.DecoderCfg)
+		part.processor = factory.GetProcessor(p.cfg.ProcessorCfg)
+		part.sinks = factory.GetSinks(p.cfg.SinkCfgs)
 		p.partitions = append(p.partitions, part)
 	}
-	p.ctx, p.cancel = context.WithCancel(ctx)
+
 }
 
-func (p *Pipeline) Start() {
+func (p *Pipeline) Start(ctx context.Context) {
+	p.ctx, p.cancel = context.WithCancel(ctx)
 	for _, part := range p.partitions {
 		p.wg.Add(1)
 		go func(part *partition) {
