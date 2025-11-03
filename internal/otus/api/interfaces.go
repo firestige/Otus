@@ -18,6 +18,15 @@ type Decoder interface {
 
 type Processor interface {
 	Process(exchange *Exchange) error
+	Close() error
+}
+
+type FilterChain interface {
+	Filter(exchange *Exchange)
+}
+
+type Filter interface {
+	Filter(exchange *Exchange, chain FilterChain)
 }
 
 type Sink interface {

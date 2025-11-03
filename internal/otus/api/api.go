@@ -9,10 +9,10 @@ import (
 type ComponentType string
 
 const (
-	ComponentTypeSource    ComponentType = "source"
-	ComponentTypeDecoder   ComponentType = "decoder"
-	ComponentTypeProcessor ComponentType = "processor"
-	ComponentTypeSink      ComponentType = "sink"
+	ComponentTypeSource  ComponentType = "source"
+	ComponentTypeDecoder ComponentType = "decoder"
+	ComponentTypeFilter  ComponentType = "filter"
+	ComponentTypeSink    ComponentType = "sink"
 )
 
 type Exchange struct {

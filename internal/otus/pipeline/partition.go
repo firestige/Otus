@@ -14,7 +14,6 @@ type partition struct {
 	source    otus.Source
 	decoder   otus.Decoder
 	processor otus.Processor
-	sinks     []otus.Sink
 }
 
 func newPartition(id int, p *Pipeline) *partition {
@@ -62,9 +61,6 @@ func (p *partition) Start(ctx context.Context) {
 				Context: make(map[string]interface{}),
 			}
 			p.processor.Process(exchange)
-			for _, sink := range p.sinks {
-				sink.Send(exchange)
-			}
 		}
 	}
 }
@@ -72,7 +68,5 @@ func (p *partition) Start(ctx context.Context) {
 func (p *partition) Stop() {
 	// 停止数据源和发送器
 	p.source.Stop()
-	for _, sender := range p.sinks {
-		sender.Close()
-	}
+	p.processor.Close()
 }

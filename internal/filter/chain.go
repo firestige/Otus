@@ -3,14 +3,14 @@ package filter
 import otus "firestige.xyz/otus/internal/otus/api"
 
 type FilterChain struct {
-	filters []Filter
-	handler func(exchange otus.Exchange)
-	current Filter
+	filters []otus.Filter
+	handler func(exchange *otus.Exchange)
+	current otus.Filter
 	chain   *FilterChain
 }
 
-func NewFilterChain(handler func(exchange otus.Exchange), filters []Filter) *FilterChain {
-	allFilters := make([]Filter, len(filters))
+func NewFilterChain(handler func(exchange *otus.Exchange), filters []otus.Filter) *FilterChain {
+	allFilters := make([]otus.Filter, len(filters))
 	copy(allFilters, filters)
 	chain := initChain(allFilters, handler)
 	return &FilterChain{
@@ -21,7 +21,7 @@ func NewFilterChain(handler func(exchange otus.Exchange), filters []Filter) *Fil
 	}
 }
 
-func newChain(filters []Filter, handler func(exchange otus.Exchange), current Filter, chain *FilterChain) *FilterChain {
+func newChain(filters []otus.Filter, handler func(exchange *otus.Exchange), current otus.Filter, chain *FilterChain) *FilterChain {
 	return &FilterChain{
 		filters: filters,
 		handler: handler,
@@ -30,7 +30,7 @@ func newChain(filters []Filter, handler func(exchange otus.Exchange), current Fi
 	}
 }
 
-func initChain(filters []Filter, handler func(exchange otus.Exchange)) *FilterChain {
+func initChain(filters []otus.Filter, handler func(exchange *otus.Exchange)) *FilterChain {
 	chain := newChain(filters, handler, nil, nil)
 	for i := len(filters) - 1; i >= 0; i-- {
 		chain = newChain(filters, handler, filters[i], chain)
@@ -38,15 +38,15 @@ func initChain(filters []Filter, handler func(exchange otus.Exchange)) *FilterCh
 	return chain
 }
 
-func (c *FilterChain) GetFilters() []Filter {
+func (c *FilterChain) GetFilters() []otus.Filter {
 	return c.filters
 }
 
-func (c *FilterChain) GetHandler() func(exchange otus.Exchange) {
+func (c *FilterChain) GetHandler() func(exchange *otus.Exchange) {
 	return c.handler
 }
 
-func (c *FilterChain) Filter(exchange otus.Exchange) {
+func (c *FilterChain) Filter(exchange *otus.Exchange) {
 	if c.current != nil && c.chain != nil {
 		c.current.Filter(exchange, c.chain)
 	} else {

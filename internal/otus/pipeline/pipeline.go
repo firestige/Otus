@@ -13,8 +13,8 @@ type PipelineConfig struct {
 	PartitionCount int
 	SourceCfg      config.SourceConfig
 	DecoderCfg     config.DecoderConfig
-	ProcessorCfg   config.ProcessorConfig
-	SinkCfgs       []config.SinkConfig
+	FiltersCfg     config.FiltersConfig
+	SinksCfgs      config.SinksConfig
 }
 
 type Pipeline struct {
@@ -44,8 +44,9 @@ func (p *Pipeline) Init() {
 		part := newPartition(i, p)
 		part.source = factory.GetSource(p.cfg.SourceCfg)
 		part.decoder = factory.GetDecoder(p.cfg.DecoderCfg)
-		part.processor = factory.GetProcessor(p.cfg.ProcessorCfg)
-		part.sinks = factory.GetSinks(p.cfg.SinkCfgs)
+		filters := factory.GetFilters(p.cfg.FiltersCfg)
+		sinks := factory.GetSinks(p.cfg.SinksCfgs)
+		part.processor = factory.GetProcessor(filters, sinks)
 		p.partitions = append(p.partitions, part)
 	}
 

@@ -12,10 +12,10 @@ type DecoderConfig struct {
 	CommonFields `mapstructure:",squash"`
 }
 
-type ProcessorConfig struct {
-	CommonFields `mapstructure:",squash"`
+type FiltersConfig struct {
+	Filters []CommonFields `mapstructure:"filters"`
 }
 
-type SinkConfig struct {
-	CommonFields `mapstructure:",squash"`
+type SinksConfig struct {
+	Sinks []CommonFields `mapstructure:"sinks"`
 }

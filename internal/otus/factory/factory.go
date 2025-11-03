@@ -3,6 +3,7 @@ package factory
 import (
 	otus "firestige.xyz/otus/internal/otus/api"
 	"firestige.xyz/otus/internal/otus/config"
+	"firestige.xyz/otus/internal/processor"
 )
 
 var registry = make(map[otus.ComponentType]map[string]func(cfg interface{}) interface{})
@@ -21,14 +22,23 @@ func GetDecoder(cfg config.DecoderConfig) otus.Decoder {
 	return factory(cfg).(otus.Decoder)
 }
 
-func GetProcessor(cfg config.ProcessorConfig) otus.Processor {
-	factory := registry[otus.ComponentTypeProcessor][cfg.Name]
-	return factory(cfg).(otus.Processor)
+func GetProcessor(filters []otus.Filter, sinks []otus.Sink) otus.Processor {
+	return processor.NewProcessor(filters, sinks)
 }
 
-func GetSinks(cfg []config.SinkConfig) []otus.Sink {
+func GetFilters(cfg config.FiltersConfig) []otus.Filter {
+	filters := make([]otus.Filter, 0)
+	for _, filterCfg := range cfg.Filters {
+		factory := registry[otus.ComponentTypeFilter][filterCfg.Name]
+		filter := factory(filterCfg).(otus.Filter)
+		filters = append(filters, filter)
+	}
+	return filters
+}
+
+func GetSinks(cfg config.SinksConfig) []otus.Sink {
 	sinks := make([]otus.Sink, 0)
-	for _, sinkCfg := range cfg {
+	for _, sinkCfg := range cfg.Sinks {
 		factory := registry[otus.ComponentTypeSink][sinkCfg.Name]
 		sink := factory(sinkCfg).(otus.Sink)
 		sinks = append(sinks, sink)

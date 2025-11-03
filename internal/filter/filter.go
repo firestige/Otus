@@ -3,14 +3,14 @@ package filter
 import otus "firestige.xyz/otus/internal/otus/api"
 
 type Filter interface {
-	Filter(exchange otus.Exchange, chain *FilterChain)
+	Filter(exchange *otus.Exchange, chain otus.FilterChain)
 }
 
 type CounterFilter struct {
 	count int
 }
 
-func (f *CounterFilter) Filter(exchange otus.Exchange, chain *FilterChain) {
+func (f *CounterFilter) Filter(exchange *otus.Exchange, chain otus.FilterChain) {
 	f.count++
 	chain.Filter(exchange)
 }
