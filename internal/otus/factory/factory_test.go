@@ -1,7 +1,6 @@
 package factory_test
 
 import (
-	"fmt"
 	"testing"
 
 	otus "firestige.xyz/otus/internal/otus/api"
@@ -9,25 +8,24 @@ import (
 	_ "firestige.xyz/otus/internal/sink/console"
 	_ "firestige.xyz/otus/internal/source/afpacket"
 	"firestige.xyz/otus/internal/source/file"
-	_ "firestige.xyz/otus/internal/source/file"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestRegistryInit(t *testing.T) {
 	cfg := &file.FileCfg{}
-	cfg.Name = "file" // 利用字段提升
+	cfg.Name = "file"
 	cfg.FilePath = "testdata/sample.pcap"
-	// factory.GetSource(cfg)
-	// if s == nil {
-	// 	t.Error("failed to get source")
-	// }
+
 	reg := factory.GetRegistry()
-	fmt.Printf("%d", len(reg))
-	f := reg[otus.ComponentTypeSource]["file"]
-	if f == nil {
-		t.Error("file source factory not registered")
-	}
-	s := factory.GetSource(cfg)
-	if s == nil {
-		t.Error("failed to get source")
-	}
+	assert.NotEmpty(t, reg, "registry should not be empty")
+
+	sourceFactories := reg[otus.ComponentTypeSource]
+	require.NotNil(t, sourceFactories, "source factories should not be nil")
+
+	f := sourceFactories[file.Name]
+	assert.NotNil(t, f, "file source factory should be registered")
+
+	source := factory.GetSource(cfg)
+	assert.NotNil(t, source, "GetSource should return a source instance")
 }
