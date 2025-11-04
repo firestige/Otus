@@ -1,4 +1,4 @@
-package mock_test
+package file
 
 import (
 	"context"
@@ -25,7 +25,7 @@ type FileSource struct {
 	handle *pcap.Handle
 }
 
-func Init() {
+func init() {
 	fn := func(cfg interface{}) interface{} {
 		fileCfg, ok := cfg.(*FileCfg)
 		if !ok {

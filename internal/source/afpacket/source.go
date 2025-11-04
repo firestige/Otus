@@ -38,7 +38,7 @@ type Source struct {
 	bpfFilter string
 }
 
-func Init() {
+func init() {
 	fn := func(cfg interface{}) interface{} {
 		afCfg, ok := cfg.(*AfCfg)
 		if !ok {

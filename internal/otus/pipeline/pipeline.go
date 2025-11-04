@@ -11,10 +11,10 @@ import (
 type PipelineConfig struct {
 	Name           string
 	PartitionCount int
-	SourceCfg      config.SourceConfig
-	DecoderCfg     config.DecoderConfig
-	FiltersCfg     config.FiltersConfig
-	SinksCfgs      config.SinksConfig
+	SourceCfg      *config.SourceConfig
+	DecoderCfg     *config.DecoderConfig
+	FiltersCfg     *config.FiltersConfig
+	SinksCfgs      *config.SinksConfig
 }
 
 type Pipeline struct {
