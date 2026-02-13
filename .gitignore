@@ -33,3 +33,5 @@ go.work.sum
 
 # protobuf
 *.pb.go
+
+otus
