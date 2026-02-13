@@ -1,5 +1,8 @@
 FROM mcr.microsoft.com/devcontainers/go:1-1.24-bookworm
 
+# Remove Yarn repository to avoid GPG key issues
+RUN rm -f /etc/apt/sources.list.d/yarn.list
+
 # Install libpcap development libraries
 RUN apt-get update && apt-get install -y \
     openjdk-17-jdk \
