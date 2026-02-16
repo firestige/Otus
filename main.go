@@ -1,15 +1,6 @@
+// Package main is the entry point for the Otus edge packet capture agent.
 package main
 
-import (
-	"os"
-
-	"firestige.xyz/otus/cmd"
-)
-
 func main() {
-	if os.Getenv("OTUSD_DAEMON_MODE") == "1" {
-		cmd.RunDaemon()
-		return
-	}
-	cmd.Execute()
+// Entry point - will call cmd.Execute() after cobra commands are implemented
 }
