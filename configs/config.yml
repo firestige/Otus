@@ -1,77 +1,69 @@
-# Logger configuration (log.LoggerConfig)
+# Otus Global Configuration
+# This configuration is loaded once at startup and defines system-wide settings.
+# For task-specific configuration, use TaskConfig JSON from Kafka commands or CLI.
+
+# Daemon configuration
+daemon:
+  pid_file: "/var/run/otus.pid"       # PID file location
+  socket_path: "/var/run/otus.sock"   # Unix socket for local RPC communication
+
+# Logging configuration
 log:
-  level: "info"
-  pattern: "%time[%caller][%func][%goroutine][%level][%field] - %msg\n"
-  time: "2006-01-02 15:04:05"
-  appenders:
-    # 控制台输出
+  level: "info"                        # Log level: debug, info, warn, error
+  format: "json"                       # Log format: json or text
+  outputs:                             # Multiple output destinations
+    # Console output (stdout)
     - type: "console"
-      
-    # # 文件输出
-    # - type: "file" 
-    #   level: "info"
-    #   options:
-    #     filename: "logs/otus.log"
-    #     maxsize: 100        # MB
-    #     maxage: 30          # 天
-    #     maxbackups: 10      # 备份文件数
-    #     compress: true      # 是否压缩
-        
-    # # Kafka输出 (待实现)
-    # - type: "kafka"
-    #   level: "warn"
-    #   options:
-    #     brokers: ["localhost:9092"]
-    #     topic: "otus-logs"
-    #     partition: 0
-        
-  # 格式化选项
-  formatter:
-    enable_colors: true
-    full_timestamp: true
-    disable_sorting: false
-  buffer_size: 1024
-  flush_interval: "5s"
+      enabled: true
 
-# Sharable configuration (SharableConfig)  
-sharable:
-  clients:
-    - plugin_name: "stub-client"
-# Pipeline configurations (pipeline.Config array)
-pipes:
-  - common_config:
-      pipe_name: "sip-capture"
-      partition: 1
-      fanout_id: 123
-    capture:
-      handle:
-        network_interface: "eth0"
-        snap_len: 65535
-        buffer_size: 8388608
-        timeout: 1000
-        filter: "ip"
-        fanout_id: 123
-        capture_type: "afpacket"
-      codec:
-        max_age: 30
-        max_fragments_num: 100
-        max_ip_size: 1500
-      parsers: 
-        - plugin_name: "sip-parser"
-          type: "sip"
-      fanout_id: 123
-    sender:
-      reporters: 
-      fallbacker:
-        plugin_name: "none-fallbacker"
-      client_name: ""
-      max_buffer_size: 1024
-      min_flush_events: 10
-      flush_interval: 5
-    buffer_size: 1024
-    partitions: 1
+    # File output
+    - type: "file"
+      enabled: true
+      path: "/var/log/otus/otus.log"
+      max_size: 100                    # MB per file
+      max_age: 30                      # Days to keep
+      max_backups: 10                  # Number of backup files
+      compress: true                   # Compress old files
 
+    # Loki output (log aggregation)
+    - type: "loki"
+      enabled: false
+      url: "http://localhost:3100/loki/api/v1/push"
+      batch_size: 100
+      timeout: "10s"
+      labels:
+        service: "otus"
+        environment: "production"
 
-# Metrics configuration (metrics.Config - empty struct)
+# Kafka configuration (for command receiving and log output)
+kafka:
+  brokers:                             # Kafka broker addresses
+    - "localhost:9092"
+  command_topic: "otus-commands"       # Topic for receiving capture tasks
+  command_group: "otus-agents"         # Consumer group for command topic
+  log_topic: "otus-logs"               # Topic for structured logs (optional)
+  sasl:
+    enabled: false
+    mechanism: "PLAIN"                 # PLAIN, SCRAM-SHA-256, SCRAM-SHA-512
+    username: ""
+    password: ""
+  tls:
+    enabled: false
+    ca_cert: ""
+    client_cert: ""
+    client_key: ""
+    insecure_skip_verify: false
+
+# Metrics configuration (Prometheus)
 metrics:
+  enabled: true
+  listen: "0.0.0.0:9090"               # Prometheus metrics HTTP endpoint
+  path: "/metrics"                     # Metrics endpoint path
 
+# Agent identification
+agent:
+  id: ""                               # Agent ID (auto-generated from hostname if empty)
+  tags:                                # Custom tags for agent identification
+    datacenter: "dc1"
+    region: "us-west-1"
+    environment: "production"
