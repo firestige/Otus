@@ -748,6 +748,42 @@ type DecodedPacket struct {
 
 ---
 
+### ADR-022: 插件注册机制——静态链接 + init() 全局 Registry
+
+**问题**：TaskConfig 中通过字符串名称引用插件（如 `"sip"`, `"afpacket"`, `"kafka"`），需要一个机制将名称映射到具体的插件实例。
+
+**决定**：**纯静态链接 + init() 自动注册到全局 Registry**。不支持运行时动态加载 `.so`。
+
+**方案对比**：
+
+| 方案 | 优点 | 缺点 |
+|------|------|------|
+| A. 静态链接 + init() Registry | 零开销，编译期可知，简单可靠 | 新增插件需重新编译 |
+| B. Go plugin (.so) | 运行时可扩展 | 需要 CGO，必须同版本编译，不可卸载，Linux only，实际几乎不可用 |
+| C. 子进程 + IPC | 语言无关 | 巨大性能开销（序列化 + IPC），hot path 不可接受 |
+
+**理由**（选 A）：
+
+1. Go 的 `plugin.Open()` 限制严格——必须同 Go 版本、同依赖版本编译，不可卸载，仅 Linux/macOS，社区普遍不推荐
+2. Otus 是边缘采集 Agent，部署时重新编译二进制是正常流程（交叉编译 amd64/arm64），不需要运行时扩展
+3. 静态链接的性能最优——函数调用无间接层，编译器可内联优化
+4. 模式成熟：`database/sql`、`image`、`hash` 等标准库均使用 init() + Register 模式
+
+**Registry 设计要点**：
+
+1. **位置**：`pkg/plugin/registry.go`（`pkg/` 下，插件实现可以 import）
+2. **按类型分表**：capturer / parser / processor / reporter 各有独立 map，避免命名冲突，查找时类型安全
+3. **Factory 签名**：`func() T`（零参数返回空实例），不做 Init——配置来自 TaskConfig，注册时不可知
+4. **安全约束**：注册重名 panic（编译期 bug），查找不到返回 error
+5. **线程安全**：init() 阶段单线程写入，运行期只读不写，无需 sync
+
+**生命周期分离**：
+```
+Factory(构造空实例) → Init(注入配置) → Wire(注入共享资源) → Start(启动) → Stop(停止)
+```
+
+---
+
 ## 决策优先级总览
 
 | ADR | 决策点 | 结论 | 实施阶段 |
@@ -781,6 +817,7 @@ type DecodedPacket struct {
 | 019 | Kafka 客户端 | segmentio/kafka-go，纯 Go 无 CGO | Phase 1 |
 | 020 | 本地控制通道 | JSON-RPC over UDS，不用 gRPC | Phase 1 |
 | 021 | DecodedPacket 类型 | 自定义值类型 struct，隔离 gopacket | Phase 1 |
+| 022 | 插件注册机制 | 静态链接 + init() 全局 Registry，不支持动态 .so | Phase 1 |
 
 ---
 

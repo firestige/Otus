@@ -612,8 +612,33 @@ agent:
 
 ---
 
+### Step 7.5: 插件 Registry
+**前置**: Step 3  
+**目标**: 实现全局插件注册表（见 ADR-022）
+
+**任务清单**:
+1. `pkg/plugin/registry.go` — 全局 Registry 实现
+   - Factory 类型定义：`CapturerFactory`, `ParserFactory`, `ProcessorFactory`, `ReporterFactory`
+   - 注册 API：`RegisterCapturer(name, factory)`, `RegisterParser(...)` 等
+   - 查找 API：`GetCapturerFactory(name)`, `GetParserFactory(...)` 等
+   - 枚举 API：`ListCapturers()`, `ListParsers()` 等（调试/状态查询用）
+   - 安全约束：重复注册同名同类型 panic，查找不到返回 `ErrPluginNotFound`
+2. `pkg/plugin/registry_test.go` — 单元测试
+   - 注册 + 查找 + 类型安全
+   - 重复注册 panic
+   - 查找不存在返回 error
+   - List 枚举
+3. `internal/config/task.go` — 更新 TaskConfig
+   - `Parsers []string` → `Parsers []ParserConfig`（含 Plugin + Config 字段）
+   - 对齐架构文档 4.4.2 节的 Task 配置 YAML 结构
+4. 更新 `internal/config/task_test.go` — 适配新结构
+
+**交付物**: `plugin.RegisterParser("sip", factory)` + `plugin.GetParserFactory("sip")` 可用
+
+---
+
 ### Step 8: Task 管理器
-**前置**: Step 7  
+**前置**: Step 7, Step 7.5  
 **目标**: Task 生命周期管理
 
 **任务清单**:

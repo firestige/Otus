@@ -99,8 +99,8 @@ Otus 是一个高性能、低资源占用的边缘网络数据包捕获和观测
 │         └──────────┬────────────┘                            │
 │                    │                                         │
 │         ┌──────────▼────────────┐                            │
-│         │   Plugin Manager      │                            │
-│         │  (Load & Registry)    │                            │
+│         │   Plugin Registry     │                            │
+│         │  (init() Register)    │                            │
 │         └──────────┬────────────┘                            │
 │                    │                                         │
 │    ┌───────────────┼───────────────┐                         │
@@ -163,10 +163,11 @@ Otus 是一个高性能、低资源占用的边缘网络数据包捕获和观测
 - 配置加载和验证
 - 依赖注入和组件装配
 
-**Plugin Manager** - `internal/plugin/manager.go`
-- 插件加载和卸载
-- 插件注册表管理
-- 依赖解析和版本管理
+**Plugin Registry** - `pkg/plugin/registry.go`
+- 全局插件注册表（按类型分表：capturer / parser / processor / reporter）
+- 静态链接 + init() 自动注册，编译期插件集合确定
+- 提供类型安全的 Factory 查找 API
+- 详见 4.3 节
 
 **Protocol Stack Decoder** - `internal/otus/decoder/`
 - L2-L4 协议栈解码（以太网/VLAN/IP/TCP/UDP）
@@ -204,16 +205,19 @@ Otus 是一个高性能、低资源占用的边缘网络数据包捕获和观测
 ### 4.1 插件接口定义
 
 ```go
-// 基础插件接口
+// 基础插件接口（pkg/plugin/lifecycle.go）
 type Plugin interface {
     Name() string
-    Version() string
-    Init(config interface{}) error
-    Start() error
-    Stop() error
-    Health() error
+    Init(cfg map[string]any) error
+    Start(ctx context.Context) error
+    Stop(ctx context.Context) error
 }
 ```
+
+说明：
+- `Init(cfg map[string]any)` — 接收来自 TaskConfig 的插件级配置，类型为通用 map
+- `Start/Stop` 接收 context，支持超时控制和取消传播
+- 不包含 `Version()` 和 `Health()`——Phase 1 不需要版本管理和健康检查
 
 ### 4.2 插件类型
 
@@ -473,37 +477,326 @@ reporters:
       batch_timeout: 100ms
 ```
 
-### 4.3 插件加载机制
+### 4.3 插件注册机制
 
-#### 4.3.1 静态链接插件
-- 编译时链接到主程序
-- init() 函数自动注册
-- 零额外开销
+采用**纯静态链接**方案（见 ADR-022）。所有插件编译时链接到主程序，通过 Go 的 `init()` + blank import 机制自动注册到全局 Registry，运行时不支持动态加载 `.so`。
+
+#### 4.3.1 设计原则
+
+- **编译期插件集合确定** — 不支持运行时发现/加载插件
+- **零额外开销** — init() 注册仅在进程启动时执行一次
+- **类型安全** — Registry 按插件类型（capturer/parser/processor/reporter）分表存储
+- **Factory 只构造不初始化** — Factory 返回空实例，配置注入由 Task 组装阶段统一完成
+
+#### 4.3.2 全局 Registry
+
+Registry 位于 `pkg/plugin/registry.go`（`pkg/` 下，插件实现可以 import）。
 
 ```go
-// plugins/init.go
+// pkg/plugin/registry.go
+
+// Factory 类型定义——零参数，返回空实例
+type CapturerFactory  func() Capturer
+type ParserFactory    func() Parser
+type ProcessorFactory func() Processor
+type ReporterFactory  func() Reporter
+
+// 注册 API（由各插件的 init() 调用）
+func RegisterCapturer(name string, factory CapturerFactory)
+func RegisterParser(name string, factory ParserFactory)
+func RegisterProcessor(name string, factory ProcessorFactory)
+func RegisterReporter(name string, factory ReporterFactory)
+
+// 查找 API（由 Task 组装逻辑调用）
+func GetCapturerFactory(name string) (CapturerFactory, error)
+func GetParserFactory(name string) (ParserFactory, error)
+func GetProcessorFactory(name string) (ProcessorFactory, error)
+func GetReporterFactory(name string) (ReporterFactory, error)
+
+// 枚举 API（调试/状态查询用）
+func ListCapturers() []string
+func ListParsers() []string
+func ListProcessors() []string
+func ListReporters() []string
+```
+
+**安全约束**：
+- `Register` 重复注册同名同类型：**panic**（编译期可知，重名说明代码有 bug）
+- `Get` 查找不到：返回 `core.ErrPluginNotFound`
+- Registry 内部用 `map[string]Factory`，不需要 sync（init() 阶段是单线程的，运行期只读不写）
+
+#### 4.3.3 插件注册入口
+
+每个插件包的 `init()` 函数自动向 Registry 注册：
+
+```go
+// plugins/parser/sip/sip.go
+package sip
+
+import "firestige.xyz/otus/pkg/plugin"
+
+func init() {
+    plugin.RegisterParser("sip", func() plugin.Parser {
+        return &SIPParser{}
+    })
+}
+
+type SIPParser struct {
+    // 配置字段（Init 时填充）
+    trackMedia bool
+    timeout    time.Duration
+}
+
+func (p *SIPParser) Name() string { return "sip" }
+
+func (p *SIPParser) Init(cfg map[string]any) error {
+    // 从 cfg 读取 track_media, media_stream_timeout 等
+    return nil
+}
+```
+
+通过 `plugins/init.go` 的 blank import 触发所有插件注册：
+
+```go
+// plugins/init.go — 编译期汇总所有内置插件
+package plugins
+
 import (
-    _ "github.com/otus/plugins/parser/sip"
-    _ "github.com/otus/plugins/reporter/kafka"
+    _ "firestige.xyz/otus/plugins/capture/afpacket"
+    _ "firestige.xyz/otus/plugins/parser/sip"
+    _ "firestige.xyz/otus/plugins/processor/filter"
+    _ "firestige.xyz/otus/plugins/reporter/kafka"
+    _ "firestige.xyz/otus/plugins/reporter/console"
 )
 ```
 
-#### 4.3.2 动态加载插件
-- 运行时通过 .so 加载
-- 支持热插拔
-- 略有性能开销
+main 包 import `plugins` 即可完成全部注册：
 
 ```go
-// 动态加载示例
-pluginPath := "/opt/otus/plugins/custom_parser.so"
-loader.LoadPlugin(pluginPath)
+// main.go
+package main
+
+import (
+    _ "firestige.xyz/otus/plugins" // 触发所有插件 init() 注册
+)
 ```
 
-### 4.4 配置模型
+#### 4.3.4 Registry 数据流
+
+```
+进程启动
+   │
+   │  Go runtime 按 import 依赖顺序调用 init()
+   │
+   ├── plugins/capture/afpacket.init()
+   │      └── plugin.RegisterCapturer("afpacket", factory)
+   ├── plugins/parser/sip.init()
+   │      └── plugin.RegisterParser("sip", factory)
+   ├── plugins/processor/filter.init()
+   │      └── plugin.RegisterProcessor("filter", factory)
+   ├── plugins/reporter/kafka.init()
+   │      └── plugin.RegisterReporter("kafka", factory)
+   ├── plugins/reporter/console.init()
+   │      └── plugin.RegisterReporter("console", factory)
+   │
+   ▼
+   ┌────────────────────────────────────────────────────┐
+   │   Global Registry (进程生命周期内只读)               │
+   │                                                    │
+   │   capturers:  {"afpacket": afpacketFactory}        │
+   │   parsers:    {"sip": sipFactory}                  │
+   │   processors: {"filter": filterFactory}            │
+   │   reporters:  {"kafka": kafkaFactory,              │
+   │               "console": consoleFactory}           │
+   └────────────────────────────────────────────────────┘
+          │
+          │  运行期只读：Task 组装时查找 Factory
+          ▼
+   TaskManager.Create(taskConfig)
+```
+
+### 4.4 Task 组装流程
+
+当收到 `create_task` 命令时，TaskManager 从 Registry 查找工厂并组装完整的 Task。
+
+#### 4.4.1 组装阶段
+
+```
+create_task 命令 (TaskConfig JSON)
+       │
+       ▼
+  ① Validate — 校验 TaskConfig 字段完整性
+       │
+       ▼
+  ② Resolve — 从 Registry 查找所有工厂，提前失败
+       │         任何一个插件名找不到 → 返回 ErrPluginNotFound
+       │         此阶段不创建任何实例
+       ▼
+  ③ Construct — 调用 Factory 创建空实例
+       │         Capturer: 1 个（Task 共享）
+       │         Reporter: 1 个（Task 共享）
+       │         Parser/Processor: 每条 Pipeline 独立实例
+       ▼
+  ④ Init — 注入插件配置 (map[string]any)
+       │         各插件解析自己需要的配置字段
+       ▼
+  ⑤ Wire — 注入 Task 级共享资源
+       │         FlowRegistryAware 接口注入 FlowRegistry
+       ▼
+  ⑥ Assemble — 组装 Task 结构体
+       │         Capturer + N Pipelines + SendBuffer + Reporter
+       ▼
+  ⑦ Start — 按依赖倒序启动
+             Reporter → Sender → Pipelines → Capturer
+```
+
+#### 4.4.2 Resolve 阶段详解
+
+```go
+// 在创建任何实例之前，先确认所有插件都已注册
+capFactory, err := plugin.GetCapturerFactory(taskConfig.Capture.Driver)
+if err != nil {
+    return fmt.Errorf("capturer %q: %w", taskConfig.Capture.Driver, err)
+}
+
+parserFactories := make(map[string]plugin.ParserFactory)
+for _, pc := range taskConfig.Parsers {
+    f, err := plugin.GetParserFactory(pc.Plugin)
+    if err != nil {
+        return fmt.Errorf("parser %q: %w", pc.Plugin, err)
+    }
+    parserFactories[pc.Plugin] = f
+}
+// processors, reporter 同理
+```
+
+**提前失败原则**：如果任何一个插件名在 Registry 中找不到，整个 `create_task` 操作立即失败，不会创建部分实例再回滚。
+
+#### 4.4.3 Construct + Init 阶段详解
+
+**关键约束**：每条 Pipeline 必须持有**独立的** Parser/Processor 实例，避免并发访问。
+
+```go
+N := taskConfig.Capture.Workers  // Pipeline 数量
+
+// Capturer: 全 Task 1 个（Task 级资源）
+capturer := capFactory()
+capturer.Init(taskConfig.Capture.Extra)
+
+// Reporter: 全 Task 1 个（Sender 线程独占调用）
+reporter := repFactory()
+reporter.Init(taskConfig.Reporter.Config)
+
+// 每条 Pipeline 独立的 Parser/Processor 实例
+for i := 0; i < N; i++ {
+    parsers := make([]plugin.Parser, len(taskConfig.Parsers))
+    for j, pc := range taskConfig.Parsers {
+        parsers[j] = parserFactories[pc.Plugin]()   // Factory 构造空实例
+        parsers[j].Init(pc.Config)                   // 注入插件配置
+    }
+
+    processors := make([]plugin.Processor, len(taskConfig.Processors))
+    for j, pc := range taskConfig.Processors {
+        processors[j] = procFactories[pc.Plugin]()
+        processors[j].Init(pc.Config)
+    }
+
+    pipelines[i] = pipeline.New(pipeline.Config{
+        ID:         i,
+        TaskID:     taskConfig.ID,
+        Decoder:    decoder,      // Decoder 无状态，可共享
+        Parsers:    parsers,      // 每 Pipeline 独立实例
+        Processors: processors,   // 每 Pipeline 独立实例
+    })
+}
+```
+
+**实例共享规则**：
+
+| 组件 | 实例数 | 原因 |
+|------|--------|------|
+| Capturer | 1 / Task | Task 拥有捕获 socket，FANOUT 分发给 N 个 stream |
+| Decoder | 1 / Task（共享） | 纯函数，无状态，线程安全 |
+| Parser | N / Task（每 Pipeline 1 份） | 可能持有内部状态（如 SIP Parser 的解析缓冲区） |
+| Processor | N / Task（每 Pipeline 1 份） | 与 Parser 同理 |
+| Reporter | 1 / Task | Sender 线程独占调用，不在 Pipeline goroutine 中 |
+| FlowRegistry | 1 / Task（跨 Pipeline 共享） | sync.Map 实现，线程安全，per-Task 隔离 |
+
+#### 4.4.4 Wire 阶段 — 接口注入
+
+部分 Parser 需要访问 Task 级共享资源（如 FlowRegistry），通过可选接口注入：
+
+```go
+// pkg/plugin/parser.go 中定义可选接口
+type FlowRegistryAware interface {
+    SetFlowRegistry(registry FlowRegistry)
+}
+```
+
+```go
+// Wire 阶段：Init 之后、Start 之前
+flowRegistry := task.NewFlowRegistry()
+
+for _, p := range pipelines {
+    for _, parser := range p.Parsers() {
+        if fra, ok := parser.(plugin.FlowRegistryAware); ok {
+            fra.SetFlowRegistry(flowRegistry)
+        }
+    }
+}
+```
+
+**时序约束**：
+- Wire 在 Init 之后 — 因为 Init 负责插件自身配置，Wire 注入外部依赖
+- Wire 在 Start 之前 — 因为 Start 后插件开始处理数据，此时必须已经注入完毕
+
+#### 4.4.5 Start 阶段 — 启动顺序
+
+按**依赖倒序**启动，确保数据有地方去：
+
+```go
+// 1. Reporter 就绪（可以接收数据）
+reporter.Start(ctx)
+
+// 2. Sender 开始消费 SendBuffer
+go task.senderLoop(ctx)
+
+// 3. Pipeline 就绪（可以处理数据）
+for i, p := range pipelines {
+    go p.Run(ctx, inputCh[i], task.sendBuffer)
+}
+
+// 4. 最后启动 Capturer（数据开始流入）
+capturer.Start(ctx)
+```
+
+停止时按**依赖正序**：Capturer → Pipelines → Sender → Reporter.Flush()
+
+#### 4.4.6 完整生命周期总览
+
+```
+进程启动
+  │
+  │  init() 自动注册
+  ▼
+Registry (只读)
+  │
+  │  create_task 命令
+  ▼
+Validate → Resolve → Construct → Init → Wire → Assemble → Start
+  │                                                          │
+  │                                                     运行中...
+  │                                                          │
+  │  delete_task 命令                                         │
+  ▼                                                          ▼
+Stop (Capturer → Pipelines → Sender → Reporter.Flush)
+```
+
+### 4.5 配置模型
 
 系统采用**两层配置**：全局静态配置（配置文件，启动时加载）+ 任务动态配置（Kafka 命令 topic 或本地 CLI 下发）。
 
-#### 4.4.1 全局静态配置
+#### 4.5.1 全局静态配置
 
 节点级别的、不随观测任务变化的配置。启动时从配置文件加载，运行期间不变。
 
@@ -611,7 +904,7 @@ otus:
 - 协议栈解码器配置（隧道开关、分片重组参数）属于全局，因为它是核心引擎的固有行为
 - 背压参数属于全局，所有 Task 共享相同的资源保护策略
 
-#### 4.4.2 任务动态配置
+#### 4.5.2 任务动态配置
 
 观测任务（Task）通过 Kafka 命令 topic 或本地 CLI 动态创建，完整描述"抓什么、怎么抓、发到哪"。Phase 1 仅支持**一个活跃 Task**。
 
