@@ -8,12 +8,12 @@ import (
 
 // TaskConfig represents dynamic per-task configuration.
 type TaskConfig struct {
-	ID         string              `json:"id"`
-	Capture    CaptureConfig       `json:"capture"`
-	Decoder    DecoderConfig       `json:"decoder"`
-	Parsers    []string            `json:"parsers"`
-	Processors []ProcessorConfig   `json:"processors"`
-	Reporters  []ReporterConfig    `json:"reporters"`
+	ID         string            `json:"id"`
+	Capture    CaptureConfig     `json:"capture"`
+	Decoder    DecoderConfig     `json:"decoder"`
+	Parsers    []string          `json:"parsers"`
+	Processors []ProcessorConfig `json:"processors"`
+	Reporters  []ReporterConfig  `json:"reporters"`
 }
 
 // CaptureConfig contains capture plugin configuration.
