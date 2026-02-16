@@ -14,11 +14,7 @@ type Builder struct {
 
 // NewBuilder creates a new pipeline builder.
 func NewBuilder() *Builder {
-	return &Builder{
-		config: Config{
-			BufferSize: 1024, // default
-		},
-	}
+	return &Builder{}
 }
 
 // WithID sets the pipeline ID.
@@ -36,12 +32,6 @@ func (b *Builder) WithTaskID(taskID string) *Builder {
 // WithAgentID sets the agent ID.
 func (b *Builder) WithAgentID(agentID string) *Builder {
 	b.config.AgentID = agentID
-	return b
-}
-
-// WithCapturer sets the packet capturer.
-func (b *Builder) WithCapturer(c plugin.Capturer) *Builder {
-	b.config.Capturer = c
 	return b
 }
 
@@ -63,20 +53,9 @@ func (b *Builder) WithProcessors(processors ...plugin.Processor) *Builder {
 	return b
 }
 
-// WithReporters sets the reporter chain.
-func (b *Builder) WithReporters(reporters ...plugin.Reporter) *Builder {
-	b.config.Reporters = reporters
-	return b
-}
-
-// WithBufferSize sets the raw packet channel buffer size.
-func (b *Builder) WithBufferSize(size int) *Builder {
-	b.config.BufferSize = size
-	return b
-}
-
 // Build creates the pipeline.
 func (b *Builder) Build() *Pipeline {
 	return New(b.config)
 }
+
 

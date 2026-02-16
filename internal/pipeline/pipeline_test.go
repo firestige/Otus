@@ -13,52 +13,6 @@ import (
 
 // Mock implementations for testing
 
-// MockCapturer is a mock packet capturer.
-type MockCapturer struct {
-	name    string
-	packets []core.RawPacket
-	delay   time.Duration
-	mu      sync.Mutex
-}
-
-func NewMockCapturer(name string, packets []core.RawPacket) *MockCapturer {
-	return &MockCapturer{
-		name:    name,
-		packets: packets,
-	}
-}
-
-func (m *MockCapturer) Name() string { return m.name }
-
-func (m *MockCapturer) Init(config map[string]any) error { return nil }
-
-func (m *MockCapturer) Start(ctx context.Context) error { return nil }
-
-func (m *MockCapturer) Stop(ctx context.Context) error { return nil }
-
-func (m *MockCapturer) Capture(ctx context.Context, out chan<- core.RawPacket) error {
-	for _, pkt := range m.packets {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case out <- pkt:
-			if m.delay > 0 {
-				time.Sleep(m.delay)
-			}
-		}
-	}
-	// Keep running until context is cancelled
-	<-ctx.Done()
-	return ctx.Err()
-}
-
-func (m *MockCapturer) Stats() plugin.CaptureStats {
-	return plugin.CaptureStats{
-		PacketsReceived: uint64(len(m.packets)),
-		PacketsDropped:  0,
-	}
-}
-
 // MockDecoder is a mock decoder.
 type MockDecoder struct {
 	shouldFail bool
@@ -184,50 +138,41 @@ func (m *MockProcessor) ProcessedCount() int {
 	return len(m.processed)
 }
 
-// MockReporter is a mock reporter.
-type MockReporter struct {
-	name     string
-	mu       sync.Mutex
-	reported []core.OutputPacket
-}
-
-func NewMockReporter(name string) *MockReporter {
-	return &MockReporter{
-		name:     name,
-		reported: make([]core.OutputPacket, 0),
-	}
-}
-
-func (m *MockReporter) Name() string { return m.name }
-
-func (m *MockReporter) Init(config map[string]any) error { return nil }
-
-func (m *MockReporter) Start(ctx context.Context) error { return nil }
-
-func (m *MockReporter) Stop(ctx context.Context) error { return nil }
-
-func (m *MockReporter) Report(ctx context.Context, pkt *core.OutputPacket) error {
-	m.mu.Lock()
-	m.reported = append(m.reported, *pkt)
-	m.mu.Unlock()
-	return nil
-}
-
-func (m *MockReporter) Flush(ctx context.Context) error {
-	return nil
-}
-
-func (m *MockReporter) ReportedCount() int {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return len(m.reported)
-}
-
 // Test cases
 
 func TestPipeline_BasicFlow(t *testing.T) {
-	// Create test packets
-	packets := []core.RawPacket{
+	// Create test input packets
+	inputChan := make(chan core.RawPacket, 10)
+	outputChan := make(chan core.OutputPacket, 10)
+
+	// Create mock components
+	decoder := NewMockDecoder()
+	parser := NewMockParser("mock-parser", true)
+	processor := NewMockProcessor("mock-processor", false)
+
+	// Build pipeline
+	pipeline := New(Config{
+		ID:         1,
+		TaskID:     "test-task",
+		AgentID:    "test-agent",
+		Decoder:    decoder,
+		Parsers:    []plugin.Parser{parser},
+		Processors: []plugin.Processor{processor},
+	})
+
+	// Start pipeline in background
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		pipeline.Run(ctx, inputChan, outputChan)
+	}()
+
+	// Send test packets
+	testPackets := []core.RawPacket{
 		{
 			Timestamp:  time.Now(),
 			Data:       []byte("packet1"),
@@ -242,37 +187,28 @@ func TestPipeline_BasicFlow(t *testing.T) {
 		},
 	}
 
-	// Create mock components
-	capturer := NewMockCapturer("mock-capturer", packets)
-	decoder := NewMockDecoder()
-	parser := NewMockParser("mock-parser", true)
-	processor := NewMockProcessor("mock-processor", false)
-	reporter := NewMockReporter("mock-reporter")
-
-	// Build pipeline
-	pipeline := New(Config{
-		ID:         1,
-		TaskID:     "test-task",
-		AgentID:    "test-agent",
-		Capturer:   capturer,
-		Decoder:    decoder,
-		Parsers:    []plugin.Parser{parser},
-		Processors: []plugin.Processor{processor},
-		Reporters:  []plugin.Reporter{reporter},
-		BufferSize: 10,
-	})
-
-	// Start pipeline
-	if err := pipeline.Start(); err != nil {
-		t.Fatalf("Failed to start pipeline: %v", err)
+	for _, pkt := range testPackets {
+		inputChan <- pkt
 	}
 
 	// Wait for processing
-	time.Sleep(100 * time.Millisecond)
+	time.Sleep(50 * time.Millisecond)
 
 	// Stop pipeline
-	if err := pipeline.Stop(); err != nil {
-		t.Fatalf("Failed to stop pipeline: %v", err)
+	cancel()
+	close(inputChan)
+	wg.Wait()
+
+	// Collect output
+	close(outputChan)
+	var outputs []core.OutputPacket
+	for out := range outputChan {
+		outputs = append(outputs, out)
+	}
+
+	// Verify we got 2 outputs
+	if len(outputs) != 2 {
+		t.Errorf("Expected 2 output packets, got %d", len(outputs))
 	}
 
 	// Verify metrics
@@ -289,9 +225,6 @@ func TestPipeline_BasicFlow(t *testing.T) {
 	if stats.Processed != 2 {
 		t.Errorf("Expected 2 processed packets, got %d", stats.Processed)
 	}
-	if stats.Reported != 2 {
-		t.Errorf("Expected 2 reported packets, got %d", stats.Reported)
-	}
 
 	// Verify mock components
 	if parser.HandledCount() != 2 {
@@ -300,53 +233,65 @@ func TestPipeline_BasicFlow(t *testing.T) {
 	if processor.ProcessedCount() != 2 {
 		t.Errorf("Expected processor to process 2 packets, got %d", processor.ProcessedCount())
 	}
-	if reporter.ReportedCount() != 2 {
-		t.Errorf("Expected reporter to report 2 packets, got %d", reporter.ReportedCount())
-	}
 }
 
 func TestPipeline_ProcessorDrop(t *testing.T) {
-	// Create test packets
-	packets := []core.RawPacket{
-		{
-			Timestamp:  time.Now(),
-			Data:       []byte("packet1"),
-			CaptureLen: 7,
-			OrigLen:    7,
-		},
-	}
+	// Create channels
+	inputChan := make(chan core.RawPacket, 10)
+	outputChan := make(chan core.OutputPacket, 10)
 
 	// Create mock components with dropping processor
-	capturer := NewMockCapturer("mock-capturer", packets)
 	decoder := NewMockDecoder()
 	parser := NewMockParser("mock-parser", true)
 	processor := NewMockProcessor("mock-processor", true) // drops all
-	reporter := NewMockReporter("mock-reporter")
 
 	// Build pipeline
 	pipeline := New(Config{
 		ID:         2,
 		TaskID:     "test-task",
 		AgentID:    "test-agent",
-		Capturer:   capturer,
 		Decoder:    decoder,
 		Parsers:    []plugin.Parser{parser},
 		Processors: []plugin.Processor{processor},
-		Reporters:  []plugin.Reporter{reporter},
-		BufferSize: 10,
 	})
 
 	// Start pipeline
-	if err := pipeline.Start(); err != nil {
-		t.Fatalf("Failed to start pipeline: %v", err)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		pipeline.Run(ctx, inputChan, outputChan)
+	}()
+
+	// Send test packet
+	inputChan <- core.RawPacket{
+		Timestamp:  time.Now(),
+		Data:       []byte("packet1"),
+		CaptureLen: 7,
+		OrigLen:    7,
 	}
 
 	// Wait for processing
-	time.Sleep(100 * time.Millisecond)
+	time.Sleep(50 * time.Millisecond)
 
 	// Stop pipeline
-	if err := pipeline.Stop(); err != nil {
-		t.Fatalf("Failed to stop pipeline: %v", err)
+	cancel()
+	close(inputChan)
+	wg.Wait()
+
+	// Collect output
+	close(outputChan)
+	var outputs []core.OutputPacket
+	for out := range outputChan {
+		outputs = append(outputs, out)
+	}
+
+	// Verify no output (dropped by processor)
+	if len(outputs) != 0 {
+		t.Errorf("Expected 0 output packets, got %d", len(outputs))
 	}
 
 	// Verify metrics
@@ -357,50 +302,55 @@ func TestPipeline_ProcessorDrop(t *testing.T) {
 	if stats.Dropped != 1 {
 		t.Errorf("Expected 1 dropped packet, got %d", stats.Dropped)
 	}
-	if stats.Reported != 0 {
-		t.Errorf("Expected 0 reported packets, got %d", stats.Reported)
-	}
-
-	// Verify reporter got nothing
-	if reporter.ReportedCount() != 0 {
-		t.Errorf("Expected reporter to report 0 packets, got %d", reporter.ReportedCount())
-	}
 }
 
 func TestBuilder_FluentAPI(t *testing.T) {
-	// Create test packets
-	packets := []core.RawPacket{
-		{
-			Timestamp:  time.Now(),
-			Data:       []byte("packet1"),
-			CaptureLen: 7,
-			OrigLen:    7,
-		},
-	}
-
 	// Build using fluent API
 	pipeline := NewBuilder().
 		WithID(3).
 		WithTaskID("test-task").
 		WithAgentID("test-agent").
-		WithCapturer(NewMockCapturer("capturer", packets)).
 		WithDecoder(NewMockDecoder()).
 		WithParsers(NewMockParser("parser", true)).
 		WithProcessors(NewMockProcessor("processor", false)).
-		WithReporters(NewMockReporter("reporter")).
-		WithBufferSize(100).
 		Build()
 
-	// Start and stop
-	if err := pipeline.Start(); err != nil {
-		t.Fatalf("Failed to start pipeline: %v", err)
+	// Verify pipeline was created
+	if pipeline == nil {
+		t.Fatal("Expected non-nil pipeline")
+	}
+	if pipeline.id != 3 {
+		t.Errorf("Expected pipeline ID 3, got %d", pipeline.id)
+	}
+	if pipeline.taskID != "test-task" {
+		t.Errorf("Expected task ID 'test-task', got %s", pipeline.taskID)
+	}
+
+	// Run a basic test
+	inputChan := make(chan core.RawPacket, 10)
+	outputChan := make(chan core.OutputPacket, 10)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		pipeline.Run(ctx, inputChan, outputChan)
+	}()
+
+	inputChan <- core.RawPacket{
+		Timestamp:  time.Now(),
+		Data:       []byte("packet1"),
+		CaptureLen: 7,
+		OrigLen:    7,
 	}
 
 	time.Sleep(50 * time.Millisecond)
-
-	if err := pipeline.Stop(); err != nil {
-		t.Fatalf("Failed to stop pipeline: %v", err)
-	}
+	cancel()
+	close(inputChan)
+	wg.Wait()
 
 	// Verify it worked
 	stats := pipeline.Stats()
@@ -410,40 +360,55 @@ func TestBuilder_FluentAPI(t *testing.T) {
 }
 
 func TestPipeline_NoParser(t *testing.T) {
-	// Test pipeline without parsers (should still work)
-	packets := []core.RawPacket{
-		{
-			Timestamp:  time.Now(),
-			Data:       []byte("packet1"),
-			CaptureLen: 7,
-			OrigLen:    7,
-		},
-	}
+	// Test pipeline without parsers (should still work, uses "raw" payload)
+	inputChan := make(chan core.RawPacket, 10)
+	outputChan := make(chan core.OutputPacket, 10)
 
 	pipeline := NewBuilder().
 		WithID(4).
 		WithTaskID("test-task").
 		WithAgentID("test-agent").
-		WithCapturer(NewMockCapturer("capturer", packets)).
 		WithDecoder(NewMockDecoder()).
-		WithReporters(NewMockReporter("reporter")).
 		Build()
 
-	if err := pipeline.Start(); err != nil {
-		t.Fatalf("Failed to start pipeline: %v", err)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		pipeline.Run(ctx, inputChan, outputChan)
+	}()
+
+	inputChan <- core.RawPacket{
+		Timestamp:  time.Now(),
+		Data:       []byte("packet1"),
+		CaptureLen: 7,
+		OrigLen:    7,
 	}
 
 	time.Sleep(50 * time.Millisecond)
+	cancel()
+	close(inputChan)
+	wg.Wait()
 
-	if err := pipeline.Stop(); err != nil {
-		t.Fatalf("Failed to stop pipeline: %v", err)
+	close(outputChan)
+	var outputs []core.OutputPacket
+	for out := range outputChan {
+		outputs = append(outputs, out)
+	}
+
+	// Should get output with "raw" payload type
+	if len(outputs) != 1 {
+		t.Errorf("Expected 1 output packet, got %d", len(outputs))
+	}
+	if len(outputs) > 0 && outputs[0].PayloadType != "raw" {
+		t.Errorf("Expected payload type 'raw', got %s", outputs[0].PayloadType)
 	}
 
 	stats := pipeline.Stats()
 	if stats.Received != 1 {
 		t.Errorf("Expected 1 received packet, got %d", stats.Received)
 	}
-	// Parsed count depends on whether pipeline counts "raw" as parsed
 }
-
-

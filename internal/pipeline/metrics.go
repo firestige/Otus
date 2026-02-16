@@ -6,6 +6,8 @@ import (
 )
 
 // Metrics contains per-pipeline metrics counters.
+// Note: Reporter metrics (Reported, ReportErrors) are NOT here because
+// reporters are managed at Task level, not Pipeline level.
 type Metrics struct {
 	TaskID     string
 	PipelineID int
@@ -18,8 +20,6 @@ type Metrics struct {
 	ParseErrors  atomic.Uint64
 	Processed    atomic.Uint64
 	Dropped      atomic.Uint64
-	Reported     atomic.Uint64
-	ReportErrors atomic.Uint64
 }
 
 // NewMetrics creates a new metrics instance.
@@ -39,6 +39,4 @@ func (m *Metrics) Reset() {
 	m.ParseErrors.Store(0)
 	m.Processed.Store(0)
 	m.Dropped.Store(0)
-	m.Reported.Store(0)
-	m.ReportErrors.Store(0)
 }

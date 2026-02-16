@@ -3,9 +3,7 @@ package pipeline
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
-	"sync"
 
 	"firestige.xyz/otus/internal/core"
 	"firestige.xyz/otus/internal/core/decoder"
@@ -13,148 +11,91 @@ import (
 )
 
 // Pipeline represents a single-threaded packet processing chain.
+// It does NOT own capture or reporter plugins - those are managed by Task.
+// Pipeline receives raw packets from an input stream and outputs processed packets to an output channel.
 type Pipeline struct {
-	id       int
-	taskID   string
-	agentID  string
-	capturer plugin.Capturer
-	decoder  decoder.Decoder
-	parsers  []plugin.Parser
+	id         int
+	taskID     string
+	agentID    string
+	decoder    decoder.Decoder
+	parsers    []plugin.Parser
 	processors []plugin.Processor
-	reporters []plugin.Reporter
-	metrics  *Metrics
-	
-	// Runtime state
-	ctx    context.Context
-	cancel context.CancelFunc
-	wg     sync.WaitGroup
-	
-	// Channel for backpressure control
-	rawPacketChan chan core.RawPacket
+	metrics    *Metrics
 }
 
 // Config contains pipeline configuration.
 type Config struct {
-	ID          int
-	TaskID      string
-	AgentID     string
-	Capturer    plugin.Capturer
-	Decoder     decoder.Decoder
-	Parsers     []plugin.Parser
-	Processors  []plugin.Processor
-	Reporters   []plugin.Reporter
-	BufferSize  int // Raw packet channel buffer size
+	ID         int
+	TaskID     string
+	AgentID    string
+	Decoder    decoder.Decoder
+	Parsers    []plugin.Parser
+	Processors []plugin.Processor
 }
 
 // New creates a new pipeline.
 func New(cfg Config) *Pipeline {
-	if cfg.BufferSize == 0 {
-		cfg.BufferSize = 1024 // Default buffer size
-	}
-	
-	ctx, cancel := context.WithCancel(context.Background())
-	
 	return &Pipeline{
-		id:            cfg.ID,
-		taskID:        cfg.TaskID,
-		agentID:       cfg.AgentID,
-		capturer:      cfg.Capturer,
-		decoder:       cfg.Decoder,
-		parsers:       cfg.Parsers,
-		processors:    cfg.Processors,
-		reporters:     cfg.Reporters,
-		metrics:       NewMetrics(cfg.TaskID, cfg.ID),
-		ctx:           ctx,
-		cancel:        cancel,
-		rawPacketChan: make(chan core.RawPacket, cfg.BufferSize),
+		id:         cfg.ID,
+		taskID:     cfg.TaskID,
+		agentID:    cfg.AgentID,
+		decoder:    cfg.Decoder,
+		parsers:    cfg.Parsers,
+		processors: cfg.Processors,
+		metrics:    NewMetrics(cfg.TaskID, cfg.ID),
 	}
 }
 
-// Start starts the pipeline processing.
-func (p *Pipeline) Start() error {
+// Run starts the pipeline processing loop.
+// It reads raw packets from the input stream, processes them through the decode→parse→process chain,
+// and outputs the results to the output channel.
+// This is the single goroutine main loop that does synchronous processing (zero internal channels).
+func (p *Pipeline) Run(ctx context.Context, input <-chan core.RawPacket, output chan<- core.OutputPacket) {
 	slog.Info("pipeline starting", "task_id", p.taskID, "pipeline_id", p.id)
 	
-	// Start capture goroutine
-	p.wg.Add(1)
-	go p.captureLoop()
-	
-	// Start processing goroutine
-	p.wg.Add(1)
-	go p.processLoop()
-	
-	return nil
-}
-
-// Stop stops the pipeline gracefully.
-func (p *Pipeline) Stop() error {
-	slog.Info("pipeline stopping", "task_id", p.taskID, "pipeline_id", p.id)
-	
-	// Cancel context to signal goroutines to stop
-	p.cancel()
-	
-	// Wait for all goroutines to finish
-	p.wg.Wait()
-	
-	// Flush reporters
-	for _, reporter := range p.reporters {
-		if err := reporter.Flush(context.Background()); err != nil {
-			slog.Error("reporter flush failed", "error", err)
-		}
-	}
-	
-	slog.Info("pipeline stopped", "task_id", p.taskID, "pipeline_id", p.id)
-	return nil
-}
-
-// captureLoop reads packets from capturer and sends to processing channel.
-func (p *Pipeline) captureLoop() {
-	defer p.wg.Done()
-	
-	// Start capturer
-	if err := p.capturer.Capture(p.ctx, p.rawPacketChan); err != nil {
-		if p.ctx.Err() == nil {
-			// Context not cancelled, this is a real error
-			slog.Error("capture failed", "error", err, "task_id", p.taskID, "pipeline_id", p.id)
-		}
-	}
-	
-	// Close channel when capture ends
-	close(p.rawPacketChan)
-}
-
-// processLoop is the main processing loop.
-func (p *Pipeline) processLoop() {
-	defer p.wg.Done()
+	defer func() {
+		slog.Info("pipeline stopped", "task_id", p.taskID, "pipeline_id", p.id)
+	}()
 	
 	for {
 		select {
-		case <-p.ctx.Done():
+		case <-ctx.Done():
 			return
 			
-		case raw, ok := <-p.rawPacketChan:
+		case raw, ok := <-input:
 			if !ok {
-				// Channel closed, capturer stopped
+				// Input stream closed
 				return
 			}
 			
 			p.metrics.Received.Add(1)
 			
-			// Process packet (all steps are synchronous function calls)
-			if err := p.processPacket(raw); err != nil {
-				// Log error but continue processing
-				slog.Debug("packet processing failed", "error", err)
+			// Process packet synchronously (zero channel internal passing)
+			if result, ok := p.processPacket(raw); ok {
+				// Non-blocking send to output
+				select {
+				case output <- result:
+					// Sent successfully
+				case <-ctx.Done():
+					return
+				default:
+					// Output channel full, drop packet
+					p.metrics.Dropped.Add(1)
+					slog.Debug("output channel full, dropping packet", "task_id", p.taskID, "pipeline_id", p.id)
+				}
 			}
 		}
 	}
 }
 
 // processPacket processes a single packet through the entire pipeline.
-func (p *Pipeline) processPacket(raw core.RawPacket) error {
+// Returns the output packet and a boolean indicating whether to forward it.
+func (p *Pipeline) processPacket(raw core.RawPacket) (core.OutputPacket, bool) {
 	// Step 1: Decode L2-L4
 	decoded, err := p.decoder.Decode(raw)
 	if err != nil {
 		p.metrics.DecodeErrors.Add(1)
-		return fmt.Errorf("decode failed: %w", err)
+		return core.OutputPacket{}, false
 	}
 	p.metrics.Decoded.Add(1)
 	
@@ -212,21 +153,11 @@ func (p *Pipeline) processPacket(raw core.RawPacket) error {
 		if !keep {
 			// Processor dropped packet
 			p.metrics.Dropped.Add(1)
-			return nil
+			return core.OutputPacket{}, false
 		}
 	}
 	
-	// Step 5: Report to all reporters
-	for _, reporter := range p.reporters {
-		if err := reporter.Report(p.ctx, &output); err != nil {
-			p.metrics.ReportErrors.Add(1)
-			slog.Error("reporter failed", "reporter", reporter.Name(), "error", err)
-			continue
-		}
-	}
-	p.metrics.Reported.Add(1)
-	
-	return nil
+	return output, true
 }
 
 // Stats returns pipeline statistics.
@@ -239,12 +170,11 @@ func (p *Pipeline) Stats() Stats {
 		ParseErrors:  p.metrics.ParseErrors.Load(),
 		Processed:    p.metrics.Processed.Load(),
 		Dropped:      p.metrics.Dropped.Load(),
-		Reported:     p.metrics.Reported.Load(),
-		ReportErrors: p.metrics.ReportErrors.Load(),
 	}
 }
 
 // Stats represents pipeline statistics.
+// Reporter statistics (Reported, ReportErrors) are tracked at Task level.
 type Stats struct {
 	Received     uint64
 	Decoded      uint64
@@ -253,6 +183,4 @@ type Stats struct {
 	ParseErrors  uint64
 	Processed    uint64
 	Dropped      uint64
-	Reported     uint64
-	ReportErrors uint64
 }
