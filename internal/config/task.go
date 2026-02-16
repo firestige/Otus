@@ -11,7 +11,7 @@ type TaskConfig struct {
 	ID         string            `json:"id"`
 	Capture    CaptureConfig     `json:"capture"`
 	Decoder    DecoderConfig     `json:"decoder"`
-	Parsers    []string          `json:"parsers"`
+	Parsers    []ParserConfig    `json:"parsers"`
 	Processors []ProcessorConfig `json:"processors"`
 	Reporters  []ReporterConfig  `json:"reporters"`
 }
@@ -30,6 +30,12 @@ type CaptureConfig struct {
 type DecoderConfig struct {
 	Tunnels      []string `json:"tunnels"`       // ["vxlan", "gre"] - tunnel types to decapsulate
 	IPReassembly bool     `json:"ip_reassembly"` // Enable IP fragment reassembly
+}
+
+// ParserConfig contains parser plugin configuration.
+type ParserConfig struct {
+	Type   string         `json:"type"`
+	Config map[string]any `json:"config"`
 }
 
 // ProcessorConfig contains processor plugin configuration.
@@ -67,6 +73,20 @@ func (tc *TaskConfig) Validate() error {
 	// At least one reporter is required
 	if len(tc.Reporters) == 0 {
 		return fmt.Errorf("at least one reporter is required")
+	}
+
+	// Validate parser configs
+	for i, parser := range tc.Parsers {
+		if parser.Type == "" {
+			return fmt.Errorf("parser[%d]: type is required", i)
+		}
+	}
+
+	// Validate processor configs
+	for i, processor := range tc.Processors {
+		if processor.Type == "" {
+			return fmt.Errorf("processor[%d]: type is required", i)
+		}
 	}
 
 	// Validate reporter configs

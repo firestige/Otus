@@ -19,7 +19,12 @@ func TestParseValidTaskConfig(t *testing.T) {
 			"tunnels": ["vxlan", "gre"],
 			"ip_reassembly": true
 		},
-		"parsers": ["sip"],
+		"parsers": [
+			{
+				"type": "sip",
+				"config": {}
+			}
+		],
 		"processors": [
 			{
 				"type": "filter",
@@ -73,8 +78,11 @@ func TestParseValidTaskConfig(t *testing.T) {
 	}
 
 	// Validate parsers
-	if len(tc.Parsers) != 1 || tc.Parsers[0] != "sip" {
-		t.Errorf("Expected parsers [sip], got %v", tc.Parsers)
+	if len(tc.Parsers) != 1 {
+		t.Fatalf("Expected 1 parser, got %d", len(tc.Parsers))
+	}
+	if tc.Parsers[0].Type != "sip" {
+		t.Errorf("Expected parser type sip, got %s", tc.Parsers[0].Type)
 	}
 
 	// Validate processors
@@ -259,7 +267,12 @@ func TestTaskConfigMarshalUnmarshal(t *testing.T) {
 			Tunnels:      []string{"vxlan"},
 			IPReassembly: true,
 		},
-		Parsers: []string{"sip"},
+		Parsers: []ParserConfig{
+			{
+				Type:   "sip",
+				Config: map[string]any{},
+			},
+		},
 		Processors: []ProcessorConfig{
 			{
 				Type:   "filter",
