@@ -43,15 +43,15 @@ func TestDecodeUDP(t *testing.T) {
 func TestDecodeTCP(t *testing.T) {
 	// Minimal TCP header (20 bytes)
 	data := []byte{
-		0x13, 0x88,       // Src Port: 5000
-		0x13, 0x89,       // Dst Port: 5001
+		0x13, 0x88, // Src Port: 5000
+		0x13, 0x89, // Dst Port: 5001
 		0x00, 0x00, 0x00, 0x01, // Seq Num: 1
 		0x00, 0x00, 0x00, 0x02, // Ack Num: 2
-		0x50,             // Data Offset: 5 (20 bytes)
-		0x18,             // Flags: ACK + PSH
-		0x20, 0x00,       // Window Size
-		0x00, 0x00,       // Checksum
-		0x00, 0x00,       // Urgent Pointer
+		0x50,       // Data Offset: 5 (20 bytes)
+		0x18,       // Flags: ACK + PSH
+		0x20, 0x00, // Window Size
+		0x00, 0x00, // Checksum
+		0x00, 0x00, // Urgent Pointer
 		0x01, 0x02, 0x03, 0x04, // Payload
 	}
 

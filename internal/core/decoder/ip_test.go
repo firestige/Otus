@@ -8,16 +8,16 @@ import (
 func TestDecodeIPv4Basic(t *testing.T) {
 	// Minimal IPv4 header (20 bytes)
 	data := []byte{
-		0x45,                   // Version 4, IHL 5
-		0x00,                   // DSCP, ECN
-		0x00, 0x1C,             // Total Length: 28 bytes
-		0x12, 0x34,             // Identification
-		0x00, 0x00,             // Flags, Fragment Offset
-		0x40,                   // TTL: 64
-		0x11,                   // Protocol: UDP (17)
-		0x00, 0x00,             // Checksum
-		192, 168, 1, 1,         // Src IP
-		192, 168, 1, 2,         // Dst IP
+		0x45,       // Version 4, IHL 5
+		0x00,       // DSCP, ECN
+		0x00, 0x1C, // Total Length: 28 bytes
+		0x12, 0x34, // Identification
+		0x00, 0x00, // Flags, Fragment Offset
+		0x40,       // TTL: 64
+		0x11,       // Protocol: UDP (17)
+		0x00, 0x00, // Checksum
+		192, 168, 1, 1, // Src IP
+		192, 168, 1, 2, // Dst IP
 		0x01, 0x02, 0x03, 0x04, // Payload
 	}
 
@@ -155,16 +155,16 @@ func TestDecodeIPUnsupportedVersion(t *testing.T) {
 func TestIsIPFragmentTrue(t *testing.T) {
 	// IPv4 packet with MF flag set
 	data := []byte{
-		0x45,                   // Version 4, IHL 5
-		0x00,                   // DSCP, ECN
-		0x00, 0x1C,             // Total Length: 28 bytes
-		0x12, 0x34,             // Identification
-		0x20, 0x00,             // Flags (MF=1), Fragment Offset = 0
-		0x40,                   // TTL: 64
-		0x11,                   // Protocol: UDP (17)
-		0x00, 0x00,             // Checksum
-		192, 168, 1, 1,         // Src IP
-		192, 168, 1, 2,         // Dst IP
+		0x45,       // Version 4, IHL 5
+		0x00,       // DSCP, ECN
+		0x00, 0x1C, // Total Length: 28 bytes
+		0x12, 0x34, // Identification
+		0x20, 0x00, // Flags (MF=1), Fragment Offset = 0
+		0x40,       // TTL: 64
+		0x11,       // Protocol: UDP (17)
+		0x00, 0x00, // Checksum
+		192, 168, 1, 1, // Src IP
+		192, 168, 1, 2, // Dst IP
 	}
 
 	if !isIPFragment(data, 4) {
@@ -175,16 +175,16 @@ func TestIsIPFragmentTrue(t *testing.T) {
 func TestIsIPFragmentFalse(t *testing.T) {
 	// IPv4 packet without fragmentation
 	data := []byte{
-		0x45,                   // Version 4, IHL 5
-		0x00,                   // DSCP, ECN
-		0x00, 0x1C,             // Total Length: 28 bytes
-		0x12, 0x34,             // Identification
-		0x00, 0x00,             // Flags, Fragment Offset = 0
-		0x40,                   // TTL: 64
-		0x11,                   // Protocol: UDP (17)
-		0x00, 0x00,             // Checksum
-		192, 168, 1, 1,         // Src IP
-		192, 168, 1, 2,         // Dst IP
+		0x45,       // Version 4, IHL 5
+		0x00,       // DSCP, ECN
+		0x00, 0x1C, // Total Length: 28 bytes
+		0x12, 0x34, // Identification
+		0x00, 0x00, // Flags, Fragment Offset = 0
+		0x40,       // TTL: 64
+		0x11,       // Protocol: UDP (17)
+		0x00, 0x00, // Checksum
+		192, 168, 1, 1, // Src IP
+		192, 168, 1, 2, // Dst IP
 	}
 
 	if isIPFragment(data, 4) {

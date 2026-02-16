@@ -8,7 +8,7 @@ import (
 )
 
 const (
-	udpHeaderLen = 8
+	udpHeaderLen    = 8
 	tcpHeaderMinLen = 20
 
 	// Protocol numbers

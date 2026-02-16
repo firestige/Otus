@@ -23,24 +23,24 @@ func makeSimpleUDPPacket() []byte {
 	packet[12], packet[13] = 0x08, 0x00
 
 	// IPv4 header (20 bytes)
-	packet[14] = 0x45                    // Version 4, IHL 5
-	packet[15] = 0x00                    // DSCP, ECN
-	packet[16], packet[17] = 0x00, 0x1C  // Total Length: 28 bytes
-	packet[18], packet[19] = 0x12, 0x34  // Identification
-	packet[20], packet[21] = 0x00, 0x00  // Flags, Fragment Offset
-	packet[22] = 0x40                    // TTL: 64
-	packet[23] = 0x11                    // Protocol: UDP (17)
-	packet[24], packet[25] = 0x00, 0x00  // Checksum (not calculated)
+	packet[14] = 0x45                   // Version 4, IHL 5
+	packet[15] = 0x00                   // DSCP, ECN
+	packet[16], packet[17] = 0x00, 0x1C // Total Length: 28 bytes
+	packet[18], packet[19] = 0x12, 0x34 // Identification
+	packet[20], packet[21] = 0x00, 0x00 // Flags, Fragment Offset
+	packet[22] = 0x40                   // TTL: 64
+	packet[23] = 0x11                   // Protocol: UDP (17)
+	packet[24], packet[25] = 0x00, 0x00 // Checksum (not calculated)
 	// Src IP: 192.168.1.1
 	packet[26], packet[27], packet[28], packet[29] = 192, 168, 1, 1
 	// Dst IP: 192.168.1.2
 	packet[30], packet[31], packet[32], packet[33] = 192, 168, 1, 2
 
 	// UDP header (8 bytes)
-	packet[34], packet[35] = 0x13, 0x88  // Src Port: 5000
-	packet[36], packet[37] = 0x13, 0x89  // Dst Port: 5001
-	packet[38], packet[39] = 0x00, 0x08  // Length: 8 bytes
-	packet[40], packet[41] = 0x00, 0x00  // Checksum (not calculated)
+	packet[34], packet[35] = 0x13, 0x88 // Src Port: 5000
+	packet[36], packet[37] = 0x13, 0x89 // Dst Port: 5001
+	packet[38], packet[39] = 0x00, 0x08 // Length: 8 bytes
+	packet[40], packet[41] = 0x00, 0x00 // Checksum (not calculated)
 
 	return packet
 }

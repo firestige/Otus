@@ -36,7 +36,7 @@ func decodeTunnel(data []byte, protocol uint8) (core.IPHeader, []byte, error) {
 		if len(data) >= 8 {
 			dstPort := binary.BigEndian.Uint16(data[2:4])
 			udpPayload := data[8:]
-			
+
 			if dstPort == vxlanPort {
 				return decodeVXLAN(udpPayload)
 			} else if dstPort == genevePort {
@@ -58,7 +58,7 @@ func decodeVXLAN(data []byte) (core.IPHeader, []byte, error) {
 	// VXLAN header format:
 	// 0-3: Flags (1 byte) + Reserved (3 bytes)
 	// 4-7: VNI (3 bytes) + Reserved (1 byte)
-	
+
 	// Check if VNI flag is set (bit 3 of first byte)
 	flags := data[0]
 	if (flags & 0x08) == 0 {
@@ -102,7 +102,7 @@ func decodeGeneve(data []byte) (core.IPHeader, []byte, error) {
 	// 2-3: Protocol Type
 	// 4-6: VNI
 	// 7: Reserved
-	
+
 	version := data[0] >> 6
 	if version != 0 {
 		// Unsupported version
@@ -148,13 +148,13 @@ func decodeGRE(data []byte) (core.IPHeader, []byte, error) {
 	// GRE header format:
 	// 0-1: Flags and Version
 	// 2-3: Protocol Type
-	
+
 	flags := binary.BigEndian.Uint16(data[0:2])
 	protocolType := binary.BigEndian.Uint16(data[2:4])
 
 	// Calculate GRE header length based on flags
 	headerLen := greHeaderMinLen
-	
+
 	// Checksum present (bit 15)
 	if (flags & 0x8000) != 0 {
 		headerLen += 4

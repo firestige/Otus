@@ -133,7 +133,7 @@ func isIPFragment(ipData []byte, version uint8) bool {
 		// Flags and Fragment Offset (2 bytes at offset 6)
 		flagsOffset := binary.BigEndian.Uint16(ipData[6:8])
 		moreFragments := (flagsOffset & 0x2000) != 0 // MF flag
-		fragmentOffset := flagsOffset & 0x1FFF        // Fragment offset
+		fragmentOffset := flagsOffset & 0x1FFF       // Fragment offset
 		return moreFragments || fragmentOffset != 0
 	}
 	// IPv6 fragmentation is handled via extension headers

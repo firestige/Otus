@@ -26,9 +26,9 @@ type fragmentKey struct {
 
 // fragmentEntry represents a collection of fragments for reassembly.
 type fragmentEntry struct {
-	fragments  map[uint16][]byte // offset -> data
-	totalSize  int               // Expected total size (-1 if unknown)
-	lastSeen   time.Time
+	fragments   map[uint16][]byte // offset -> data
+	totalSize   int               // Expected total size (-1 if unknown)
+	lastSeen    time.Time
 	hasLastFrag bool // Whether we've seen the last fragment
 }
 
