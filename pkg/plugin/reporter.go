@@ -9,7 +9,7 @@ import (
 
 // Reporter sends output packets to external systems.
 type Reporter interface {
-Plugin
-Report(ctx context.Context, pkt *core.OutputPacket) error
-Flush(ctx context.Context) error
+	Plugin
+	Report(ctx context.Context, pkt *core.OutputPacket) error
+	Flush(ctx context.Context) error
 }

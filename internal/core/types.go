@@ -16,7 +16,7 @@ type IPHeader struct {
 	Version  uint8
 	SrcIP    netip.Addr // Go stdlib value type, zero allocation
 	DstIP    netip.Addr
-	Protocol uint8  // TCP=6, UDP=17, SCTP=132
+	Protocol uint8 // TCP=6, UDP=17, SCTP=132
 	TTL      uint8
 	TotalLen uint16
 	// Inner IP addresses after tunnel decapsulation (zero value if not tunneled)
