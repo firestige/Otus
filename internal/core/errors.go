@@ -18,8 +18,9 @@ var (
 	ErrUnsupportedProto = errors.New("otus: unsupported protocol")
 
 	// IP reassembly errors
-	ErrReassemblyTimeout = errors.New("otus: fragment reassembly timeout")
-	ErrReassemblyLimit   = errors.New("otus: fragment reassembly limit exceeded")
+	ErrReassemblyTimeout    = errors.New("otus: fragment reassembly timeout")
+	ErrReassemblyLimit      = errors.New("otus: fragment reassembly limit exceeded")
+	ErrFragmentIncomplete   = errors.New("otus: fragment not complete")
 
 	// Plugin errors
 	ErrPluginNotFound   = errors.New("otus: plugin not found")

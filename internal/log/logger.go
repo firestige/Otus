@@ -93,10 +93,10 @@ func createWriter(output config.OutputConfig) (io.Writer, error) {
 		// Use lumberjack for log rotation
 		return &lumberjack.Logger{
 			Filename:   output.Path,
-			MaxSize:    output.MaxSizeMB,    // megabytes
-			MaxBackups: output.MaxBackups,   // number of old files to keep
-			MaxAge:     output.MaxAgeDays,   // days
-			Compress:   output.Compress,     // compress old files
+			MaxSize:    output.MaxSizeMB,  // megabytes
+			MaxBackups: output.MaxBackups, // number of old files to keep
+			MaxAge:     output.MaxAgeDays, // days
+			Compress:   output.Compress,   // compress old files
 		}, nil
 
 	case "loki":

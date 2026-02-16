@@ -250,8 +250,8 @@ func TestLokiWriterCloseFlush(t *testing.T) {
 
 	cfg := LokiConfig{
 		Endpoint:      server.URL,
-		BatchSize:     100,           // Large batch
-		FlushInterval: "10s",         // Long interval
+		BatchSize:     100,   // Large batch
+		FlushInterval: "10s", // Long interval
 	}
 
 	lw, err := NewLokiWriter(cfg)
