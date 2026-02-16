@@ -1943,6 +1943,12 @@ otus_plugin_health{name="kafka_reporter",status="healthy"} 1
 | 013 | 两层配置模型 | 全局静态（配置文件）+ Task 动态（Kafka 命令 / CLI） | Phase 1 |
 | 014 | Task-Pipeline 绑定 | Pipeline 绑定 Task，FlowRegistry per-Task，Phase 1 单 Task | Phase 1 |
 | 015 | 远程控制拉模式 | 订阅 Kafka 命令 topic，不开入站端口，gRPC 推迟 Phase 2+ | Phase 1 |
+| 016 | 重构策略 | 推倒重来，旧代码仅做算法参考 | Phase 1 |
+| 017 | SkyWalking 代码 | 移除，会话关联属于 Collector 职责 | Phase 1 |
+| 018 | 日志框架 | slog + lumberjack（滚动）+ 自实现 Loki HTTP Push | Phase 1 |
+| 019 | Kafka 客户端 | segmentio/kafka-go，纯 Go 无 CGO | Phase 1 |
+| 020 | 本地控制通道 | JSON-RPC over UDS，不用 gRPC | Phase 1 |
+| 021 | DecodedPacket 类型 | 自定义值类型 struct，隔离 gopacket 到解码器内部 | Phase 1 |
 
 ## 12. 路线图
 
@@ -2002,6 +2008,6 @@ otus_plugin_health{name="kafka_reporter",status="healthy"} 1
 
 ---
 
-**文档版本**: v0.1.0  
-**更新日期**: 2026-02-13  
+**文档版本**: v0.2.0  
+**更新日期**: 2026-02-16  
 **作者**: Otus Team

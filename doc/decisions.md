@@ -589,6 +589,165 @@ type OutputPacket struct {
 
 ---
 
+### ADR-016: 重构策略——推倒重来
+
+**问题**：现有代码库有部分可用模块（AF_PACKET capture、IPv4 重组、SIP parser、SkyWalking handler），重构时采用渐进式还是推倒重来？
+
+**决定**：**推倒重来**。按新架构从零搭建骨架，可复用的算法逻辑（BPF 编译、IP 重组算法等）参考旧代码重写。
+
+**理由**：
+
+1. 现有代码存在双套插件系统（`pkg/plugin` 生命周期式 + `internal/config` 反射注册式），耦合严重，渐进重构需要同时维护两套
+2. 数据模型完全不同：旧代码用 `EventContext`（泛型 map）传递数据，新架构用强类型三层结构（RawPacket → DecodedPacket → OutputPacket）
+3. Pipeline 模型根本不同：旧代码是 channel 连接的 capture→processor→sender 管道，新架构是单 goroutine 主循环 + 零 channel 传递
+4. 控制面完全重写：旧 gRPC DaemonService → 新 Kafka 命令 channel + UDS
+5. SkyWalking 相关代码（dialog/transaction 状态机、tracing 构建）不再需要（见 ADR-017）
+6. 推倒重来反而更快——不用处理新旧代码的兼容层
+
+**保留参考价值的旧代码**：
+- `internal/utils/bpf.go` — BPF 过滤器编译逻辑
+- `internal/otus/module/capture/codec/assembly_ipv4.go` — IPv4 分片重组算法思路
+- `internal/otus/module/capture/handle/handle_afpacket.go` — AF_PACKET TPacket v3 配置参数
+- `plugins/parser/sip/sip_parser.go` — SIP 协议检测和解析逻辑
+
+---
+
+### ADR-017: SkyWalking 代码移除
+
+**问题**：`plugins/handler/skywalking/` 下有完整的 RFC 3261 SIP Dialog/Transaction 状态机 + SkyWalking Span 构建代码，在新架构中如何处置？
+
+**决定**：**移除，不纳入新代码库**。
+
+**理由**：
+
+1. 这套逻辑本质是 **Collector 的职责**——从 Otus 收集到观测数据后，在 Collector 侧整理计算得到 Tracing Span
+2. 需要缓存完整 SIP 会话（Dialog 状态 + Transaction 状态机），内存占用和计算复杂度远超抓包引擎应有的范围
+3. 会话关联计算（跨多个包的状态追踪）会拖慢 hot path 性能，违背"核心只做捕获+解码+分发"的原则
+4. Otus 的定位是**边缘抓包 Agent**，输出原始观测数据（OutputPacket），由下游 Collector 负责关联分析和 APM 集成
+
+---
+
+### ADR-018: 日志框架——slog + lumberjack + Loki HTTP Push
+
+**问题**：日志框架选型。当前用 logrus，需要评估替换方案。
+
+**决定**：
+- **结构化日志**：Go 标准库 `log/slog`（Go 1.21+）
+- **文件滚动**：`natefinch/lumberjack`（实现 `io.Writer`，与 slog 正交组合）
+- **Loki 推送**：自实现 HTTP Push（~150 行），不引入 loki-client-go
+
+**理由**：
+
+1. slog 是 Go 标准库，零依赖、结构化、性能优于 logrus 30%+
+2. slog 输出到 `io.Writer`，lumberjack 实现 `io.Writer` + 滚动，完美正交组合：
+   ```go
+   logger := slog.New(slog.NewJSONHandler(&lumberjack.Logger{...}, nil))
+   ```
+3. Loki Push API 极简（HTTP POST + JSON body），自实现 ~150 行代码，零额外依赖
+4. grafana/loki-client-go 已不活跃，依赖树太重
+5. Promtail sidecar 增加部署复杂度，边缘节点不想多一个独立进程
+6. 多输出通过 `io.MultiWriter` 或多 Handler 组合实现
+
+---
+
+### ADR-019: Kafka 客户端——segmentio/kafka-go
+
+**问题**：Kafka 客户端库选型。影响命令通道（Consumer）和 Reporter（Producer）两个核心组件。
+
+**决定**：**segmentio/kafka-go**
+
+**选型对比**：
+
+| 维度 | segmentio/kafka-go | IBM/sarama | confluent-kafka-go |
+|------|:---:|:---:|:---:|
+| CGO | **无** | **无** | **需要 librdkafka** |
+| API 风格 | 高层 Reader/Writer | 底层、灵活但复杂 | librdkafka 回调 |
+| Consumer Group | ✅ | ✅ | ✅ |
+| 交叉编译 | **✅ 无障碍** | **✅** | ❌ 需 C 工具链 |
+| 容器镜像 | 小（静态编译） | 小 | 大（动态库） |
+| 学习曲线 | **低** | 中高 | 中 |
+
+**理由**：
+
+1. **CGO 是硬伤**：Otus 部署在边缘节点，需要简单的静态二进制 + 多架构交叉编译（amd64/arm64），confluent-kafka-go 排除
+2. Otus 的 Kafka 使用场景简单：一个 Consumer Group 订阅命令 topic + Producer 发送数据，不需要事务/Exactly-Once
+3. kafka-go 的 `Reader`/`Writer` 抽象与 Otus 场景精确匹配，代码量约为 sarama 的 1/3
+
+---
+
+### ADR-020: 本地控制通道——JSON-RPC over Unix Domain Socket
+
+**问题**：CLI 与 daemon 之间的本地通信协议选型。
+
+**决定**：**JSON-RPC over Unix Domain Socket**，不使用 gRPC。
+
+**理由**：
+
+1. 本地控制只在 CLI ↔ daemon 之间通信，不需要 gRPC 的跨语言/跨网络能力
+2. JSON-RPC 协议简单（request: `{method, params, id}`，response: `{result, error, id}`），实现轻量
+3. UDS 不占用任何网络端口，文件权限控制即可实现访问控制
+4. 减少一个重量级依赖（protoc 工具链 + grpc-go 库）
+
+**保留的框架决策**：
+- CLI 框架：`spf13/cobra`（保持不变）
+- 配置框架：`spf13/viper`（保持不变）
+
+---
+
+### ADR-021: DecodedPacket 自定义值类型——隔离 gopacket 依赖
+
+**问题**：核心数据结构 `DecodedPacket` 的 L2/L3/L4 Header 如何表达？直接用 gopacket layers 还是自定义？
+
+**决定**：**纯自定义值类型 struct**，不暴露 gopacket 类型到核心接口。
+
+**设计**：
+
+```go
+type EthernetHeader struct {
+    SrcMAC, DstMAC [6]byte
+    EtherType      uint16
+    VLANs          []uint16       // 0~2 个 VLAN tag
+}
+
+type IPHeader struct {
+    Version    uint8
+    SrcIP      netip.Addr         // Go 标准库，值类型零分配
+    DstIP      netip.Addr
+    Protocol   uint8              // TCP=6, UDP=17
+    TTL        uint8
+    TotalLen   uint16
+}
+
+type TransportHeader struct {
+    SrcPort  uint16
+    DstPort  uint16
+    Protocol uint8              // TCP=6, UDP=17
+    // TCP 特有（仅 TCP 填充）
+    TCPFlags uint8
+    SeqNum   uint32
+    AckNum   uint32
+}
+
+type DecodedPacket struct {
+    Timestamp  time.Time
+    Ethernet   EthernetHeader
+    IP         IPHeader
+    Transport  TransportHeader
+    Payload    []byte             // 应用层载荷，零拷贝切片
+    CaptureLen uint32
+    OrigLen    uint32
+}
+```
+
+**理由**：
+
+1. 核心数据结构零外部依赖，API 稳定不受 gopacket 版本变更影响
+2. `netip.Addr` 是 Go 标准库值类型，比 `net.IP`（slice）零分配、可比较
+3. 值类型 struct 在 hot path 上可栈分配，对 GC 零压力
+4. 核心解码器内部使用 gopacket 做实际解析，输出转换为自定义类型——gopacket 限制在 `internal/core/decoder` 包内部
+
+---
+
 ## 决策优先级总览
 
 | ADR | 决策点 | 结论 | 实施阶段 |
@@ -616,9 +775,15 @@ type OutputPacket struct {
 | 013 | 两层配置模型 | 全局静态 + Task 动态（Kafka 命令 / CLI） | Phase 1 |
 | 014 | Task-Pipeline 绑定 | Pipeline 绑定 Task，FlowRegistry per-Task，Phase 1 单 Task | Phase 1 |
 | 015 | 远程控制拉模式 | 订阅 Kafka 命令 topic，不开入站端口 | Phase 1 |
+| 016 | 重构策略 | 推倒重来，旧代码仅做算法参考 | Phase 1 |
+| 017 | SkyWalking 代码 | 移除，会话关联属于 Collector 职责 | Phase 1 |
+| 018 | 日志框架 | slog + lumberjack 滚动 + Loki HTTP Push 自实现 | Phase 1 |
+| 019 | Kafka 客户端 | segmentio/kafka-go，纯 Go 无 CGO | Phase 1 |
+| 020 | 本地控制通道 | JSON-RPC over UDS，不用 gRPC | Phase 1 |
+| 021 | DecodedPacket 类型 | 自定义值类型 struct，隔离 gopacket | Phase 1 |
 
 ---
 
-**文档版本**: v0.1.0  
-**创建日期**: 2026-02-13  
+**文档版本**: v0.2.0
+**更新日期**: 2026-02-16
 **作者**: Otus Team
