@@ -125,7 +125,7 @@ firestige.xyz/otus
 │   │       └── sip_test.go
 │   ├── processor/
 │   │   └── filter/
-│   │       └── filter.go            // BPF 过滤 + Labels 标注 Processor
+│   │       └── filter.go            // 应用层过滤（基于字段/Labels 条件 keep/drop）+ Labels 标注 Processor
 │   └── reporter/
 │       ├── kafka/
 │       │   └── kafka.go             // Kafka Producer Reporter
