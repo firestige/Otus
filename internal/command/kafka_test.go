@@ -143,7 +143,7 @@ func TestKafkaCommandConsumer_StartStop(t *testing.T) {
 		if err != context.DeadlineExceeded && err != context.Canceled {
 			t.Logf("Start() returned: %v (acceptable)", err)
 		}
-	case <-time.After(200*time.Millisecond):
+	case <-time.After(200 * time.Millisecond):
 		t.Error("Start() didn't return after context cancellation")
 	}
 

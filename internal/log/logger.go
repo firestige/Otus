@@ -13,6 +13,11 @@ import (
 	"firestige.xyz/otus/internal/config"
 )
 
+var (
+	// globalLogger stores the current logger instance
+	globalLogger *slog.Logger
+)
+
 // Init initializes the global logger based on configuration.
 func Init(cfg config.LogConfig) error {
 	// Parse log level
@@ -63,8 +68,25 @@ func Init(cfg config.LogConfig) error {
 	// Set global logger
 	logger := slog.New(handler)
 	slog.SetDefault(logger)
+	globalLogger = logger
 
 	return nil
+}
+
+// Get returns the current global logger.
+func Get() *slog.Logger {
+	if globalLogger == nil {
+		return slog.Default()
+	}
+	return globalLogger
+}
+
+// Flush flushes any buffered log entries.
+// Currently a no-op since stdout is unbuffered and lumberjack auto-flushes.
+// LokiWriter has its own flush on Close which happens when the process exits.
+func Flush() {
+	// No-op: all current writers are self-flushing
+	// This is a placeholder for future buffered writers
 }
 
 // parseLevel converts string level to slog.Level.

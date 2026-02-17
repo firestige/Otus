@@ -20,11 +20,11 @@ import (
 )
 
 const (
-	defaultBatchSize      = 100
-	defaultBatchTimeout   = 100 * time.Millisecond
-	defaultCompression    = "snappy"
-	defaultMaxAttempts    = 3
-	defaultSerialization  = "json"
+	defaultBatchSize        = 100
+	defaultBatchTimeout     = 100 * time.Millisecond
+	defaultCompression      = "snappy"
+	defaultMaxAttempts      = 3
+	defaultSerialization    = "json"
 	defaultProtocolFallback = "raw"
 )
 
@@ -43,7 +43,7 @@ type KafkaReporter struct {
 type Config struct {
 	// Connection — may come from otus.reporters.kafka (ADR-028) or per-reporter config.
 	Brokers     []string `json:"brokers"`
-	Compression string   `json:"compression"` // none|gzip|snappy|lz4, default snappy
+	Compression string   `json:"compression"`  // none|gzip|snappy|lz4, default snappy
 	MaxAttempts int      `json:"max_attempts"` // default 3
 
 	// Topic routing (ADR-027): topic and topic_prefix are mutually exclusive.
