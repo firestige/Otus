@@ -11,5 +11,6 @@ const (
 	LabelSIPFromURI    = "sip.from_uri"
 	LabelSIPToURI      = "sip.to_uri"
 	LabelSIPStatusCode = "sip.status_code"
+	LabelSIPVia        = "sip.via" // Comma-separated list of Via headers
 	// More labels will be added as protocols are implemented
 )

@@ -31,14 +31,14 @@ const (
 
 // Config represents afpacket-specific configuration.
 type Config struct {
-	Interface   string `json:"interface"`    // required
-	BPFFilter   string `json:"bpf_filter"`   // optional
-	SnapLen     int    `json:"snap_len"`     // optional, default 65535
-	BlockSize   int    `json:"block_size"`   // optional, default 4MB
-	NumBlocks   int    `json:"num_blocks"`   // optional, default 128
-	FanoutID    int    `json:"fanout_id"`    // optional, default 42
-	FanoutType  string `json:"fanout_type"`  // optional: hash|cpu|lb, default hash
-	Promiscuous bool   `json:"promiscuous"`  // optional, default true
+	Interface   string `json:"interface"`   // required
+	BPFFilter   string `json:"bpf_filter"`  // optional
+	SnapLen     int    `json:"snap_len"`    // optional, default 65535
+	BlockSize   int    `json:"block_size"`  // optional, default 4MB
+	NumBlocks   int    `json:"num_blocks"`  // optional, default 128
+	FanoutID    int    `json:"fanout_id"`   // optional, default 42
+	FanoutType  string `json:"fanout_type"` // optional: hash|cpu|lb, default hash
+	Promiscuous bool   `json:"promiscuous"` // optional, default true
 }
 
 // AFPacketCapturer implements the Capturer interface using AF_PACKET_V3.
