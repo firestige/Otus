@@ -361,3 +361,16 @@ func (m *TaskManager) StopAll() error {
 
 	return lastErr
 }
+
+// UpdateMetricsInterval propagates a new metrics collection interval to all running tasks.
+// This is called by Daemon.Reload() when the metrics.collect_interval config changes.
+func (m *TaskManager) UpdateMetricsInterval(d time.Duration) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	for _, t := range m.tasks {
+		t.UpdateMetricsInterval(d)
+	}
+
+	slog.Info("metrics interval updated for all tasks", "interval", d, "task_count", len(m.tasks))
+}

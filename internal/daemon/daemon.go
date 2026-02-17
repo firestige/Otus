@@ -216,6 +216,8 @@ func (d *Daemon) Run() error {
 }
 
 // Reload reloads the global configuration.
+// Hot-reloadable: log level/format, metrics collect interval.
+// Cold (requires restart): node.hostname, task definitions, listen addresses.
 // Implements ConfigReloader interface for CommandHandler.
 func (d *Daemon) Reload() error {
 	slog.Info("reloading configuration", "path", d.configPath)
@@ -225,25 +227,44 @@ func (d *Daemon) Reload() error {
 		return fmt.Errorf("failed to load new config: %w", err)
 	}
 
-	// Validate compatibility: can't change certain fields on reload
-	if newConfig.Node.Hostname != d.config.Node.Hostname {
-		slog.Warn("node.hostname changed in config, but requires daemon restart to take effect",
-			"old", d.config.Node.Hostname,
-			"new", newConfig.Node.Hostname,
-		)
-	}
+	// Track what was hot-reloaded for the log message
+	hotReloaded := []string{}
 
-	// Update config reference
+	// 1. Re-initialize logging with new config (log level + format)
+	oldLevel := d.config.Log.Level
+	oldFormat := d.config.Log.Format
 	d.config = newConfig
-
-	// Re-initialize logging with new config
 	if err := d.initLogging(); err != nil {
 		slog.Error("failed to reinitialize logging", "error", err)
 		// Non-fatal: old logging continues
+	} else if newConfig.Log.Level != oldLevel || newConfig.Log.Format != oldFormat {
+		hotReloaded = append(hotReloaded, "log")
+	}
+
+	// 2. Update metrics collection interval if changed
+	if newConfig.Metrics.CollectInterval != "" {
+		if interval, err := time.ParseDuration(newConfig.Metrics.CollectInterval); err == nil && interval > 0 {
+			d.taskManager.UpdateMetricsInterval(interval)
+			hotReloaded = append(hotReloaded, "metrics_interval")
+		} else if err != nil {
+			slog.Warn("invalid metrics.collect_interval, ignoring",
+				"value", newConfig.Metrics.CollectInterval,
+				"error", err)
+		}
+	}
+
+	// 3. Warn about cold-reload items that changed
+	requiresRestart := []string{}
+	if newConfig.Node.Hostname != d.config.Node.Hostname {
+		requiresRestart = append(requiresRestart, "node.hostname")
+	}
+	if newConfig.Metrics.Listen != d.config.Metrics.Listen {
+		requiresRestart = append(requiresRestart, "metrics.listen")
 	}
 
 	slog.Info("configuration reloaded",
-		"hostname", d.config.Node.Hostname,
+		"hot_reloaded", hotReloaded,
+		"requires_restart", requiresRestart,
 	)
 
 	return nil

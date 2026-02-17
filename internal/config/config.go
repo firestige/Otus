@@ -172,9 +172,10 @@ type IPReassemblyConfig struct {
 
 // MetricsConfig contains Prometheus metrics settings.
 type MetricsConfig struct {
-	Enabled bool   `mapstructure:"enabled"`
-	Listen  string `mapstructure:"listen"`
-	Path    string `mapstructure:"path"`
+	Enabled         bool   `mapstructure:"enabled"`
+	Listen          string `mapstructure:"listen"`
+	Path            string `mapstructure:"path"`
+	CollectInterval string `mapstructure:"collect_interval"` // e.g. "5s", hot-reloadable
 }
 
 // ─── Log (ADR-025) ───
@@ -281,6 +282,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("otus.metrics.enabled", true)
 	v.SetDefault("otus.metrics.listen", ":9091")
 	v.SetDefault("otus.metrics.path", "/metrics")
+	v.SetDefault("otus.metrics.collect_interval", "5s")
 
 	// Command channel defaults
 	v.SetDefault("otus.command_channel.enabled", false)

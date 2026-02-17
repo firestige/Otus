@@ -8,6 +8,7 @@ import (
 	"hash/fnv"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"firestige.xyz/otus/internal/config"
@@ -70,6 +71,9 @@ type Task struct {
 	startedAt     time.Time
 	stoppedAt     time.Time
 	failureReason string
+
+	// Hot-reloadable settings
+	metricsInterval atomic.Int64 // nanoseconds; 0 = use default (5s)
 
 	// Context and cancellation
 	ctx    context.Context
@@ -522,10 +526,29 @@ func (t *Task) ID() string {
 	return t.Config.ID
 }
 
+// getMetricsInterval returns the current metrics collection interval.
+// If no custom interval is set (atomic value 0), defaults to 5 seconds.
+func (t *Task) getMetricsInterval() time.Duration {
+	ns := t.metricsInterval.Load()
+	if ns <= 0 {
+		return 5 * time.Second
+	}
+	return time.Duration(ns)
+}
+
+// UpdateMetricsInterval sets a new metrics collection interval.
+// The change takes effect on the next tick of the statsCollectorLoop.
+func (t *Task) UpdateMetricsInterval(d time.Duration) {
+	if d > 0 {
+		t.metricsInterval.Store(int64(d))
+	}
+}
+
 // statsCollectorLoop periodically collects stats from capturers and updates Prometheus metrics.
 // Uses per-capturer tracking to correctly compute deltas in binding mode (multiple capturers).
 func (t *Task) statsCollectorLoop() {
-	ticker := time.NewTicker(5 * time.Second) // Collect stats every 5 seconds
+	interval := t.getMetricsInterval()
+	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
 	// Per-capturer last-seen counters to avoid cross-capturer delta contamination.
@@ -540,6 +563,12 @@ func (t *Task) statsCollectorLoop() {
 		case <-t.ctx.Done():
 			return
 		case <-ticker.C:
+			// Check if interval was updated (hot-reload)
+			if newInterval := t.getMetricsInterval(); newInterval != interval {
+				interval = newInterval
+				ticker.Reset(interval)
+				slog.Info("metrics collect interval updated", "task_id", t.Config.ID, "interval", interval)
+			}
 			for i, cap := range t.Capturers {
 				stats := cap.Stats()
 
