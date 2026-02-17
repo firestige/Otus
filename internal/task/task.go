@@ -12,6 +12,7 @@ import (
 
 	"firestige.xyz/otus/internal/config"
 	"firestige.xyz/otus/internal/core"
+	"firestige.xyz/otus/internal/metrics"
 	"firestige.xyz/otus/internal/pipeline"
 	"firestige.xyz/otus/pkg/plugin"
 )
@@ -118,8 +119,33 @@ func (t *Task) State() TaskState {
 
 // setState updates the task state (not thread-safe, must hold mu lock).
 func (t *Task) setState(s TaskState) {
+	oldState := t.state
 	t.state = s
 	slog.Info("task state changed", "task_id", t.Config.ID, "state", s)
+
+	// Update Prometheus metrics
+	taskID := t.Config.ID
+
+	// Clear old state
+	if oldState != "" {
+		metrics.TaskStatus.WithLabelValues(taskID, string(oldState)).Set(0)
+	}
+
+	// Set new state
+	var statusValue float64
+	switch s {
+	case StateStopped:
+		statusValue = metrics.TaskStatusStopped
+	case StateRunning:
+		statusValue = metrics.TaskStatusRunning
+	case StateFailed:
+		statusValue = metrics.TaskStatusError
+	default:
+		// For Created, Starting, Stopping - use 0 (stopped)
+		statusValue = metrics.TaskStatusStopped
+	}
+
+	metrics.TaskStatus.WithLabelValues(taskID, string(s)).Set(statusValue)
 }
 
 // Start starts the task and transitions it to Running state.
@@ -175,6 +201,10 @@ func (t *Task) Start() error {
 	}
 
 	t.setState(StateRunning)
+
+	// Step 5: Start periodic stats collection for Prometheus metrics
+	go t.statsCollectorLoop()
+
 	slog.Info("task started", "task_id", t.Config.ID,
 		"pipelines", len(t.Pipelines),
 		"capturers", len(t.Capturers),
@@ -435,4 +465,57 @@ func (t *Task) GetStatus() Status {
 // ID returns the task ID.
 func (t *Task) ID() string {
 	return t.Config.ID
+}
+
+// statsCollectorLoop periodically collects stats from capturers and updates Prometheus metrics.
+func (t *Task) statsCollectorLoop() {
+	ticker := time.NewTicker(5 * time.Second) // Collect stats every 5 seconds
+	defer ticker.Stop()
+
+	var lastPacketsReceived uint64
+	var lastPacketsDropped uint64
+
+	for {
+		select {
+		case <-t.ctx.Done():
+			return
+		case <-ticker.C:
+			// Collect stats from all capturers and update Prometheus metrics
+			for i, cap := range t.Capturers {
+				stats := cap.Stats()
+
+				// Calculate deltas since last collection
+				deltaReceived := stats.PacketsReceived - lastPacketsReceived
+				deltaDropped := stats.PacketsDropped - lastPacketsDropped
+
+				// Update Prometheus counters (use Add instead of Set for counters)
+				if deltaReceived > 0 {
+					ifaceName, _ := t.Config.Capture.Config["interface"].(string)
+					metrics.CapturePacketsTotal.WithLabelValues(
+						t.Config.ID,
+						ifaceName,
+					).Add(float64(deltaReceived))
+				}
+
+				if deltaDropped > 0 {
+					metrics.CaptureDropsTotal.WithLabelValues(
+						t.Config.ID,
+						"capture",
+					).Add(float64(deltaDropped))
+				}
+
+				// Update last values
+				lastPacketsReceived = stats.PacketsReceived
+				lastPacketsDropped = stats.PacketsDropped
+
+				slog.Debug("capturer stats collected",
+					"task_id", t.Config.ID,
+					"capturer_id", i,
+					"packets_received", stats.PacketsReceived,
+					"packets_dropped", stats.PacketsDropped,
+					"delta_received", deltaReceived,
+					"delta_dropped", deltaDropped)
+			}
+		}
+	}
 }

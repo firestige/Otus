@@ -31,7 +31,7 @@ type Daemon struct {
 	cmdHandler    *command.CommandHandler
 	udsServer     *command.UDSServer
 	kafkaConsumer *command.KafkaCommandConsumer // nil if command channel disabled
-	metricsServer *metrics.Server                // nil if metrics disabled
+	metricsServer *metrics.Server               // nil if metrics disabled
 
 	// Lifecycle management
 	ctx          context.Context

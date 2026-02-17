@@ -4,9 +4,12 @@ package pipeline
 import (
 	"context"
 	"log/slog"
+	"strconv"
+	"time"
 
 	"firestige.xyz/otus/internal/core"
 	"firestige.xyz/otus/internal/core/decoder"
+	"firestige.xyz/otus/internal/metrics"
 	"firestige.xyz/otus/pkg/plugin"
 )
 
@@ -91,44 +94,63 @@ func (p *Pipeline) Run(ctx context.Context, input <-chan core.RawPacket, output 
 // processPacket processes a single packet through the entire pipeline.
 // Returns the output packet and a boolean indicating whether to forward it.
 func (p *Pipeline) processPacket(raw core.RawPacket) (core.OutputPacket, bool) {
+	startTime := time.Now()
+
 	// Step 1: Decode L2-L4
+	pipelineID := strconv.Itoa(p.id)
+
 	decoded, err := p.decoder.Decode(raw)
 	if err != nil {
 		p.metrics.DecodeErrors.Add(1)
+		metrics.PipelinePacketsTotal.WithLabelValues(p.taskID, pipelineID, "decode_error").Inc()
 		return core.OutputPacket{}, false
 	}
 	p.metrics.Decoded.Add(1)
-	
+	metrics.PipelinePacketsTotal.WithLabelValues(p.taskID, pipelineID, "decoded").Inc()
+
+	// Measure decode latency
+	decodeLatency := time.Since(startTime).Seconds()
+	metrics.PipelineLatencySeconds.WithLabelValues(p.taskID, "decode").Observe(decodeLatency)
+
 	// Step 2: Parse application layer
+	parseStart := time.Now()
 	var parsedPayload any
 	var parsedLabels core.Labels
 	var payloadType string
-	
+
 	for _, parser := range p.parsers {
 		if parser.CanHandle(&decoded) {
 			payload, labels, err := parser.Handle(&decoded)
 			if err != nil {
 				p.metrics.ParseErrors.Add(1)
+				metrics.PipelinePacketsTotal.WithLabelValues(p.taskID, pipelineID, "parse_error").Inc()
 				slog.Debug("parser failed", "parser", parser.Name(), "error", err)
 				continue
 			}
-			
+
 			// Use first successful parser
 			parsedPayload = payload
 			parsedLabels = labels
 			payloadType = parser.Name()
 			p.metrics.Parsed.Add(1)
+			metrics.PipelinePacketsTotal.WithLabelValues(p.taskID, pipelineID, "parsed").Inc()
 			break
 		}
 	}
-	
+
+	// Measure parse latency
+	if parsedPayload != nil {
+		parseLatency := time.Since(parseStart).Seconds()
+		metrics.PipelineLatencySeconds.WithLabelValues(p.taskID, "parse").Observe(parseLatency)
+	}
+
 	// If no parser handled the packet, use raw payload
 	if parsedPayload == nil {
 		parsedPayload = decoded.Payload
 		payloadType = "raw"
 		parsedLabels = make(core.Labels)
 	}
-	
+
 	// Step 3: Build OutputPacket
 	output := core.OutputPacket{
 		TaskID:      p.taskID,
@@ -145,18 +167,32 @@ func (p *Pipeline) processPacket(raw core.RawPacket) (core.OutputPacket, bool) {
 		Payload:     parsedPayload,
 		RawPayload:  decoded.Payload,
 	}
-	
+
 	// Step 4: Process through processors
+	processStart := time.Now()
 	for _, processor := range p.processors {
 		keep := processor.Process(&output)
 		p.metrics.Processed.Add(1)
 		if !keep {
 			// Processor dropped packet
 			p.metrics.Dropped.Add(1)
+			metrics.PipelinePacketsTotal.WithLabelValues(p.taskID, pipelineID, "dropped").Inc()
 			return core.OutputPacket{}, false
 		}
 	}
-	
+
+	// Measure processor latency
+	if len(p.processors) > 0 {
+		processLatency := time.Since(processStart).Seconds()
+		metrics.PipelineLatencySeconds.WithLabelValues(p.taskID, "process").Observe(processLatency)
+	}
+
+	// Measure full pipeline end-to-end latency
+	totalLatency := time.Since(startTime).Seconds()
+	metrics.PipelineLatencySeconds.WithLabelValues(p.taskID, "total").Observe(totalLatency)
+
+	metrics.PipelinePacketsTotal.WithLabelValues(p.taskID, pipelineID, "output").Inc()
+
 	return output, true
 }
 

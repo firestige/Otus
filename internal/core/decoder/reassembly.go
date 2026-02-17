@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"firestige.xyz/otus/internal/core"
+	"firestige.xyz/otus/internal/metrics"
 )
 
 // ReassemblyConfig contains configuration for IP reassembly.
@@ -82,11 +83,15 @@ func (r *Reassembler) Process(ip core.IPHeader, data []byte, timestamp time.Time
 			lastSeen:  timestamp,
 		}
 		r.flows[key] = entry
+		
+		// Update Prometheus metric
+		metrics.ReassemblyActiveFragments.Inc()
 	}
 
 	// Check fragment limit
 	if len(entry.fragments) >= r.config.MaxFragments {
 		delete(r.flows, key)
+		metrics.ReassemblyActiveFragments.Dec()
 		return nil, false, core.ErrReassemblyLimit
 	}
 
@@ -110,6 +115,7 @@ func (r *Reassembler) Process(ip core.IPHeader, data []byte, timestamp time.Time
 		// Reassemble
 		reassembled, err := r.reassemble(entry)
 		delete(r.flows, key)
+		metrics.ReassemblyActiveFragments.Dec()
 		if err != nil {
 			return nil, false, err
 		}
@@ -162,11 +168,19 @@ func (r *Reassembler) cleanup() {
 		now := time.Now()
 		timeout := time.Duration(r.config.Timeout) * time.Second
 
+		expiredCount := 0
 		for key, entry := range r.flows {
 			if now.Sub(entry.lastSeen) > timeout {
 				delete(r.flows, key)
+				expiredCount++
 			}
 		}
+		
+		// Update Prometheus metric for expired fragments
+		if expiredCount > 0 {
+			metrics.ReassemblyActiveFragments.Sub(float64(expiredCount))
+		}
+
 		r.mu.Unlock()
 	}
 }
