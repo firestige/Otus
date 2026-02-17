@@ -37,6 +37,7 @@ type Daemon struct {
 	ctx          context.Context
 	cancel       context.CancelFunc
 	shutdownChan chan struct{}
+	sigChan      chan os.Signal // promoted from Run() local for cleanup in Stop()
 }
 
 // New creates a new Daemon instance.
@@ -153,12 +154,17 @@ func (d *Daemon) Stop() {
 	// 5. Cancel context to signal all goroutines
 	d.cancel()
 
-	// 6. Remove PID file
+	// 6. Unregister signal handler to prevent goroutine leak
+	if d.sigChan != nil {
+		signal.Stop(d.sigChan)
+	}
+
+	// 7. Remove PID file
 	if err := d.removePIDFile(); err != nil {
 		slog.Error("error removing PID file", "error", err)
 	}
 
-	// 7. Flush logs
+	// 8. Flush logs
 	logpkg.Flush()
 
 	slog.Info("daemon stopped gracefully")
@@ -171,14 +177,14 @@ func (d *Daemon) Stop() {
 //  3. SIGHUP triggers config reload
 func (d *Daemon) Run() error {
 	// Setup signal handling
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGTERM, syscall.SIGINT, syscall.SIGHUP)
+	d.sigChan = make(chan os.Signal, 1)
+	signal.Notify(d.sigChan, syscall.SIGTERM, syscall.SIGINT, syscall.SIGHUP)
 
 	slog.Info("daemon running, waiting for signals or commands")
 
 	for {
 		select {
-		case sig := <-sigChan:
+		case sig := <-d.sigChan:
 			switch sig {
 			case syscall.SIGTERM, syscall.SIGINT:
 				slog.Info("received shutdown signal", "signal", sig)

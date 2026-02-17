@@ -344,3 +344,41 @@ func (r *KafkaReporter) serializeJSON(pkt *core.OutputPacket) ([]byte, error) {
 func (r *KafkaReporter) Flush(ctx context.Context) error {
 	return nil
 }
+
+// ReportBatch sends a batch of packets to Kafka in a single WriteMessages call.
+// Implements plugin.BatchReporter for high-throughput batched delivery via ReporterWrapper.
+func (r *KafkaReporter) ReportBatch(ctx context.Context, pkts []*core.OutputPacket) error {
+	msgs := make([]kafka.Message, 0, len(pkts))
+	for _, pkt := range pkts {
+		if pkt == nil {
+			continue
+		}
+
+		value, err := r.serializeValue(pkt)
+		if err != nil {
+			r.errorCount.Add(1)
+			slog.Debug("batch serialize skip", "error", err)
+			continue
+		}
+
+		msgs = append(msgs, kafka.Message{
+			Topic:   r.resolveTopic(pkt),
+			Key:     []byte(fmt.Sprintf("%s:%d-%s:%d", pkt.SrcIP, pkt.SrcPort, pkt.DstIP, pkt.DstPort)),
+			Value:   value,
+			Time:    pkt.Timestamp,
+			Headers: r.buildHeaders(pkt),
+		})
+	}
+
+	if len(msgs) == 0 {
+		return nil
+	}
+
+	if err := r.writer.WriteMessages(ctx, msgs...); err != nil {
+		r.errorCount.Add(uint64(len(msgs)))
+		return fmt.Errorf("kafka batch write failed (%d msgs): %w", len(msgs), err)
+	}
+
+	r.reportedCount.Add(uint64(len(msgs)))
+	return nil
+}

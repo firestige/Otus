@@ -46,9 +46,10 @@ type Task struct {
 	Config config.TaskConfig
 
 	// Plugin instances (owned by Task)
-	Capturers []plugin.Capturer
-	Reporters []plugin.Reporter
-	Registry  *FlowRegistry
+	Capturers        []plugin.Capturer
+	Reporters        []plugin.Reporter
+	ReporterWrappers []*ReporterWrapper // batching + fallback wrappers around Reporters
+	Registry         *FlowRegistry
 
 	// Pipeline instances (N copies)
 	Pipelines []*pipeline.Pipeline
@@ -187,7 +188,12 @@ func (t *Task) Start() error {
 		startedReporters++
 	}
 
-	// Step 2: Start Sender goroutine (consumes sendBuffer → all Reporters)
+	// Step 2: Start ReporterWrappers (batching goroutines)
+	for _, w := range t.ReporterWrappers {
+		w.Start(t.ctx)
+	}
+
+	// Step 3: Start Sender goroutine (consumes sendBuffer → all Wrappers)
 	go t.senderLoop()
 
 	// Step 3: Start Pipelines (processing chains)
@@ -325,6 +331,10 @@ func (t *Task) dispatchLoop() {
 	}()
 
 	numPipelines := len(t.rawStreams)
+	if numPipelines == 0 {
+		slog.Error("dispatchLoop: no pipelines configured, exiting", "task_id", t.Config.ID)
+		return
+	}
 
 	for pkt := range t.captureCh {
 		// Flow-hash distribution for flow affinity
@@ -427,16 +437,31 @@ func flowHash(pkt core.RawPacket) uint32 {
 	return h.Sum32()
 }
 
-// senderLoop consumes OutputPackets from sendBuffer and sends them to all Reporters.
+// senderLoop consumes OutputPackets from sendBuffer and distributes them to ReporterWrappers.
+// If no wrappers are configured, falls back to direct Reporter.Report() calls.
 // It runs until sendBuffer is closed.
 func (t *Task) senderLoop() {
 	defer close(t.doneCh)
 
-	for pkt := range t.sendBuffer {
-		for i, rep := range t.Reporters {
-			if err := rep.Report(t.ctx, &pkt); err != nil {
-				slog.Warn("reporter error", "task_id", t.Config.ID, "reporter_id", i, "error", err)
-				// Continue processing, don't fail the task on Reporter errors
+	if len(t.ReporterWrappers) > 0 {
+		// Batched path: distribute to wrappers
+		for pkt := range t.sendBuffer {
+			p := pkt // copy for pointer safety
+			for _, w := range t.ReporterWrappers {
+				w.Send(&p)
+			}
+		}
+		// sendBuffer closed — close all wrapper channels and wait for flush
+		for _, w := range t.ReporterWrappers {
+			w.Close()
+		}
+	} else {
+		// Legacy path: direct Reporter.Report() calls (no wrappers)
+		for pkt := range t.sendBuffer {
+			for i, rep := range t.Reporters {
+				if err := rep.Report(t.ctx, &pkt); err != nil {
+					slog.Warn("reporter error", "task_id", t.Config.ID, "reporter_id", i, "error", err)
+				}
 			}
 		}
 	}

@@ -51,8 +51,11 @@ type ProcessorConfig struct {
 
 // ReporterConfig contains reporter plugin configuration.
 type ReporterConfig struct {
-	Name   string         `json:"name" yaml:"name"`
-	Config map[string]any `json:"config" yaml:"config"`
+	Name         string         `json:"name" yaml:"name"`
+	Config       map[string]any `json:"config" yaml:"config"`
+	BatchSize    int            `json:"batch_size" yaml:"batch_size"`       // Wrapper batch size (default 100)
+	BatchTimeout string         `json:"batch_timeout" yaml:"batch_timeout"` // Wrapper batch timeout (default 50ms)
+	Fallback     string         `json:"fallback" yaml:"fallback"`           // Fallback reporter name (optional)
 }
 
 // Validate validates task configuration.
