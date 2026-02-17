@@ -684,19 +684,48 @@ agent:
 
 ---
 
-### Step 10: SIP 解析插件
+### ✅ Step 10: SIP 解析插件
 **前置**: Step 3  
-**目标**: 实现 SIP Parser 插件
+**目标**: 实现 SIP Parser 插件  
+**状态**: ✅ 已完成 (commit 43c0db9)
 
 **任务清单**:
-1. `plugins/parser/sip/sip.go`
-   - `CanHandle()`: 检查端口 5060 或 payload 前缀特征（"SIP/2.0", "INVITE", "REGISTER" 等）
-   - `Handle()`: 解析 SIP 头部，返回 SIP message struct + Labels
-2. 参考旧代码：`plugins/parser/sip/sip_parser.go`
-3. 单元测试：各种 SIP 方法、malformed 输入
-4. 基准测试：CanHandle + Handle 延迟
+1. ✅ `plugins/parser/sip/sip.go` (550+ 行)
+   - `CanHandle()`: 端口 5060/5061 + SIP 魔数匹配（~1.9ns）
+   - `Handle()`: 完整 SIP 头部解析 + SDP 解析（~1.45μs）
+   - 会话状态管理：INVITE offer → 200 OK answer 关联（go-cache, 24h TTL）
+   - FlowRegistry 双向注册：RTP/RTCP 流（支持 rtcp-mux）
+   - BYE/CANCEL 清理逻辑
+2. ✅ 单元测试：`sip_test.go` (600+ 行)
+   - CanHandle (端口 + 魔数), extractURI, parseSIPMessage
+   - SDP 解析（单/多媒体流, RTCP-MUX, 显式 RTCP 端口）
+   - INVITE/200 OK/BYE 完整流程
+   - 多通道场景测试（2 audio + 1 video = 12 FlowKeys）
+3. ✅ 基准测试：CanHandle ~1.9ns, Handle ~1.45μs
 
-**交付物**: SIP Parser 可解析 SIP 消息
+**实现细节**:
+- **SIP 头部解析**（无正则，手写状态机）：
+  - Request-Line/Status-Line, Call-ID, From/To URI, Via（逗号分隔列表）, CSeq
+  - Header folding 支持（多行头部）
+- **SDP 解析**（m=, a=, c= 行）：
+  - `m=`: 媒体类型、RTP 端口、协议
+  - `a=rtcp-mux`: RTCP 复用 RTP 端口
+  - `a=rtcp:端口`: 显式 RTCP 端口（优先级高于端口+1）
+  - `a=rtpmap:`: 编解码器信息（仅保留第一个）
+  - `c=`: 连接地址（会话级/媒体级）
+- **多通道支持**：
+  - 所有 m= 行都被解析并存储到 `mediaStreams[]` 数组
+  - `registerMediaFlows()` 遍历所有媒体流，每个注册双向 FlowKey
+  - 例如：2 audio + 1 video → 12 FlowKeys（6 RTP + 6 RTCP，双向）
+- **会话状态**（Call-ID → sipSession）：
+  - INVITE: 存储 offer SDP
+  - 200 OK: 取出 offer，组合 answer，注册完整五元组
+  - BYE/CANCEL: 清理 FlowRegistry 和 session cache
+- **Labels 输出**：
+  - `sip.method`, `sip.call_id`, `sip.from_uri`, `sip.to_uri`, `sip.via`, `sip.status_code`
+  - Payload 返回 `nil`（原始报文在 `OutputPacket.RawPayload`）
+
+**交付物**: SIP Parser 可解析 SIP 消息，提取关键头部，注册 RTP/RTCP 流到 FlowRegistry
 
 ---
 
