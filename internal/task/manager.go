@@ -30,13 +30,16 @@ func NewTaskManager(agentID string) *TaskManager {
 }
 
 // Create creates and starts a new task from configuration.
-// This implements the 6-phase assembly process described in architecture.md:
-// 1. Validate - check TaskConfig completeness
-// 2. Resolve - lookup all factories from Registry, fail fast if any not found
-// 3. Construct - call factories to create empty instances
-// 4. Init - inject plugin-specific config
-// 5. Wire - inject Task-level shared resources (FlowRegistry)
-// 6. Assemble & Start - build Task and start in dependency reverse order
+// This implements the strict 7-phase assembly process described in architecture.md:
+// 1. Validate  - check TaskConfig completeness
+// 2. Resolve   - lookup all factories from Registry, fail fast if any not found
+// 3. Construct - call factories to create all empty instances
+// 4. Init      - inject plugin-specific config into all instances
+// 5. Wire      - inject Task-level shared resources (FlowRegistry)
+// 6. Assemble  - build Pipelines and Task struct
+// 7. Start     - start in dependency reverse order
+//
+// Each phase completes fully before the next begins (strict separation).
 func (m *TaskManager) Create(cfg config.TaskConfig) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -58,55 +61,64 @@ func (m *TaskManager) Create(cfg config.TaskConfig) error {
 		return fmt.Errorf("validation failed: %w", err)
 	}
 
+	numPipelines := cfg.Workers
+
 	// ========== Phase 2: Resolve ==========
 	// Lookup all plugin factories before creating any instances (fail-fast).
 	slog.Debug("resolving plugins", "task_id", cfg.ID)
 
-	capFactory, err := plugin.GetCapturerFactory(cfg.Capture.Type)
+	capFactory, err := plugin.GetCapturerFactory(cfg.Capture.Name)
 	if err != nil {
-		return fmt.Errorf("capturer %q: %w", cfg.Capture.Type, err)
+		return fmt.Errorf("capturer %q: %w", cfg.Capture.Name, err)
 	}
 
 	parserFactories := make([]plugin.ParserFactory, len(cfg.Parsers))
 	for i, pc := range cfg.Parsers {
-		f, err := plugin.GetParserFactory(pc.Type)
+		f, err := plugin.GetParserFactory(pc.Name)
 		if err != nil {
-			return fmt.Errorf("parser %q: %w", pc.Type, err)
+			return fmt.Errorf("parser %q: %w", pc.Name, err)
 		}
 		parserFactories[i] = f
 	}
 
 	processorFactories := make([]plugin.ProcessorFactory, len(cfg.Processors))
 	for i, pc := range cfg.Processors {
-		f, err := plugin.GetProcessorFactory(pc.Type)
+		f, err := plugin.GetProcessorFactory(pc.Name)
 		if err != nil {
-			return fmt.Errorf("processor %q: %w", pc.Type, err)
+			return fmt.Errorf("processor %q: %w", pc.Name, err)
 		}
 		processorFactories[i] = f
 	}
 
-	// Reporter: take first one for now (TODO: support multiple reporters)
-	var repFactory plugin.ReporterFactory
-	if len(cfg.Reporters) > 0 {
-		f, err := plugin.GetReporterFactory(cfg.Reporters[0].Type)
+	repFactories := make([]plugin.ReporterFactory, len(cfg.Reporters))
+	for i, rc := range cfg.Reporters {
+		f, err := plugin.GetReporterFactory(rc.Name)
 		if err != nil {
-			return fmt.Errorf("reporter %q: %w", cfg.Reporters[0].Type, err)
+			return fmt.Errorf("reporter %q: %w", rc.Name, err)
 		}
-		repFactory = f
+		repFactories[i] = f
 	}
 
 	// ========== Phase 3: Construct ==========
+	// Create all empty instances. No Init or Wire yet.
 	slog.Debug("constructing plugin instances", "task_id", cfg.ID)
 
-	// Task-level singleton instances
 	task := NewTask(cfg)
 
-	// Capturer: 1 per Task
-	task.Capturer = capFactory()
+	// Capturers: binding mode = N instances, dispatch mode = 1 instance
+	numCapturers := 1
+	if cfg.Capture.DispatchMode == "binding" {
+		numCapturers = numPipelines
+	}
+	task.Capturers = make([]plugin.Capturer, numCapturers)
+	for i := range task.Capturers {
+		task.Capturers[i] = capFactory()
+	}
 
-	// Reporter: 1 per Task
-	if repFactory != nil {
-		task.Reporter = repFactory()
+	// Reporters: M instances (one per configured reporter)
+	task.Reporters = make([]plugin.Reporter, len(repFactories))
+	for i := range repFactories {
+		task.Reporters[i] = repFactories[i]()
 	}
 
 	// FlowRegistry: 1 per Task (shared across pipelines)
@@ -118,85 +130,87 @@ func (m *TaskManager) Create(cfg config.TaskConfig) error {
 		IPReassembly: cfg.Decoder.IPReassembly,
 	})
 
-	// Pipelines: N copies, each with independent Parser/Processor instances
-	numPipelines := cfg.Capture.FanoutSize
-	if numPipelines < 1 {
-		numPipelines = 1
+	// Parsers and Processors: N copies (one set per Pipeline)
+	allParsers := make([][]plugin.Parser, numPipelines)
+	allProcessors := make([][]plugin.Processor, numPipelines)
+	for i := 0; i < numPipelines; i++ {
+		allParsers[i] = make([]plugin.Parser, len(cfg.Parsers))
+		for j := range cfg.Parsers {
+			allParsers[i][j] = parserFactories[j]()
+		}
+		allProcessors[i] = make([]plugin.Processor, len(cfg.Processors))
+		for j := range cfg.Processors {
+			allProcessors[i][j] = processorFactories[j]()
+		}
 	}
 
+	// ========== Phase 4: Init ==========
+	// Inject plugin-specific config into all instances uniformly.
+	slog.Debug("initializing all plugin instances", "task_id", cfg.ID)
+
+	// Init Capturers
+	for _, cap := range task.Capturers {
+		if err := cap.Init(cfg.Capture.Config); err != nil {
+			return fmt.Errorf("capturer init failed: %w", err)
+		}
+	}
+
+	// Init Reporters
+	for i, rep := range task.Reporters {
+		if err := rep.Init(cfg.Reporters[i].Config); err != nil {
+			return fmt.Errorf("reporter %q init failed: %w", cfg.Reporters[i].Name, err)
+		}
+	}
+
+	// Init Parsers and Processors (per-Pipeline instances)
 	for i := 0; i < numPipelines; i++ {
-		// Each pipeline gets its own Parser instances
-		parsers := make([]plugin.Parser, len(cfg.Parsers))
-		for j := range cfg.Parsers {
-			parsers[j] = parserFactories[j]() // Factory creates empty instance
-		}
-
-		// Each pipeline gets its own Processor instances
-		processors := make([]plugin.Processor, len(cfg.Processors))
-		for j := range cfg.Processors {
-			processors[j] = processorFactories[j]()
-		}
-
-		// ========== Phase 4: Init (for this pipeline's plugins) ==========
-		// Init Parsers
-		for parserIdx, parser := range parsers {
-			if err := parser.Init(cfg.Parsers[parserIdx].Config); err != nil {
-				return fmt.Errorf("pipeline %d parser %d init failed: %w", i, parserIdx, err)
+		for j, parser := range allParsers[i] {
+			if err := parser.Init(cfg.Parsers[j].Config); err != nil {
+				return fmt.Errorf("pipeline %d parser %q init failed: %w", i, cfg.Parsers[j].Name, err)
 			}
 		}
-
-		// Init Processors
-		for procIdx, proc := range processors {
-			if err := proc.Init(cfg.Processors[procIdx].Config); err != nil {
-				return fmt.Errorf("pipeline %d processor %d init failed: %w", i, procIdx, err)
+		for j, proc := range allProcessors[i] {
+			if err := proc.Init(cfg.Processors[j].Config); err != nil {
+				return fmt.Errorf("pipeline %d processor %q init failed: %w", i, cfg.Processors[j].Name, err)
 			}
 		}
+	}
 
-		// ========== Phase 5: Wire (for this pipeline's plugins) ==========
-		// Inject FlowRegistry into parsers that need it
-		for parserIdx, parser := range parsers {
+	// ========== Phase 5: Wire ==========
+	// Inject Task-level shared resources into plugins that need them.
+	slog.Debug("wiring shared resources", "task_id", cfg.ID)
+
+	for i := 0; i < numPipelines; i++ {
+		for _, parser := range allParsers[i] {
 			if fra, ok := parser.(plugin.FlowRegistryAware); ok {
 				fra.SetFlowRegistry(task.Registry)
 				slog.Debug("injected FlowRegistry into parser",
 					"task_id", cfg.ID,
 					"pipeline_id", i,
-					"parser_id", parserIdx,
-					"parser_type", parser.Name())
+					"parser_name", parser.Name())
 			}
 		}
+	}
 
-		// Create pipeline with fully initialized plugins
+	// ========== Phase 6: Assemble ==========
+	// Build Pipelines from fully initialized and wired plugins.
+	slog.Debug("assembling pipelines", "task_id", cfg.ID)
+
+	for i := 0; i < numPipelines; i++ {
 		p := pipeline.New(pipeline.Config{
 			ID:         i,
 			TaskID:     cfg.ID,
 			AgentID:    m.agentID,
 			Decoder:    sharedDecoder,
-			Parsers:    parsers,
-			Processors: processors,
+			Parsers:    allParsers[i],
+			Processors: allProcessors[i],
 		})
-
 		task.Pipelines = append(task.Pipelines, p)
 	}
 
-	// ========== Phase 4: Init (Task-level plugins) ==========
-	slog.Debug("initializing task-level plugins", "task_id", cfg.ID)
-
-	// Init Capturer
-	if err := task.Capturer.Init(cfg.Capture.Extra); err != nil {
-		return fmt.Errorf("capturer init failed: %w", err)
-	}
-
-	// Init Reporter
-	if task.Reporter != nil && len(cfg.Reporters) > 0 {
-		if err := task.Reporter.Init(cfg.Reporters[0].Config); err != nil {
-			return fmt.Errorf("reporter init failed: %w", err)
-		}
-	}
-
-	// ========== Phase 6: Assemble & Start ==========
+	// ========== Phase 7: Start ==========
 	slog.Debug("starting task", "task_id", cfg.ID)
 
-	// Start task (this will start all components in correct order)
 	if err := task.Start(); err != nil {
 		return fmt.Errorf("task start failed: %w", err)
 	}
@@ -207,6 +221,9 @@ func (m *TaskManager) Create(cfg config.TaskConfig) error {
 	slog.Info("task created successfully",
 		"task_id", cfg.ID,
 		"pipelines", numPipelines,
+		"capturers", numCapturers,
+		"reporters", len(cfg.Reporters),
+		"dispatch_mode", cfg.Capture.DispatchMode,
 		"state", task.State())
 
 	return nil
@@ -304,4 +321,3 @@ func (m *TaskManager) StopAll() error {
 
 	return lastErr
 }
-

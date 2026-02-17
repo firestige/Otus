@@ -8,11 +8,12 @@ import (
 
 func TestTaskStateTransitions(t *testing.T) {
 	cfg := config.TaskConfig{
-		ID: "test-task-1",
+		ID:      "test-task-1",
+		Workers: 1,
 		Capture: config.CaptureConfig{
-			Type:       "mock",
-			Interface:  "lo",
-			FanoutSize: 1,
+			Name:         "mock",
+			Interface:    "lo",
+			DispatchMode: "binding",
 		},
 		Decoder: config.DecoderConfig{
 			Tunnels:      []string{},
@@ -22,7 +23,7 @@ func TestTaskStateTransitions(t *testing.T) {
 		Processors: []config.ProcessorConfig{},
 		Reporters: []config.ReporterConfig{
 			{
-				Type:   "console",
+				Name:   "console",
 				Config: map[string]any{},
 			},
 		},
@@ -53,13 +54,14 @@ func TestTaskStateTransitions(t *testing.T) {
 	}
 }
 
-func TestTaskCreatedAttributes(t *testing.T) {
+func TestTaskCreatedAttributes_BindingMode(t *testing.T) {
 	cfg := config.TaskConfig{
-		ID: "test-task-2",
+		ID:      "test-task-2",
+		Workers: 4,
 		Capture: config.CaptureConfig{
-			Type:       "mock",
-			Interface:  "eth0",
-			FanoutSize: 4,
+			Name:         "mock",
+			Interface:    "eth0",
+			DispatchMode: "binding",
 		},
 		Decoder:    config.DecoderConfig{},
 		Parsers:    []config.ParserConfig{},
@@ -69,9 +71,9 @@ func TestTaskCreatedAttributes(t *testing.T) {
 
 	task := NewTask(cfg)
 
-	// Check channels are created
-	if task.captureCh == nil {
-		t.Error("Expected captureCh to be initialized")
+	// Binding mode: captureCh should NOT be allocated
+	if task.captureCh != nil {
+		t.Error("Expected captureCh to be nil in binding mode")
 	}
 
 	if task.sendBuffer == nil {
@@ -82,13 +84,9 @@ func TestTaskCreatedAttributes(t *testing.T) {
 		t.Error("Expected doneCh to be initialized")
 	}
 
-	// Check raw streams created based on fanout size
-	expectedStreams := cfg.Capture.FanoutSize
-	if expectedStreams < 1 {
-		expectedStreams = 1
-	}
-	if len(task.rawStreams) != expectedStreams {
-		t.Errorf("Expected %d raw streams, got %d", expectedStreams, len(task.rawStreams))
+	// Raw streams created based on Workers count
+	if len(task.rawStreams) != 4 {
+		t.Errorf("Expected 4 raw streams, got %d", len(task.rawStreams))
 	}
 
 	// Check context is created
@@ -101,13 +99,42 @@ func TestTaskCreatedAttributes(t *testing.T) {
 	}
 }
 
-func TestTaskDefaultFanoutSize(t *testing.T) {
+func TestTaskCreatedAttributes_DispatchMode(t *testing.T) {
 	cfg := config.TaskConfig{
-		ID: "test-task-3",
+		ID:      "test-task-2b",
+		Workers: 2,
 		Capture: config.CaptureConfig{
-			Type:       "mock",
-			Interface:  "eth0",
-			FanoutSize: 0, // Invalid, should default to 1
+			Name:         "mock",
+			Interface:    "eth0",
+			DispatchMode: "dispatch",
+		},
+		Decoder:    config.DecoderConfig{},
+		Parsers:    []config.ParserConfig{},
+		Processors: []config.ProcessorConfig{},
+		Reporters:  []config.ReporterConfig{},
+	}
+
+	task := NewTask(cfg)
+
+	// Dispatch mode: captureCh SHOULD be allocated
+	if task.captureCh == nil {
+		t.Error("Expected captureCh to be initialized in dispatch mode")
+	}
+
+	// Raw streams still based on Workers
+	if len(task.rawStreams) != 2 {
+		t.Errorf("Expected 2 raw streams, got %d", len(task.rawStreams))
+	}
+}
+
+func TestTaskDefaultWorkers(t *testing.T) {
+	cfg := config.TaskConfig{
+		ID:      "test-task-3",
+		Workers: 0, // Invalid, should default to 1
+		Capture: config.CaptureConfig{
+			Name:         "mock",
+			Interface:    "eth0",
+			DispatchMode: "binding",
 		},
 	}
 
@@ -115,17 +142,18 @@ func TestTaskDefaultFanoutSize(t *testing.T) {
 
 	// Should default to 1 raw stream
 	if len(task.rawStreams) != 1 {
-		t.Errorf("Expected 1 raw stream for invalid fanout size, got %d", len(task.rawStreams))
+		t.Errorf("Expected 1 raw stream for invalid workers, got %d", len(task.rawStreams))
 	}
 }
 
 func TestTaskStateCreatedToFailed(t *testing.T) {
 	cfg := config.TaskConfig{
-		ID: "test-task-4",
+		ID:      "test-task-4",
+		Workers: 1,
 		Capture: config.CaptureConfig{
-			Type:       "nonexistent",
-			Interface:  "lo",
-			FanoutSize: 1,
+			Name:         "nonexistent",
+			Interface:    "lo",
+			DispatchMode: "binding",
 		},
 	}
 

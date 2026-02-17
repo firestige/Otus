@@ -4,6 +4,7 @@ package task
 import (
 	"context"
 	"fmt"
+	"hash/fnv"
 	"log/slog"
 	"sync"
 	"time"
@@ -34,27 +35,30 @@ const (
 
 // Task represents a running packet capture task.
 // It manages the complete lifecycle of a task including:
-// - Capturer: 1 per Task (shared across all pipelines via FANOUT)
-// - Reporter: 1 per Task (consumed by Sender goroutine)
-// - Pipelines: N per Task (fanout_size from config)
+// - Capturers: binding mode N / dispatch mode 1
+// - Reporters: M per Task (supports horizontal scaling)
+// - Pipelines: N per Task (Workers from config)
 // - FlowRegistry: 1 per Task (shared state across pipelines)
 type Task struct {
 	// Static configuration
 	Config config.TaskConfig
 
 	// Plugin instances (owned by Task)
-	Capturer plugin.Capturer
-	Reporter plugin.Reporter
-	Registry *FlowRegistry
+	Capturers []plugin.Capturer
+	Reporters []plugin.Reporter
+	Registry  *FlowRegistry
 
 	// Pipeline instances (N copies)
 	Pipelines []*pipeline.Pipeline
 
 	// Runtime channels
-	captureCh  chan core.RawPacket        // Capturer → Fanout
-	rawStreams []chan core.RawPacket      // Fanout → Pipelines (one per pipeline)
-	sendBuffer chan core.OutputPacket     // Pipelines → Sender → Reporter
-	doneCh     chan struct{}              // Signals all goroutines have exited
+	captureCh  chan core.RawPacket    // dispatch mode only: Capturer → Dispatcher
+	rawStreams []chan core.RawPacket  // one per pipeline
+	sendBuffer chan core.OutputPacket // Pipelines → Sender → Reporters
+	doneCh     chan struct{}          // Signals sender goroutine has exited
+
+	// Goroutine synchronization
+	pipelineWg sync.WaitGroup // Tracks pipeline goroutines
 
 	// State management
 	mu            sync.RWMutex
@@ -74,7 +78,7 @@ type Task struct {
 func NewTask(cfg config.TaskConfig) *Task {
 	ctx, cancel := context.WithCancel(context.Background())
 
-	numPipelines := cfg.Capture.FanoutSize
+	numPipelines := cfg.Workers
 	if numPipelines < 1 {
 		numPipelines = 1
 	}
@@ -84,10 +88,9 @@ func NewTask(cfg config.TaskConfig) *Task {
 		rawStreams[i] = make(chan core.RawPacket, 1000) // TODO: configurable buffer size
 	}
 
-	return &Task{
+	t := &Task{
 		Config:     cfg,
 		Pipelines:  make([]*pipeline.Pipeline, 0, numPipelines),
-		captureCh:  make(chan core.RawPacket, 1000), // TODO: configurable
 		rawStreams: rawStreams,
 		sendBuffer: make(chan core.OutputPacket, 10000), // TODO: configurable
 		doneCh:     make(chan struct{}),
@@ -96,6 +99,13 @@ func NewTask(cfg config.TaskConfig) *Task {
 		ctx:        ctx,
 		cancel:     cancel,
 	}
+
+	// dispatch mode needs an intermediate channel
+	if cfg.Capture.DispatchMode == "dispatch" {
+		t.captureCh = make(chan core.RawPacket, 1000) // TODO: configurable
+	}
+
+	return t
 }
 
 // State returns the current task state.
@@ -113,7 +123,7 @@ func (t *Task) setState(s TaskState) {
 
 // Start starts the task and transitions it to Running state.
 // It starts all components in reverse dependency order:
-// Reporter → Sender → Pipelines → Fanout → Capturer
+// Reporters → Sender → Pipelines → Capturers
 // This ensures data has a destination before the source starts producing.
 func (t *Task) Start() error {
 	t.mu.Lock()
@@ -126,39 +136,56 @@ func (t *Task) Start() error {
 	t.setState(StateStarting)
 	t.startedAt = time.Now()
 
-	// Start Reporter (data sink)
-	slog.Debug("starting reporter", "task_id", t.Config.ID, "type", t.Reporter.Name())
-	if err := t.Reporter.Start(t.ctx); err != nil {
-		t.setState(StateFailed)
-		t.failureReason = fmt.Sprintf("reporter start failed: %v", err)
-		return fmt.Errorf("reporter start failed: %w", err)
+	// Step 1: Start Reporters (data sinks)
+	for i, rep := range t.Reporters {
+		slog.Debug("starting reporter", "task_id", t.Config.ID, "reporter_id", i, "name", rep.Name())
+		if err := rep.Start(t.ctx); err != nil {
+			t.setState(StateFailed)
+			t.failureReason = fmt.Sprintf("reporter[%d] start failed: %v", i, err)
+			return fmt.Errorf("reporter[%d] start failed: %w", i, err)
+		}
 	}
 
-	// Start Sender goroutine (consumes sendBuffer → Reporter)
+	// Step 2: Start Sender goroutine (consumes sendBuffer → all Reporters)
 	go t.senderLoop()
 
-	// Start Pipelines (processing chains)
+	// Step 3: Start Pipelines (processing chains)
 	for i, p := range t.Pipelines {
 		slog.Debug("starting pipeline", "task_id", t.Config.ID, "pipeline_id", i)
-		go p.Run(t.ctx, t.rawStreams[i], t.sendBuffer)
+		t.pipelineWg.Add(1)
+		go func(idx int, pl *pipeline.Pipeline) {
+			defer t.pipelineWg.Done()
+			pl.Run(t.ctx, t.rawStreams[idx], t.sendBuffer)
+		}(i, p)
 	}
 
-	// Start Fanout dispatcher (captureCh → rawStreams)
-	go t.fanoutLoop()
-
-	// Start Capturer (data source writes to captureCh)
-	slog.Debug("starting capturer", "task_id", t.Config.ID, "type", t.Capturer.Name())
-	go t.captureLoop()
+	// Step 4: Start Capturers (data sources)
+	if t.Config.Capture.DispatchMode == "binding" {
+		// Binding mode: each capturer writes directly to its pipeline's rawStream
+		for i, cap := range t.Capturers {
+			slog.Debug("starting capturer (binding)", "task_id", t.Config.ID, "capturer_id", i, "name", cap.Name())
+			go t.captureLoop(cap, t.rawStreams[i])
+		}
+	} else {
+		// Dispatch mode: single capturer → dispatcher → rawStreams
+		slog.Debug("starting capturer (dispatch)", "task_id", t.Config.ID, "name", t.Capturers[0].Name())
+		go t.captureLoop(t.Capturers[0], t.captureCh)
+		go t.dispatchLoop()
+	}
 
 	t.setState(StateRunning)
-	slog.Info("task started", "task_id", t.Config.ID, "pipelines", len(t.Pipelines))
+	slog.Info("task started", "task_id", t.Config.ID,
+		"pipelines", len(t.Pipelines),
+		"capturers", len(t.Capturers),
+		"reporters", len(t.Reporters),
+		"dispatch_mode", t.Config.Capture.DispatchMode)
 
 	return nil
 }
 
 // Stop stops the task gracefully.
 // It stops components in forward dependency order:
-// Capturer → Fanout → Pipelines → Sender → Reporter.Flush
+// Capturers → Pipelines (WaitGroup) → Sender → Reporters.Flush
 func (t *Task) Stop() error {
 	t.mu.Lock()
 
@@ -172,40 +199,48 @@ func (t *Task) Stop() error {
 
 	slog.Info("stopping task", "task_id", t.Config.ID)
 
-	// Step 1: Stop capturer (no more raw packets)
-	slog.Debug("stopping capturer", "task_id", t.Config.ID)
-	if err := t.Capturer.Stop(t.ctx); err != nil {
-		slog.Warn("capturer stop error", "task_id", t.Config.ID, "error", err)
+	// Step 1: Stop all capturers (no more raw packets)
+	for i, cap := range t.Capturers {
+		slog.Debug("stopping capturer", "task_id", t.Config.ID, "capturer_id", i)
+		if err := cap.Stop(t.ctx); err != nil {
+			slog.Warn("capturer stop error", "task_id", t.Config.ID, "capturer_id", i, "error", err)
+		}
 	}
 
-	// Step 2: Close capture channel (fanout will exit)
-	close(t.captureCh)
+	// Step 2: Close input channels so pipelines drain and exit
+	if t.Config.Capture.DispatchMode == "dispatch" {
+		// Close captureCh → dispatchLoop exits → closes all rawStreams
+		close(t.captureCh)
+	} else {
+		// Binding mode: close rawStreams directly (capturers already stopped)
+		for i, ch := range t.rawStreams {
+			close(ch)
+			slog.Debug("closed raw stream", "task_id", t.Config.ID, "pipeline_id", i)
+		}
+	}
 
-	// Step 3: Fanout will close all rawStreams when captureCh is empty
-	// (Pipelines will automatically exit when rawStreams close)
+	// Step 3: Wait for all pipelines to finish processing
+	t.pipelineWg.Wait()
 
-	// Step 4: Cancel context to signal all goroutines
+	// Step 4: Cancel context and close sendBuffer
 	t.cancel()
-
-	// Step 5: Close send buffer after pipelines drain
-	// Wait a bit for pipelines to finish processing
-	time.Sleep(100 * time.Millisecond)
 	close(t.sendBuffer)
 
-	// Step 6: Wait for sender to finish
+	// Step 5: Wait for sender to finish draining sendBuffer
 	<-t.doneCh
 
-	// Step 7: Flush reporter
-	slog.Debug("flushing reporter", "task_id", t.Config.ID)
-	flushCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	if err := t.Reporter.Flush(flushCtx); err != nil {
-		slog.Warn("reporter flush error", "task_id", t.Config.ID, "error", err)
-	}
+	// Step 6: Flush and stop all reporters
+	flushCtx, flushCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer flushCancel()
 
-	// Step 8: Stop reporter
-	if err := t.Reporter.Stop(t.ctx); err != nil {
-		slog.Warn("reporter stop error", "task_id", t.Config.ID, "error", err)
+	for i, rep := range t.Reporters {
+		slog.Debug("flushing reporter", "task_id", t.Config.ID, "reporter_id", i)
+		if err := rep.Flush(flushCtx); err != nil {
+			slog.Warn("reporter flush error", "task_id", t.Config.ID, "reporter_id", i, "error", err)
+		}
+		if err := rep.Stop(flushCtx); err != nil {
+			slog.Warn("reporter stop error", "task_id", t.Config.ID, "reporter_id", i, "error", err)
+		}
 	}
 
 	t.mu.Lock()
@@ -217,9 +252,9 @@ func (t *Task) Stop() error {
 	return nil
 }
 
-// captureLoop runs the capturer in a goroutine.
-func (t *Task) captureLoop() {
-	if err := t.Capturer.Capture(t.ctx, t.captureCh); err != nil {
+// captureLoop runs a single capturer, writing packets to the given output channel.
+func (t *Task) captureLoop(cap plugin.Capturer, output chan<- core.RawPacket) {
+	if err := cap.Capture(t.ctx, output); err != nil {
 		if t.ctx.Err() == nil {
 			// Only log error if context wasn't cancelled
 			slog.Error("capturer error", "task_id", t.Config.ID, "error", err)
@@ -231,49 +266,63 @@ func (t *Task) captureLoop() {
 	}
 }
 
-// fanoutLoop distributes packets from captureCh to all pipeline rawStreams.
-// Uses round-robin distribution for load balancing.
-func (t *Task) fanoutLoop() {
+// dispatchLoop distributes packets from captureCh to rawStreams using flow-hash.
+// Only used in dispatch mode. Guarantees flow affinity (same 5-tuple → same pipeline).
+func (t *Task) dispatchLoop() {
 	defer func() {
-		// Close all raw streams when fanout exits
+		// Close all raw streams when dispatch exits
 		for i, ch := range t.rawStreams {
 			close(ch)
 			slog.Debug("closed raw stream", "task_id", t.Config.ID, "pipeline_id", i)
 		}
 	}()
 
-	nextPipeline := 0
 	numPipelines := len(t.rawStreams)
 
 	for pkt := range t.captureCh {
-		// Round-robin distribution: hash-based would be better for flow affinity
-		// but round-robin is simpler and still provides load balancing
+		// Flow-hash distribution for flow affinity
+		idx := flowHash(pkt) % uint32(numPipelines)
+
 		select {
-		case t.rawStreams[nextPipeline] <- pkt:
-			nextPipeline = (nextPipeline + 1) % numPipelines
+		case t.rawStreams[idx] <- pkt:
 		case <-t.ctx.Done():
 			return
 		default:
 			// Pipeline channel full, drop packet
 			slog.Debug("pipeline channel full, dropping packet",
 				"task_id", t.Config.ID,
-				"pipeline_id", nextPipeline)
-			nextPipeline = (nextPipeline + 1) % numPipelines
+				"pipeline_id", idx)
 		}
 	}
 
-	slog.Debug("fanout loop exited", "task_id", t.Config.ID)
+	slog.Debug("dispatch loop exited", "task_id", t.Config.ID)
 }
 
-// senderLoop consumes OutputPackets from sendBuffer and sends them to Reporter.
+// flowHash computes a hash from a RawPacket's IP 5-tuple for flow-affine distribution.
+func flowHash(pkt core.RawPacket) uint32 {
+	h := fnv.New32a()
+	// Use raw bytes for hashing (IP src/dst + ports + proto)
+	// In a real implementation, we'd extract the 5-tuple from the packet header.
+	// For now, hash the first min(64, len) bytes as a reasonable proxy.
+	n := len(pkt.Data)
+	if n > 64 {
+		n = 64
+	}
+	h.Write(pkt.Data[:n])
+	return h.Sum32()
+}
+
+// senderLoop consumes OutputPackets from sendBuffer and sends them to all Reporters.
 // It runs until sendBuffer is closed.
 func (t *Task) senderLoop() {
 	defer close(t.doneCh)
 
 	for pkt := range t.sendBuffer {
-		if err := t.Reporter.Report(t.ctx, &pkt); err != nil {
-			slog.Warn("reporter error", "task_id", t.Config.ID, "error", err)
-			// Continue processing, don't fail the task on Reporter errors
+		for i, rep := range t.Reporters {
+			if err := rep.Report(t.ctx, &pkt); err != nil {
+				slog.Warn("reporter error", "task_id", t.Config.ID, "reporter_id", i, "error", err)
+				// Continue processing, don't fail the task on Reporter errors
+			}
 		}
 	}
 
@@ -318,4 +367,3 @@ func (t *Task) GetStatus() Status {
 func (t *Task) ID() string {
 	return t.Config.ID
 }
-

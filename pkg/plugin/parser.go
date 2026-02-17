@@ -39,4 +39,3 @@ type FlowKey struct {
 type FlowRegistryAware interface {
 	SetFlowRegistry(registry FlowRegistry)
 }
-

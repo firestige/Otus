@@ -66,5 +66,3 @@ func (r *FlowRegistry) Clear() {
 		return true
 	})
 }
-
-

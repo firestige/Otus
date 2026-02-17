@@ -9,6 +9,7 @@ import (
 // TaskConfig represents dynamic per-task configuration.
 type TaskConfig struct {
 	ID         string            `json:"id"`
+	Workers    int               `json:"workers"` // Pipeline parallelism (0 = auto)
 	Capture    CaptureConfig     `json:"capture"`
 	Decoder    DecoderConfig     `json:"decoder"`
 	Parsers    []ParserConfig    `json:"parsers"`
@@ -18,12 +19,12 @@ type TaskConfig struct {
 
 // CaptureConfig contains capture plugin configuration.
 type CaptureConfig struct {
-	Type       string         `json:"type"`        // afpacket / pcap / xdp
-	Interface  string         `json:"interface"`   // eth0 / eth1
-	BPFFilter  string         `json:"bpf_filter"`  // "udp port 5060"
-	FanoutSize int            `json:"fanout_size"` // Number of parallel capture workers
-	SnapLen    int            `json:"snap_len"`    // Snapshot length (default 65535)
-	Extra      map[string]any `json:"extra"`       // Plugin-specific extra config
+	Name         string         `json:"name"`          // af_packet_v3 / pcap / xdp
+	DispatchMode string         `json:"dispatch_mode"` // "binding" | "dispatch"
+	Interface    string         `json:"interface"`     // eth0 / eth1
+	BPFFilter    string         `json:"bpf_filter"`    // "udp port 5060"
+	SnapLen      int            `json:"snap_len"`      // Snapshot length (default 65535)
+	Config       map[string]any `json:"config"`        // Plugin-specific config (fanout_group, fanout_mode, etc.)
 }
 
 // DecoderConfig contains decoder configuration.
@@ -34,19 +35,19 @@ type DecoderConfig struct {
 
 // ParserConfig contains parser plugin configuration.
 type ParserConfig struct {
-	Type   string         `json:"type"`
+	Name   string         `json:"name"`
 	Config map[string]any `json:"config"`
 }
 
 // ProcessorConfig contains processor plugin configuration.
 type ProcessorConfig struct {
-	Type   string         `json:"type"`
+	Name   string         `json:"name"`
 	Config map[string]any `json:"config"`
 }
 
 // ReporterConfig contains reporter plugin configuration.
 type ReporterConfig struct {
-	Type   string         `json:"type"`
+	Name   string         `json:"name"`
 	Config map[string]any `json:"config"`
 }
 
@@ -57,14 +58,20 @@ func (tc *TaskConfig) Validate() error {
 	}
 
 	// Validate capture config
-	if tc.Capture.Type == "" {
-		return fmt.Errorf("capture type is required")
+	if tc.Capture.Name == "" {
+		return fmt.Errorf("capture name is required")
 	}
 	if tc.Capture.Interface == "" {
 		return fmt.Errorf("capture interface is required")
 	}
-	if tc.Capture.FanoutSize < 1 {
-		tc.Capture.FanoutSize = 1 // Default to 1
+	if tc.Capture.DispatchMode == "" {
+		tc.Capture.DispatchMode = "binding" // Default to binding
+	}
+	if tc.Capture.DispatchMode != "binding" && tc.Capture.DispatchMode != "dispatch" {
+		return fmt.Errorf("capture dispatch_mode must be 'binding' or 'dispatch', got %q", tc.Capture.DispatchMode)
+	}
+	if tc.Workers < 1 {
+		tc.Workers = 1 // Default to 1
 	}
 	if tc.Capture.SnapLen <= 0 {
 		tc.Capture.SnapLen = 65535 // Default snap length
@@ -77,22 +84,22 @@ func (tc *TaskConfig) Validate() error {
 
 	// Validate parser configs
 	for i, parser := range tc.Parsers {
-		if parser.Type == "" {
-			return fmt.Errorf("parser[%d]: type is required", i)
+		if parser.Name == "" {
+			return fmt.Errorf("parser[%d]: name is required", i)
 		}
 	}
 
 	// Validate processor configs
 	for i, processor := range tc.Processors {
-		if processor.Type == "" {
-			return fmt.Errorf("processor[%d]: type is required", i)
+		if processor.Name == "" {
+			return fmt.Errorf("processor[%d]: name is required", i)
 		}
 	}
 
 	// Validate reporter configs
 	for i, reporter := range tc.Reporters {
-		if reporter.Type == "" {
-			return fmt.Errorf("reporter[%d]: type is required", i)
+		if reporter.Name == "" {
+			return fmt.Errorf("reporter[%d]: name is required", i)
 		}
 	}
 

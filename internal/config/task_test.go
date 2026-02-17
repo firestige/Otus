@@ -8,11 +8,12 @@ import (
 func TestParseValidTaskConfig(t *testing.T) {
 	configJSON := `{
 		"id": "sip-capture-task-1",
+		"workers": 4,
 		"capture": {
-			"type": "afpacket",
+			"name": "afpacket",
+			"dispatch_mode": "binding",
 			"interface": "eth0",
 			"bpf_filter": "udp port 5060",
-			"fanout_size": 4,
 			"snap_len": 65535
 		},
 		"decoder": {
@@ -21,13 +22,13 @@ func TestParseValidTaskConfig(t *testing.T) {
 		},
 		"parsers": [
 			{
-				"type": "sip",
+				"name": "sip",
 				"config": {}
 			}
 		],
 		"processors": [
 			{
-				"type": "filter",
+				"name": "filter",
 				"config": {
 					"field": "method",
 					"value": "INVITE"
@@ -36,7 +37,7 @@ func TestParseValidTaskConfig(t *testing.T) {
 		],
 		"reporters": [
 			{
-				"type": "skywalking",
+				"name": "skywalking",
 				"config": {
 					"endpoint": "localhost:11800"
 				}
@@ -53,17 +54,20 @@ func TestParseValidTaskConfig(t *testing.T) {
 	if tc.ID != "sip-capture-task-1" {
 		t.Errorf("Expected ID sip-capture-task-1, got %s", tc.ID)
 	}
-	if tc.Capture.Type != "afpacket" {
-		t.Errorf("Expected capture type afpacket, got %s", tc.Capture.Type)
+	if tc.Workers != 4 {
+		t.Errorf("Expected workers 4, got %d", tc.Workers)
+	}
+	if tc.Capture.Name != "afpacket" {
+		t.Errorf("Expected capture name afpacket, got %s", tc.Capture.Name)
+	}
+	if tc.Capture.DispatchMode != "binding" {
+		t.Errorf("Expected dispatch mode binding, got %s", tc.Capture.DispatchMode)
 	}
 	if tc.Capture.Interface != "eth0" {
 		t.Errorf("Expected interface eth0, got %s", tc.Capture.Interface)
 	}
 	if tc.Capture.BPFFilter != "udp port 5060" {
 		t.Errorf("Expected BPF filter 'udp port 5060', got %s", tc.Capture.BPFFilter)
-	}
-	if tc.Capture.FanoutSize != 4 {
-		t.Errorf("Expected fanout size 4, got %d", tc.Capture.FanoutSize)
 	}
 	if tc.Capture.SnapLen != 65535 {
 		t.Errorf("Expected snap len 65535, got %d", tc.Capture.SnapLen)
@@ -81,36 +85,36 @@ func TestParseValidTaskConfig(t *testing.T) {
 	if len(tc.Parsers) != 1 {
 		t.Fatalf("Expected 1 parser, got %d", len(tc.Parsers))
 	}
-	if tc.Parsers[0].Type != "sip" {
-		t.Errorf("Expected parser type sip, got %s", tc.Parsers[0].Type)
+	if tc.Parsers[0].Name != "sip" {
+		t.Errorf("Expected parser name sip, got %s", tc.Parsers[0].Name)
 	}
 
 	// Validate processors
 	if len(tc.Processors) != 1 {
 		t.Errorf("Expected 1 processor, got %d", len(tc.Processors))
 	}
-	if tc.Processors[0].Type != "filter" {
-		t.Errorf("Expected processor type filter, got %s", tc.Processors[0].Type)
+	if tc.Processors[0].Name != "filter" {
+		t.Errorf("Expected processor name filter, got %s", tc.Processors[0].Name)
 	}
 
 	// Validate reporters
 	if len(tc.Reporters) != 1 {
 		t.Errorf("Expected 1 reporter, got %d", len(tc.Reporters))
 	}
-	if tc.Reporters[0].Type != "skywalking" {
-		t.Errorf("Expected reporter type skywalking, got %s", tc.Reporters[0].Type)
+	if tc.Reporters[0].Name != "skywalking" {
+		t.Errorf("Expected reporter name skywalking, got %s", tc.Reporters[0].Name)
 	}
 }
 
 func TestParseMissingTaskID(t *testing.T) {
 	configJSON := `{
 		"capture": {
-			"type": "afpacket",
+			"name": "afpacket",
 			"interface": "eth0"
 		},
 		"reporters": [
 			{
-				"type": "skywalking",
+				"name": "skywalking",
 				"config": {}
 			}
 		]
@@ -122,7 +126,7 @@ func TestParseMissingTaskID(t *testing.T) {
 	}
 }
 
-func TestParseMissingCaptureType(t *testing.T) {
+func TestParseMissingCaptureName(t *testing.T) {
 	configJSON := `{
 		"id": "test-task",
 		"capture": {
@@ -130,7 +134,7 @@ func TestParseMissingCaptureType(t *testing.T) {
 		},
 		"reporters": [
 			{
-				"type": "skywalking",
+				"name": "skywalking",
 				"config": {}
 			}
 		]
@@ -138,7 +142,7 @@ func TestParseMissingCaptureType(t *testing.T) {
 
 	_, err := ParseTaskConfig([]byte(configJSON))
 	if err == nil {
-		t.Error("Expected error for missing capture type, got nil")
+		t.Error("Expected error for missing capture name, got nil")
 	}
 }
 
@@ -146,11 +150,11 @@ func TestParseMissingCaptureInterface(t *testing.T) {
 	configJSON := `{
 		"id": "test-task",
 		"capture": {
-			"type": "afpacket"
+			"name": "afpacket"
 		},
 		"reporters": [
 			{
-				"type": "skywalking",
+				"name": "skywalking",
 				"config": {}
 			}
 		]
@@ -166,7 +170,7 @@ func TestParseMissingReporters(t *testing.T) {
 	configJSON := `{
 		"id": "test-task",
 		"capture": {
-			"type": "afpacket",
+			"name": "afpacket",
 			"interface": "eth0"
 		},
 		"reporters": []
@@ -178,16 +182,16 @@ func TestParseMissingReporters(t *testing.T) {
 	}
 }
 
-func TestParseInvalidReporterType(t *testing.T) {
+func TestParseInvalidReporterName(t *testing.T) {
 	configJSON := `{
 		"id": "test-task",
 		"capture": {
-			"type": "afpacket",
+			"name": "afpacket",
 			"interface": "eth0"
 		},
 		"reporters": [
 			{
-				"type": "",
+				"name": "",
 				"config": {}
 			}
 		]
@@ -195,21 +199,43 @@ func TestParseInvalidReporterType(t *testing.T) {
 
 	_, err := ParseTaskConfig([]byte(configJSON))
 	if err == nil {
-		t.Error("Expected error for invalid reporter type, got nil")
+		t.Error("Expected error for invalid reporter name, got nil")
 	}
 }
 
-func TestParseDefaultFanoutSize(t *testing.T) {
+func TestParseInvalidDispatchMode(t *testing.T) {
 	configJSON := `{
 		"id": "test-task",
 		"capture": {
-			"type": "afpacket",
+			"name": "afpacket",
 			"interface": "eth0",
-			"fanout_size": 0
+			"dispatch_mode": "invalid"
 		},
 		"reporters": [
 			{
-				"type": "skywalking",
+				"name": "skywalking",
+				"config": {}
+			}
+		]
+	}`
+
+	_, err := ParseTaskConfig([]byte(configJSON))
+	if err == nil {
+		t.Error("Expected error for invalid dispatch mode, got nil")
+	}
+}
+
+func TestParseDefaultWorkers(t *testing.T) {
+	configJSON := `{
+		"id": "test-task",
+		"workers": 0,
+		"capture": {
+			"name": "afpacket",
+			"interface": "eth0"
+		},
+		"reporters": [
+			{
+				"name": "skywalking",
 				"config": {}
 			}
 		]
@@ -220,9 +246,35 @@ func TestParseDefaultFanoutSize(t *testing.T) {
 		t.Fatalf("Failed to parse task config: %v", err)
 	}
 
-	// FanoutSize should default to 1
-	if tc.Capture.FanoutSize != 1 {
-		t.Errorf("Expected default fanout size 1, got %d", tc.Capture.FanoutSize)
+	// Workers should default to 1
+	if tc.Workers != 1 {
+		t.Errorf("Expected default workers 1, got %d", tc.Workers)
+	}
+}
+
+func TestParseDefaultDispatchMode(t *testing.T) {
+	configJSON := `{
+		"id": "test-task",
+		"capture": {
+			"name": "afpacket",
+			"interface": "eth0"
+		},
+		"reporters": [
+			{
+				"name": "skywalking",
+				"config": {}
+			}
+		]
+	}`
+
+	tc, err := ParseTaskConfig([]byte(configJSON))
+	if err != nil {
+		t.Fatalf("Failed to parse task config: %v", err)
+	}
+
+	// DispatchMode should default to "binding"
+	if tc.Capture.DispatchMode != "binding" {
+		t.Errorf("Expected default dispatch mode 'binding', got %s", tc.Capture.DispatchMode)
 	}
 }
 
@@ -230,13 +282,13 @@ func TestParseDefaultSnapLen(t *testing.T) {
 	configJSON := `{
 		"id": "test-task",
 		"capture": {
-			"type": "afpacket",
+			"name": "afpacket",
 			"interface": "eth0",
 			"snap_len": 0
 		},
 		"reporters": [
 			{
-				"type": "skywalking",
+				"name": "skywalking",
 				"config": {}
 			}
 		]
@@ -255,13 +307,14 @@ func TestParseDefaultSnapLen(t *testing.T) {
 
 func TestTaskConfigMarshalUnmarshal(t *testing.T) {
 	tc := &TaskConfig{
-		ID: "test-task",
+		ID:      "test-task",
+		Workers: 4,
 		Capture: CaptureConfig{
-			Type:       "afpacket",
-			Interface:  "eth0",
-			BPFFilter:  "udp port 5060",
-			FanoutSize: 4,
-			SnapLen:    65535,
+			Name:         "afpacket",
+			DispatchMode: "binding",
+			Interface:    "eth0",
+			BPFFilter:    "udp port 5060",
+			SnapLen:      65535,
 		},
 		Decoder: DecoderConfig{
 			Tunnels:      []string{"vxlan"},
@@ -269,19 +322,19 @@ func TestTaskConfigMarshalUnmarshal(t *testing.T) {
 		},
 		Parsers: []ParserConfig{
 			{
-				Type:   "sip",
+				Name:   "sip",
 				Config: map[string]any{},
 			},
 		},
 		Processors: []ProcessorConfig{
 			{
-				Type:   "filter",
+				Name:   "filter",
 				Config: map[string]any{"field": "method"},
 			},
 		},
 		Reporters: []ReporterConfig{
 			{
-				Type:   "skywalking",
+				Name:   "skywalking",
 				Config: map[string]any{"endpoint": "localhost:11800"},
 			},
 		},
@@ -303,7 +356,10 @@ func TestTaskConfigMarshalUnmarshal(t *testing.T) {
 	if tc2.ID != tc.ID {
 		t.Errorf("Expected ID %s, got %s", tc.ID, tc2.ID)
 	}
-	if tc2.Capture.Type != tc.Capture.Type {
-		t.Errorf("Expected capture type %s, got %s", tc.Capture.Type, tc2.Capture.Type)
+	if tc2.Capture.Name != tc.Capture.Name {
+		t.Errorf("Expected capture name %s, got %s", tc.Capture.Name, tc2.Capture.Name)
+	}
+	if tc2.Workers != tc.Workers {
+		t.Errorf("Expected workers %d, got %d", tc.Workers, tc2.Workers)
 	}
 }

@@ -223,47 +223,54 @@ type Plugin interface {
 
 #### 4.2.1 Capture Plugin（捕获插件）
 
-**职责**：从网络接口捕获原始数据包，提供并行捕获流
+**职责**：从网络接口捕获原始数据包，写入指定的 output channel。
 
 **接口**：
 ```go
 type Capturer interface {
     Plugin
-    // Streams 返回该驱动支持的并行捕获流数量
-    // AF_PACKET FANOUT: fanout group 中的 socket 数
-    // XDP: 绑定的 NIC RX queue 数
-    // pcap: 固定返回 1
-    Streams() int
-    // Capture 启动第 i 个捕获流，返回该流的 packet channel
-    Capture(ctx context.Context, streamIndex int) (<-chan *RawPacket, error)
-    SetFilter(bpf string) error
+    // Capture 从网络接口捕获原始数据包，写入 output channel。
+    // 阻塞直到 ctx 取消或发生不可恢复错误。
+    Capture(ctx context.Context, output chan<- *RawPacket) error
+    // Stats 返回捕获统计信息
     Stats() CaptureStats
 }
 ```
 
-**各驱动的并行能力**：
+Capturer 接口极简：每个实例负责一个捕获流，通过推模型将数据写入给定的 channel。BPF filter、网卡名等配置通过 `Init(cfg map[string]any)` 注入，不需要独立的 setter 方法。
 
-| 驱动 | 原生并行机制 | 说明 |
-|------|------------|------|
-| AF_PACKET_V3 | `PACKET_FANOUT` (N sockets) | 内核按 flow-hash/CPU/轮询分发 |
-| XDP (AF_XDP) | NIC RSS 多 RX 队列 | 硬件级分发，零 CPU 开销 |
-| pcap | 无（单 handle） | 兼容/测试模式，需用户态 flow-hash 分发 |
+**分发模式（Dispatch Mode）**：
+
+Task 通过配置选择 Capturer 与 Pipeline 的绑定方式：
+
+| 分发模式 | Capturer 实例数 | 说明 |
+|----------|:--------------:|------|
+| `binding` | N（= Workers） | 每个 Capturer 1:1 绑定一条 Pipeline。AF_PACKET 利用 FANOUT 机制，N 个 socket 加入同一 fanout group，内核按 flow-hash 分发。流亲和性由内核/硬件保证。 |
+| `dispatch` | 1 | 单个 Capturer，应用层 dispatcher 按 flow-hash 分发到 N 条 Pipeline。适用于 pcap 等不支持原生并行的驱动。 |
+
+**各驱动的推荐模式**：
+
+| 驱动 | 推荐 dispatch_mode | 原生并行机制 | 说明 |
+|------|:------------------:|------------|------|
+| AF_PACKET_V3 | binding | `PACKET_FANOUT` (N sockets) | 内核按 flow-hash 分发，零用户态开销 |
+| XDP (AF_XDP) | binding | NIC RSS 多 RX 队列 | 硬件级分发，零 CPU 开销 |
+| pcap | dispatch | 无（单 handle） | 兼容/测试模式，Workers 配 >1 时由应用层 dispatcher 分发 |
 
 **实现**：
-- **XDP Capture**：基于 eBPF/AF_XDP，最高性能，利用硬件 RSS
 - **AF_PACKET_V3 Capture**：基于 mmap ring buffer + FANOUT，高性能
+- **XDP Capture**：基于 eBPF/AF_XDP，最高性能，利用硬件 RSS
 - **Pcap Capture**：兼容模式，用于测试和低速场景
 
 **配置示例**：
 ```yaml
 capture:
-  plugin: af_packet_v3
-  config:
-    interface: eth0
-    bpf_filter: "udp port 5060 or udp port 5061"
+  name: af_packet_v3
+  dispatch_mode: binding
+  interface: eth0
+  bpf_filter: "udp port 5060 or udp port 5061"
+  config:                         # 插件特有配置，通过 Init() 注入
     fanout_group: 42
-    fanout_mode: hash      # hash | cpu | lb
-    # fanout_size 自动跟随 pipeline.count
+    fanout_mode: hash              # hash | cpu | lb
 ```
 
 #### 4.2.2 Parser Plugin（解析器插件）
@@ -276,13 +283,12 @@ type Parser interface {
     Plugin
     // CanHandle: 这个包我要不要处理？
     // 必须极快（< 50ns），只看端口/协议字段/五元组查表
-    CanHandle(packet *DecodedPacket) bool
-    // Handle: 处理这个包，返回输出结果
+    CanHandle(pkt *DecodedPacket) bool
+    // Handle: 处理这个包，返回解析产物和标签
     // 内部自行决定处理深度——可以是查表贴标签快速返回（~100ns），
     // 也可以是完整协议解析（~1-10μs）
-    // 返回 nil 表示处理后无需输出（如纯内部状态更新）
-    Handle(packet *DecodedPacket) *OutputPacket
-    Protocol() string
+    // Pipeline 负责将返回值组装为 OutputPacket
+    Handle(pkt *DecodedPacket) (payload any, labels Labels, err error)
 }
 
 // 可选接口：需要跨 pipeline 共享流注册表的 Parser 实现此接口
@@ -294,9 +300,11 @@ type FlowRegistryAware interface {
 **核心引擎的调度逻辑**（极简）：
 ```go
 for _, parser := range p.parsers {
-    if parser.CanHandle(decoded) {
-        if output := parser.Handle(decoded); output != nil {
-            p.sendBuffer.Write(output)
+    if parser.CanHandle(&decoded) {
+        payload, labels, err := parser.Handle(&decoded)
+        if err == nil && payload != nil {
+            out := buildOutputPacket(decoded, payload, labels)
+            p.sendBuffer.Write(out)
         }
         break  // 一个包只被一个 parser 处理
     }
@@ -308,29 +316,30 @@ for _, parser := range p.parsers {
 ```go
 func (p *SIPParser) CanHandle(pkt *DecodedPacket) bool {
     // 1. 五元组匹配已知的 RTP/RTCP 流？
-    if _, ok := p.registry.Lookup(pkt.FiveTuple()); ok {
+    if _, ok := p.flowRegistry.Get(extractFlowKey(pkt)); ok {
         return true
     }
     // 2. SIP 端口？
     return pkt.DstPort == 5060 || pkt.SrcPort == 5060
 }
 
-func (p *SIPParser) Handle(pkt *DecodedPacket) *OutputPacket {
+func (p *SIPParser) Handle(pkt *DecodedPacket) (any, Labels, error) {
     // 快路径：已知 RTP/RTCP 流，查表贴标签直接返回
-    if ctx, ok := p.registry.Lookup(pkt.FiveTuple()); ok {
-        return p.wrapWithLabels(pkt, ctx.Labels)  // ~100ns
+    if ctx, ok := p.flowRegistry.Get(extractFlowKey(pkt)); ok {
+        fc := ctx.(FlowContext)
+        return pkt.Payload, fc.Labels, nil  // ~100ns
     }
     // 慢路径：SIP 信令，完整解析
     msg := parseSIPMessage(pkt.Payload)  // ~5μs
     if sdp := msg.SDP(); sdp != nil {
         // 注册媒体流五元组，后续 RTP 包走快路径
         for _, media := range sdp.MediaDescriptions {
-            p.registry.Register(extractFiveTuple(media), FlowContext{
+            p.flowRegistry.Set(extractFlowKey(media), FlowContext{
                 Labels: map[string]string{"call_id": msg.CallID()},
-            }, 300*time.Second)
+            })
         }
     }
-    return &OutputPacket{...}
+    return msg, sipLabels(msg), nil
 }
 ```
 
@@ -354,14 +363,12 @@ func (p *SIPParser) Handle(pkt *DecodedPacket) *OutputPacket {
 **配置示例**：
 ```yaml
 parsers:
-  - plugin: sip
-    enabled: true
+  - name: sip
     config:
       ports: [5060, 5061]
       track_media: true            # 追踪 SDP 中的媒体流
       media_stream_timeout: 300s   # 媒体流无活动超时清理
-  - plugin: dns
-    enabled: true
+  - name: dns
 ```
 
 #### 4.2.3 Processor Plugin（处理器插件）
@@ -372,16 +379,15 @@ parsers:
 - Processor **只能读写 Envelope（Protocol/FlowID/Network）和 Labels**
 - Processor **不可访问 Payload**（协议解析产物属于 Parser 的领域，Processor 协议无关）
 - Processor **不可修改 RawBytes**（原始帧是只读引用）
-- 返回 `nil` = 丢弃该包
+- 返回 `false` = 丢弃该包
 
 **接口**：
 ```go
 type Processor interface {
     Plugin
-    // Process 读写 Labels，读 Envelope，返回 nil 表示丢弃
-    Process(pkt *OutputPacket) *OutputPacket
-    // Priority 决定 Processor Chain 的执行顺序（数字越小越先执行）
-    Priority() int
+    // Process 读写 Labels，读 Envelope，返回 false 表示丢弃
+    // 执行顺序由配置中的声明顺序决定
+    Process(pkt *OutputPacket) (keep bool)
 }
 ```
 
@@ -392,25 +398,25 @@ type Processor interface {
 
 **Filter 示例**：
 ```go
-func (p *FilterProcessor) Process(pkt *OutputPacket) *OutputPacket {
+func (p *FilterProcessor) Process(pkt *OutputPacket) bool {
     for _, rule := range p.rules {
         if val, ok := pkt.Labels[rule.Label]; ok {
             if matchesAny(val, rule.Values) && rule.Action == "drop" {
-                return nil  // 丢弃
+                return false  // 丢弃
             }
         }
     }
-    return pkt
+    return true
 }
 ```
 
 **Label 示例**：
 ```go
-func (p *LabelProcessor) Process(pkt *OutputPacket) *OutputPacket {
+func (p *LabelProcessor) Process(pkt *OutputPacket) bool {
     for k, v := range p.staticLabels {
         pkt.Labels[k] = v
     }
-    return pkt
+    return true
 }
 ```
 
@@ -429,9 +435,9 @@ type Reporter interface {
     Plugin
     // Report 序列化并发送单个 OutputPacket
     // 由 Sender 线程调用，不在 Pipeline goroutine 中
-    Report(pkt *OutputPacket) error
-    // Flush 强制发送所有已缓冲的数据
-    Flush() error
+    Report(ctx context.Context, pkt *OutputPacket) error
+    // Flush 强制发送所有已缓冲的数据（Stop 时调用）
+    Flush(ctx context.Context) error
 }
 ```
 
@@ -465,8 +471,7 @@ func (r *KafkaReporter) Report(pkt *OutputPacket) error {
 **配置示例**：
 ```yaml
 reporters:
-  - plugin: kafka
-    enabled: true
+  - name: kafka
     config:
       brokers:
         - kafka-1.example.com:9092
@@ -632,82 +637,129 @@ create_task 命令 (TaskConfig JSON)
        │         任何一个插件名找不到 → 返回 ErrPluginNotFound
        │         此阶段不创建任何实例
        ▼
-  ③ Construct — 调用 Factory 创建空实例
-       │         Capturer: 1 个（Task 共享）
-       │         Reporter: 1 个（Task 共享）
+  ③ Construct — 调用 Factory 创建所有空实例
+       │         Capturer: binding 模式 N 个 / dispatch 模式 1 个
+       │         Reporter: M 个（支持多 Reporter 横向扩展）
        │         Parser/Processor: 每条 Pipeline 独立实例
        ▼
   ④ Init — 注入插件配置 (map[string]any)
-       │         各插件解析自己需要的配置字段
+       │         统一遍历所有实例，各插件解析自己的配置字段
        ▼
   ⑤ Wire — 注入 Task 级共享资源
-       │         FlowRegistryAware 接口注入 FlowRegistry
+       │         遍历所有 Parser，FlowRegistryAware 接口注入 FlowRegistry
        ▼
-  ⑥ Assemble — 组装 Task 结构体
-       │         Capturer + N Pipelines + SendBuffer + Reporter
+  ⑥ Assemble — 组装 Pipeline 和 Task 结构体
+       │         将已初始化、已注入的插件实例组装为 Pipeline → Task
        ▼
   ⑦ Start — 按依赖倒序启动
-             Reporter → Sender → Pipelines → Capturer
+             Reporters → Sender → Pipelines → Capturers
 ```
+
+**严格分阶段原则**：每个阶段完整执行完毕后才进入下一个阶段。不在单个 Pipeline 的循环内交织 Construct/Init/Wire，而是先构造所有实例，再统一初始化，再统一注入。这降低了状态管理复杂度，提高了可读性。
 
 #### 4.4.2 Resolve 阶段详解
 
 ```go
 // 在创建任何实例之前，先确认所有插件都已注册
-capFactory, err := plugin.GetCapturerFactory(taskConfig.Capture.Driver)
+capFactory, err := plugin.GetCapturerFactory(cfg.Capture.Name)
 if err != nil {
-    return fmt.Errorf("capturer %q: %w", taskConfig.Capture.Driver, err)
+    return fmt.Errorf("capturer %q: %w", cfg.Capture.Name, err)
 }
 
-parserFactories := make(map[string]plugin.ParserFactory)
-for _, pc := range taskConfig.Parsers {
-    f, err := plugin.GetParserFactory(pc.Plugin)
+parserFactories := make([]plugin.ParserFactory, len(cfg.Parsers))
+for i, pc := range cfg.Parsers {
+    f, err := plugin.GetParserFactory(pc.Name)
     if err != nil {
-        return fmt.Errorf("parser %q: %w", pc.Plugin, err)
+        return fmt.Errorf("parser %q: %w", pc.Name, err)
     }
-    parserFactories[pc.Plugin] = f
+    parserFactories[i] = f
 }
-// processors, reporter 同理
+
+// Processors 同理...
+
+repFactories := make([]plugin.ReporterFactory, len(cfg.Reporters))
+for i, rc := range cfg.Reporters {
+    f, err := plugin.GetReporterFactory(rc.Name)
+    if err != nil {
+        return fmt.Errorf("reporter %q: %w", rc.Name, err)
+    }
+    repFactories[i] = f
+}
 ```
 
 **提前失败原则**：如果任何一个插件名在 Registry 中找不到，整个 `create_task` 操作立即失败，不会创建部分实例再回滚。
 
-#### 4.4.3 Construct + Init 阶段详解
+#### 4.4.3 Construct 阶段详解
 
 **关键约束**：每条 Pipeline 必须持有**独立的** Parser/Processor 实例，避免并发访问。
 
 ```go
-N := taskConfig.Capture.Workers  // Pipeline 数量
+N := cfg.Workers  // Pipeline 并行度
 
-// Capturer: 全 Task 1 个（Task 级资源）
-capturer := capFactory()
-capturer.Init(taskConfig.Capture.Extra)
+// ── Capturer ──
+// binding 模式：N 个实例，每个 1:1 绑定 Pipeline
+// dispatch 模式：1 个实例，应用层 dispatcher 分发
+numCapturers := 1
+if cfg.Capture.DispatchMode == "binding" {
+    numCapturers = N
+}
+capturers := make([]plugin.Capturer, numCapturers)
+for i := range capturers {
+    capturers[i] = capFactory()
+}
 
-// Reporter: 全 Task 1 个（Sender 线程独占调用）
-reporter := repFactory()
-reporter.Init(taskConfig.Reporter.Config)
+// ── Reporter: M 个独立实例（支持横向扩展） ──
+reporters := make([]plugin.Reporter, len(cfg.Reporters))
+for i := range reporters {
+    reporters[i] = repFactories[i]()
+}
 
-// 每条 Pipeline 独立的 Parser/Processor 实例
+// ── Parser/Processor: 每 Pipeline 独立实例 ──
+allParsers := make([][]plugin.Parser, N)
+allProcessors := make([][]plugin.Processor, N)
 for i := 0; i < N; i++ {
-    parsers := make([]plugin.Parser, len(taskConfig.Parsers))
-    for j, pc := range taskConfig.Parsers {
-        parsers[j] = parserFactories[pc.Plugin]()   // Factory 构造空实例
-        parsers[j].Init(pc.Config)                   // 注入插件配置
+    allParsers[i] = make([]plugin.Parser, len(cfg.Parsers))
+    for j := range cfg.Parsers {
+        allParsers[i][j] = parserFactories[j]()
     }
-
-    processors := make([]plugin.Processor, len(taskConfig.Processors))
-    for j, pc := range taskConfig.Processors {
-        processors[j] = procFactories[pc.Plugin]()
-        processors[j].Init(pc.Config)
+    allProcessors[i] = make([]plugin.Processor, len(cfg.Processors))
+    for j := range cfg.Processors {
+        allProcessors[i][j] = processorFactories[j]()
     }
+}
+```
 
-    pipelines[i] = pipeline.New(pipeline.Config{
-        ID:         i,
-        TaskID:     taskConfig.ID,
-        Decoder:    decoder,      // Decoder 无状态，可共享
-        Parsers:    parsers,      // 每 Pipeline 独立实例
-        Processors: processors,   // 每 Pipeline 独立实例
-    })
+#### 4.4.4 Init 阶段详解
+
+Construct 完成后，统一遍历所有实例注入配置：
+
+```go
+// ── Init Capturers ──
+for _, cap := range capturers {
+    if err := cap.Init(cfg.Capture.Config); err != nil {
+        return fmt.Errorf("capturer init: %w", err)
+    }
+}
+
+// ── Init Reporters ──
+for i, rep := range reporters {
+    if err := rep.Init(cfg.Reporters[i].Config); err != nil {
+        return fmt.Errorf("reporter %q init: %w", cfg.Reporters[i].Name, err)
+    }
+}
+
+// ── Init Parsers & Processors（每 Pipeline 独立） ──
+for i := 0; i < N; i++ {
+    for j, parser := range allParsers[i] {
+        if err := parser.Init(cfg.Parsers[j].Config); err != nil {
+            return fmt.Errorf("pipeline %d parser %q init: %w", i, cfg.Parsers[j].Name, err)
+        }
+    }
+    for j, proc := range allProcessors[i] {
+        if err := proc.Init(cfg.Processors[j].Config); err != nil {
+            return fmt.Errorf("pipeline %d processor %q init: %w", i, cfg.Processors[j].Name, err)
+        }
+    }
 }
 ```
 
@@ -715,16 +767,16 @@ for i := 0; i < N; i++ {
 
 | 组件 | 实例数 | 原因 |
 |------|--------|------|
-| Capturer | 1 / Task | Task 拥有捕获 socket，FANOUT 分发给 N 个 stream |
+| Capturer | binding: N / dispatch: 1 | binding 模式利用内核/硬件级分发，dispatch 模式用应用层分发 |
 | Decoder | 1 / Task（共享） | 纯函数，无状态，线程安全 |
 | Parser | N / Task（每 Pipeline 1 份） | 可能持有内部状态（如 SIP Parser 的解析缓冲区） |
 | Processor | N / Task（每 Pipeline 1 份） | 与 Parser 同理 |
-| Reporter | 1 / Task | Sender 线程独占调用，不在 Pipeline goroutine 中 |
+| Reporter | M / Task（由配置决定） | Sender 线程调用，M 个 Reporter 各自独立上报 |
 | FlowRegistry | 1 / Task（跨 Pipeline 共享） | sync.Map 实现，线程安全，per-Task 隔离 |
 
-#### 4.4.4 Wire 阶段 — 接口注入
+#### 4.4.5 Wire 阶段 — 接口注入
 
-部分 Parser 需要访问 Task 级共享资源（如 FlowRegistry），通过可选接口注入：
+Init 完成后，统一遍历所有 Parser 注入 Task 级共享资源。此时 Pipeline 尚未构造，直接操作 Parser 切片：
 
 ```go
 // pkg/plugin/parser.go 中定义可选接口
@@ -734,11 +786,11 @@ type FlowRegistryAware interface {
 ```
 
 ```go
-// Wire 阶段：Init 之后、Start 之前
+// Wire 阶段：Init 之后、Assemble 之前
 flowRegistry := task.NewFlowRegistry()
 
-for _, p := range pipelines {
-    for _, parser := range p.Parsers() {
+for i := 0; i < N; i++ {
+    for _, parser := range allParsers[i] {
         if fra, ok := parser.(plugin.FlowRegistryAware); ok {
             fra.SetFlowRegistry(flowRegistry)
         }
@@ -748,31 +800,61 @@ for _, p := range pipelines {
 
 **时序约束**：
 - Wire 在 Init 之后 — 因为 Init 负责插件自身配置，Wire 注入外部依赖
-- Wire 在 Start 之前 — 因为 Start 后插件开始处理数据，此时必须已经注入完毕
+- Wire 在 Assemble 之前 — Pipeline 构造时接收已完全就绪的插件实例
 
-#### 4.4.5 Start 阶段 — 启动顺序
+#### 4.4.6 Assemble 阶段
+
+将已初始化、已注入的插件实例组装为 Pipeline，再整体构造 Task：
+
+```go
+pipelines := make([]*pipeline.Pipeline, N)
+for i := 0; i < N; i++ {
+    pipelines[i] = pipeline.New(pipeline.Config{
+        ID:         i,
+        TaskID:     cfg.ID,
+        Decoder:    decoder,        // 无状态，可共享
+        Parsers:    allParsers[i],
+        Processors: allProcessors[i],
+    })
+}
+```
+
+#### 4.4.7 Start 阶段 — 启动顺序
 
 按**依赖倒序**启动，确保数据有地方去：
 
 ```go
 // 1. Reporter 就绪（可以接收数据）
-reporter.Start(ctx)
+for _, rep := range reporters {
+    rep.Start(ctx)
+}
 
-// 2. Sender 开始消费 SendBuffer
+// 2. Sender 开始消费 SendBuffer → 遍历所有 Reporters
 go task.senderLoop(ctx)
 
 // 3. Pipeline 就绪（可以处理数据）
 for i, p := range pipelines {
-    go p.Run(ctx, inputCh[i], task.sendBuffer)
+    go p.Run(ctx, rawStreams[i], task.sendBuffer)
 }
 
 // 4. 最后启动 Capturer（数据开始流入）
-capturer.Start(ctx)
+// binding 模式：每个 capturer 直接写入对应 rawStream
+// dispatch 模式：单 capturer → dispatcher → rawStreams
+for i, cap := range capturers {
+    if dispatchMode == "binding" {
+        go cap.Capture(ctx, rawStreams[i])
+    } else {
+        go cap.Capture(ctx, captureCh)
+    }
+}
+if dispatchMode == "dispatch" {
+    go task.dispatchLoop()  // hash-based 分发到 rawStreams
+}
 ```
 
-停止时按**依赖正序**：Capturer → Pipelines → Sender → Reporter.Flush()
+停止时按**依赖正序**：Capturers → Pipelines（WaitGroup） → Sender → Reporters.Flush()
 
-#### 4.4.6 完整生命周期总览
+#### 4.4.8 完整生命周期总览
 
 ```
 进程启动
@@ -789,7 +871,7 @@ Validate → Resolve → Construct → Init → Wire → Assemble → Start
   │                                                          │
   │  delete_task 命令                                         │
   ▼                                                          ▼
-Stop (Capturer → Pipelines → Sender → Reporter.Flush)
+Stop (Capturers → Pipelines[WaitGroup] → Sender → Reporters.Flush)
 ```
 
 ### 4.5 配置模型
@@ -912,47 +994,42 @@ otus:
 # 通过 Kafka 命令消息或 CLI 下发，以下为 YAML 表示
 task:
   id: "voip-monitor-01"
+  workers: 4                     # Pipeline 并行度
 
   # ── 捕获配置 ──
   capture:
-    driver: af_packet_v3       # af_packet_v3 | xdp | pcap
+    name: af_packet_v3           # af_packet_v3 | xdp | pcap
+    dispatch_mode: binding       # binding | dispatch
     interface: eth0
-    workers: 4                 # 该 Task 的 pipeline 数量
-
-  # ── 流量过滤（BPF 级，内核侧过滤）──
-  filter:
-    src_ip: ["10.0.1.0/24"]
-    dst_ip: ["10.0.2.0/24"]
-    ports: [5060, 5061]
-    port_range: "10000-20000"
-    protocol: udp              # udp | tcp | any
-    # 或直接传 raw BPF：
-    # bpf: "udp port 5060 or udp portrange 10000-20000"
+    bpf_filter: "udp port 5060 or udp port 5061"
+    config:                      # 插件特有配置，通过 Init() 注入
+      fanout_group: 42
+      fanout_mode: hash
 
   # ── 解析器链 ──
   parsers:
-    - plugin: sip
+    - name: sip
       config:
         track_media: true
         media_stream_timeout: 300s
-    - plugin: rtp
+    - name: rtp
 
   # ── 处理器链 ──
   processors:
-    - plugin: filter
+    - name: filter
       config:
         rules:
           - label: "sip.method"
             values: ["OPTIONS", "REGISTER"]
             action: drop
 
-  # ── 上报配置（引用全局 Reporter 连接 + 任务级参数）──
-  reporter:
-    type: kafka                # 引用全局 reporters.kafka 的连接配置
-    config:
-      topic: "voip-sip-packets"     # 任务自定义 topic
-      batch_size: 500
-      batch_timeout: 50ms
+  # ── 上报配置（支持多 Reporter 横向扩展）──
+  reporters:
+    - name: kafka
+      config:
+        topic: "voip-sip-packets"
+        batch_size: 500
+        batch_timeout: 50ms
 
   # ── unmatched 策略 ──
   unmatched_policy: drop       # forward | drop
@@ -963,12 +1040,12 @@ task:
 | 配置项 | 来源 | 示例 |
 |--------|------|------|
 | Reporter 连接（brokers/endpoint） | 全局静态 | `otus.reporters.kafka.brokers` |
-| Reporter 业务参数（topic） | Task 动态 | `task.reporter.config.topic` |
+| Reporter 业务参数（topic） | Task 动态 | `task.reporters[].config.topic` |
 | 节点元数据 | 全局静态 | `otus.node.hostname` |
-| BPF 过滤规则 | Task 动态 | `task.filter.src_ip` |
+| BPF 过滤规则 | Task 动态 | `task.capture.bpf_filter` |
 | 解码器/隧道/重组 | 全局静态 | `otus.core.decoder.tunnel` |
 | Parser/Processor 链 | Task 动态 | `task.parsers`, `task.processors` |
-| Pipeline 数量 | Task 动态 | `task.capture.workers` |
+| Pipeline 数量 | Task 动态 | `task.workers` |
 | 背压参数 | 全局静态 | `otus.backpressure.*` |
 
 ## 5. 数据流处理
@@ -1061,75 +1138,85 @@ Pipeline 是**观测任务（Task）的执行单元**。每个 Task 通过 Kafka
 
 | 资源 | 作用域 | 说明 |
 |------|--------|------|
-| Capture socket(s) | Task 独占 | 自己的 AF_PACKET group / XDP queue + BPF filter |
-| N 条 Pipeline | Task 独占 | N = `task.capture.workers` |
+| Capture socket(s) | Task 独占 | binding: N 个 socket (FANOUT group) / dispatch: 1 个 |
+| N 条 Pipeline | Task 独占 | N = `task.workers` |
 | FlowRegistry | **per-Task** | Task 内跨 pipeline 共享，Task 之间隔离 |
 | Send Buffer | Task 独占 | 独立的有界队列 |
-| Sender | Task 独占 | 每个 Task 的 Reporter 实例独立 |
+| Sender | Task 独占 | 消费 Send Buffer，遍历所有 Reporter |
+| M 个 Reporter | Task 独占 | 支持多 Reporter 横向扩展 |
 
 **Phase 1 约束**：最多 1 个活跃 Task。新 Task 创建前必须先停止旧 Task。
 
 #### 5.1.3 关键设计要点
 
-**Workers 数量与流量分发**
+**Workers 数量与分发模式**
 
 ```go
-workers := task.Capture.Workers
+workers := cfg.Workers
 if workers == 0 {
     workers = runtime.GOMAXPROCS(0)  // auto: 跟随 CPU 核心数
 }
-if driver.MaxStreams() < workers {
-    workers = driver.MaxStreams()    // 不超过驱动支持的最大 stream 数
-}
 ```
 
-- 每条 pipeline 绑定一个 capture stream，全流程在同一 goroutine 内完成
+分发行为由 `dispatch_mode` 配置决定：
+
+| 分发模式 | Capturer 实例数 | 分发机制 | 流亲和性保证 |
+|----------|:--------------:|---------|:----------:|
+| binding | N（= Workers） | 内核/硬件（FANOUT_HASH / RSS） | 内核保证 |
+| dispatch | 1 | 应用层 flow-hash dispatcher | 应用层保证 |
+
+- binding 模式下每条 Pipeline 绑定一个 Capturer 实例，全流程在同一 goroutine 内完成
+- dispatch 模式下单 Capturer → flow-hash dispatcher goroutine → N 条 Pipeline
 - Pipeline 之间不共享可变状态，天然无锁
 - 同一条流（5-tuple）的包必须到同一 pipeline（TCP 重组、应用层状态依赖此保证）
-
-| 驱动 | 分发机制 | 用户态开销 |
-|------|---------|----------|
-| XDP | NIC RSS（硬件 hash） | 零 |
-| AF_PACKET_V3 | FANOUT_HASH（内核 hash） | 零 |
-| pcap | 需用户态 flow-hash dispatcher | 有（仅测试场景） |
 
 **Pipeline 主循环**
 
 ```go
-func (p *Pipeline) Run(ctx context.Context, stream <-chan *RawPacket) {
+func (p *Pipeline) Run(ctx context.Context, input <-chan RawPacket, output chan<- OutputPacket) {
     for {
         select {
-        case raw := <-stream:
-            decoded := p.decoder.Decode(raw)
-            if decoded == nil {
+        case raw, ok := <-input:
+            if !ok {
+                return  // input closed
+            }
+            decoded, err := p.decoder.Decode(raw)
+            if err != nil {
                 continue
             }
             
-            var output *OutputPacket
+            // Parser chain: 首个匹配的 Parser 处理
+            var payload any
+            var labels Labels
             for _, parser := range p.parsers {
-                if parser.CanHandle(decoded) {
-                    output = parser.Handle(decoded)
+                if parser.CanHandle(&decoded) {
+                    payload, labels, err = parser.Handle(&decoded)
                     break
                 }
             }
             
-            if output == nil {
+            if payload == nil {
                 if p.unmatchedPolicy == Forward {
-                    output = p.wrapRaw(decoded)
+                    payload = decoded.Payload
                 } else {
                     continue  // drop
                 }
             }
             
+            out := buildOutputPacket(decoded, payload, labels)
+            
+            // Processor chain: 按配置顺序执行
             for _, proc := range p.processors {
-                output = proc.Process(output)
-                if output == nil {
-                    break
+                if !proc.Process(&out) {
+                    break  // dropped
                 }
             }
             
-            if output != nil {
-                p.sendBuffer.Write(output)  // 非阻塞
+            // 非阻塞写入 Send Buffer
+            select {
+            case output <- out:
+            default:
+                // buffer full, drop
             }
             
         case <-ctx.Done():
@@ -1147,16 +1234,24 @@ Sender 是 IO-bound（等待网络 ACK），独立线程运行，不占用 Pipel
 
 ```go
 type FlowRegistry interface {
-    // 注册五元组（Parser.Handle 解析信令时调用，低频写）
-    Register(flow FiveTuple, ctx FlowContext, ttl time.Duration)
-    // 查询五元组（Parser.CanHandle 时调用，高频读）
-    Lookup(flow FiveTuple) (FlowContext, bool)
-    // 注销
-    Unregister(flow FiveTuple)
+    Get(key FlowKey) (any, bool)
+    Set(key FlowKey, value any)
+    Delete(key FlowKey)
+    Range(f func(key FlowKey, value any) bool)
+    Count() int
+    Clear()
+}
+
+type FlowKey struct {
+    SrcIP   netip.Addr
+    DstIP   netip.Addr
+    SrcPort uint16
+    DstPort uint16
+    Proto   uint8
 }
 ```
 
-基于 `sync.Map` 实现，读多写少场景下接近无锁性能。**作用域为 per-Task**：Task 内的多条 pipeline 共享同一个 FlowRegistry，Task 之间完全隔离。Task 销毁时整个 FlowRegistry 直接丢弃，无需逐条清理。
+基于 `sync.Map` 实现，读多写少场景下接近无锁性能。**作用域为 per-Task**：Task 内的多条 pipeline 共享同一个 FlowRegistry，Task 之间完全隔离。Task 销毁时整个 FlowRegistry 直接丢弃（`Clear()`），无需逐条清理。
 
 ### 5.2 核心协议栈解码器
 
@@ -1668,52 +1763,41 @@ env             = "production"
 
 **SIP Parser**：
 ```go
-func (p *SIPParser) Handle(pkt *DecodedPacket) *OutputPacket {
+func (p *SIPParser) Handle(pkt *DecodedPacket) (any, Labels, error) {
     msg := parseSIP(pkt.Payload)
     // 解析 SDP 中的媒体流信息，注册到 FlowRegistry
     if sdp := msg.SDP; sdp != nil {
         for _, media := range sdp.MediaStreams {
-            p.flowRegistry.Register(media.FiveTuple, FlowContext{
+            p.flowRegistry.Set(extractFlowKey(media), FlowContext{
                 CallID: msg.CallID,
                 Codec:  media.Codec,
-            }, 300*time.Second)
+            })
         }
     }
-    return &OutputPacket{
-        Timestamp: pkt.Raw.Timestamp,
-        Protocol:  "sip",
-        FlowID:    extractFlow(pkt),
-        Network:   extractNetwork(pkt),
-        Labels: map[string]string{
-            "sip.method":  msg.Method,
-            "sip.call-id": msg.CallID,
-            "sip.from":    msg.From,
-            "sip.to":      msg.To,
-        },
-        Payload: msg,  // *SIPPayload 实现 Payload 接口
+    labels := Labels{
+        "sip.method":  msg.Method,
+        "sip.call-id": msg.CallID,
+        "sip.from":    msg.From,
+        "sip.to":      msg.To,
     }
+    return msg, labels, nil  // Pipeline 负责组装 OutputPacket
 }
 ```
 
 **RTP Parser**（查 FlowRegistry 带出关联信息）：
 ```go
-func (p *RTPParser) Handle(pkt *DecodedPacket) *OutputPacket {
-    ctx, _ := p.flowRegistry.Lookup(extractFlow(pkt))
+func (p *RTPParser) Handle(pkt *DecodedPacket) (any, Labels, error) {
+    ctx, _ := p.flowRegistry.Get(extractFlowKey(pkt))
     rtp := parseRTPHeader(pkt.Payload)  // 12 字节固定头，极快
-    return &OutputPacket{
-        Timestamp: pkt.Raw.Timestamp,
-        Protocol:  "rtp",
-        FlowID:    extractFlow(pkt),
-        Network:   extractNetwork(pkt),
-        Labels: map[string]string{
-            "rtp.ssrc":  fmt.Sprintf("%d", rtp.SSRC),
-            "rtp.pt":    fmt.Sprintf("%d", rtp.PayloadType),
-            "call-id":   ctx.CallID,    // 跨协议关联
-            "codec":     ctx.Codec,
-        },
-        Payload:  rtp,
-        RawBytes: pkt.Raw.Data,  // RTP 通常转发原始帧
+    labels := Labels{
+        "rtp.ssrc":  fmt.Sprintf("%d", rtp.SSRC),
+        "rtp.pt":    fmt.Sprintf("%d", rtp.PayloadType),
     }
+    if fc, ok := ctx.(FlowContext); ok {
+        labels["call-id"] = fc.CallID   // 跨协议关联
+        labels["codec"] = fc.Codec
+    }
+    return rtp, labels, nil
 }
 ```
 
@@ -1722,8 +1806,7 @@ func (p *RTPParser) Handle(pkt *DecodedPacket) *OutputPacket {
 ```yaml
 processors:
   # 过滤器：基于 Labels 做 drop/pass
-  - plugin: filter
-    enabled: true
+  - name: filter
     config:
       rules:
         - label: "sip.method"
@@ -1734,8 +1817,7 @@ processors:
           action: drop           # 不上报 comfort noise
 
   # 标注器：补充部署元数据
-  - plugin: label
-    enabled: true
+  - name: label
     config:
       labels:
         node: "edge-beijing-01"
