@@ -86,16 +86,30 @@ func NewTask(cfg config.TaskConfig) *Task {
 		numPipelines = 1
 	}
 
+	// Channel capacities: use configured values or sensible defaults.
+	rawCap := cfg.ChannelCapacity.RawStream
+	if rawCap <= 0 {
+		rawCap = 1000
+	}
+	sendCap := cfg.ChannelCapacity.SendBuffer
+	if sendCap <= 0 {
+		sendCap = 10000
+	}
+	capCap := cfg.ChannelCapacity.CaptureCh
+	if capCap <= 0 {
+		capCap = 1000
+	}
+
 	rawStreams := make([]chan core.RawPacket, numPipelines)
 	for i := 0; i < numPipelines; i++ {
-		rawStreams[i] = make(chan core.RawPacket, 1000) // TODO: configurable buffer size
+		rawStreams[i] = make(chan core.RawPacket, rawCap)
 	}
 
 	t := &Task{
 		Config:     cfg,
 		Pipelines:  make([]*pipeline.Pipeline, 0, numPipelines),
 		rawStreams: rawStreams,
-		sendBuffer: make(chan core.OutputPacket, 10000), // TODO: configurable
+		sendBuffer: make(chan core.OutputPacket, sendCap),
 		doneCh:     make(chan struct{}),
 		state:      StateCreated,
 		createdAt:  time.Now(),
@@ -105,7 +119,7 @@ func NewTask(cfg config.TaskConfig) *Task {
 
 	// dispatch mode needs an intermediate channel
 	if cfg.Capture.DispatchMode == "dispatch" {
-		t.captureCh = make(chan core.RawPacket, 1000) // TODO: configurable
+		t.captureCh = make(chan core.RawPacket, capCap)
 	}
 
 	return t

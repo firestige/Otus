@@ -22,16 +22,16 @@ import (
 // mockReporter is a configurable mock implementing plugin.Reporter.
 type mockReporter struct {
 	name       string
-	startErr   error                          // non-nil → Start returns this error
-	started    atomic.Bool                    // true after Start succeeds
-	stopped    atomic.Bool                    // set when Stop is called
-	reported   []core.OutputPacket            // collects packets in Report
-	mu         sync.Mutex                     // protects reported slice
+	startErr   error               // non-nil → Start returns this error
+	started    atomic.Bool         // true after Start succeeds
+	stopped    atomic.Bool         // set when Stop is called
+	reported   []core.OutputPacket // collects packets in Report
+	mu         sync.Mutex          // protects reported slice
 	reportHook func(ctx context.Context, pkt *core.OutputPacket) error
 }
 
-func (m *mockReporter) Name() string                      { return m.name }
-func (m *mockReporter) Init(_ map[string]any) error        { return nil }
+func (m *mockReporter) Name() string                { return m.name }
+func (m *mockReporter) Init(_ map[string]any) error { return nil }
 func (m *mockReporter) Start(_ context.Context) error {
 	if m.startErr != nil {
 		return m.startErr
@@ -68,11 +68,11 @@ type mockCapturer struct {
 	statsMu sync.Mutex
 }
 
-func (m *mockCapturer) Name() string                                                    { return m.name }
-func (m *mockCapturer) Init(_ map[string]any) error                                     { return nil }
-func (m *mockCapturer) Start(_ context.Context) error                                   { return nil }
-func (m *mockCapturer) Stop(_ context.Context) error                                    { return nil }
-func (m *mockCapturer) Capture(_ context.Context, _ chan<- core.RawPacket) error         { return nil }
+func (m *mockCapturer) Name() string                                             { return m.name }
+func (m *mockCapturer) Init(_ map[string]any) error                              { return nil }
+func (m *mockCapturer) Start(_ context.Context) error                            { return nil }
+func (m *mockCapturer) Stop(_ context.Context) error                             { return nil }
+func (m *mockCapturer) Capture(_ context.Context, _ chan<- core.RawPacket) error { return nil }
 func (m *mockCapturer) Stats() plugin.CaptureStats {
 	m.statsMu.Lock()
 	defer m.statsMu.Unlock()

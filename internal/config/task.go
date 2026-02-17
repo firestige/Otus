@@ -12,13 +12,21 @@ import (
 
 // TaskConfig represents dynamic per-task configuration.
 type TaskConfig struct {
-	ID         string            `json:"id" yaml:"id"`
-	Workers    int               `json:"workers" yaml:"workers"`
-	Capture    CaptureConfig     `json:"capture" yaml:"capture"`
-	Decoder    DecoderConfig     `json:"decoder" yaml:"decoder"`
-	Parsers    []ParserConfig    `json:"parsers" yaml:"parsers"`
-	Processors []ProcessorConfig `json:"processors" yaml:"processors"`
-	Reporters  []ReporterConfig  `json:"reporters" yaml:"reporters"`
+	ID              string                `json:"id" yaml:"id"`
+	Workers         int                   `json:"workers" yaml:"workers"`
+	Capture         CaptureConfig         `json:"capture" yaml:"capture"`
+	Decoder         DecoderConfig         `json:"decoder" yaml:"decoder"`
+	Parsers         []ParserConfig        `json:"parsers" yaml:"parsers"`
+	Processors      []ProcessorConfig     `json:"processors" yaml:"processors"`
+	Reporters       []ReporterConfig      `json:"reporters" yaml:"reporters"`
+	ChannelCapacity ChannelCapacityConfig `json:"channel_capacity" yaml:"channel_capacity"`
+}
+
+// ChannelCapacityConfig allows tuning internal channel buffer sizes.
+type ChannelCapacityConfig struct {
+	RawStream  int `json:"raw_stream" yaml:"raw_stream"`   // per-pipeline input channel (default 1000)
+	SendBuffer int `json:"send_buffer" yaml:"send_buffer"` // pipeline→sender channel (default 10000)
+	CaptureCh  int `json:"capture_ch" yaml:"capture_ch"`   // dispatch mode intermediate channel (default 1000)
 }
 
 // CaptureConfig contains capture plugin configuration.

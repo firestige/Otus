@@ -83,7 +83,7 @@ func TestReporterWrapper_BatchesByTimeout(t *testing.T) {
 	br := &mockBatchReporter{mockReporter: mockReporter{name: "timeout-test"}}
 	w := NewReporterWrapper(WrapperConfig{
 		Primary:      br,
-		BatchSize:    1000,                // large batch size so only timeout triggers
+		BatchSize:    1000, // large batch size so only timeout triggers
 		BatchTimeout: 20 * time.Millisecond,
 	})
 
@@ -186,7 +186,7 @@ func TestReporterWrapper_FlushOnClose(t *testing.T) {
 	}
 	w := NewReporterWrapper(WrapperConfig{
 		Primary:      rep,
-		BatchSize:    1000, // never hits size threshold
+		BatchSize:    1000,          // never hits size threshold
 		BatchTimeout: 1 * time.Hour, // never hits timeout
 	})
 
