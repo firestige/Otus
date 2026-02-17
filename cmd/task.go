@@ -133,7 +133,7 @@ func runTaskCreate(cmd *cobra.Command) {
 	}
 
 	if resp.Error != nil {
-		exitWithError(fmt.Sprintf("task.create failed: %s", resp.Error.Message), nil)
+		exitWithError(fmt.Sprintf("task_create failed: %s", resp.Error.Message), nil)
 	}
 
 	fmt.Printf("Task %s created successfully.\n", taskConfig.ID)
@@ -151,7 +151,7 @@ func runTaskDelete(taskID string) {
 	}
 
 	if resp.Error != nil {
-		exitWithError(fmt.Sprintf("task.delete failed: %s", resp.Error.Message), nil)
+		exitWithError(fmt.Sprintf("task_delete failed: %s", resp.Error.Message), nil)
 	}
 
 	fmt.Printf("Task %s deleted successfully.\n", taskID)

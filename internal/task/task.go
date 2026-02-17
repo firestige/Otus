@@ -3,6 +3,7 @@ package task
 
 import (
 	"context"
+	"encoding/binary"
 	"fmt"
 	"hash/fnv"
 	"log/slog"
@@ -299,16 +300,84 @@ func (t *Task) dispatchLoop() {
 }
 
 // flowHash computes a hash from a RawPacket's IP 5-tuple for flow-affine distribution.
+// It extracts (srcIP, dstIP, srcPort, dstPort, proto) from the raw Ethernet frame.
+// Falls back to hashing raw bytes if the frame cannot be parsed.
 func flowHash(pkt core.RawPacket) uint32 {
 	h := fnv.New32a()
-	// Use raw bytes for hashing (IP src/dst + ports + proto)
-	// In a real implementation, we'd extract the 5-tuple from the packet header.
-	// For now, hash the first min(64, len) bytes as a reasonable proxy.
-	n := len(pkt.Data)
-	if n > 64 {
-		n = 64
+	data := pkt.Data
+
+	// Skip Ethernet header (14 bytes minimum)
+	if len(data) < 14 {
+		h.Write(data)
+		return h.Sum32()
 	}
-	h.Write(pkt.Data[:n])
+
+	etherType := binary.BigEndian.Uint16(data[12:14])
+	ipStart := 14
+
+	// Handle 802.1Q VLAN tagging
+	if etherType == 0x8100 {
+		if len(data) < 18 {
+			h.Write(data)
+			return h.Sum32()
+		}
+		etherType = binary.BigEndian.Uint16(data[16:18])
+		ipStart = 18
+	}
+
+	var proto byte
+
+	switch etherType {
+	case 0x0800: // IPv4
+		ipHdr := data[ipStart:]
+		if len(ipHdr) < 20 {
+			h.Write(data)
+			return h.Sum32()
+		}
+		ihl := int(ipHdr[0]&0x0F) * 4
+		if ihl < 20 || len(ipHdr) < ihl {
+			h.Write(data)
+			return h.Sum32()
+		}
+		proto = ipHdr[9]
+		h.Write(ipHdr[12:16]) // src IP
+		h.Write(ipHdr[16:20]) // dst IP
+		h.Write([]byte{proto})
+
+		// Extract transport ports (TCP=6, UDP=17, SCTP=132)
+		transHdr := ipHdr[ihl:]
+		if (proto == 6 || proto == 17 || proto == 132) && len(transHdr) >= 4 {
+			h.Write(transHdr[0:2]) // src port
+			h.Write(transHdr[2:4]) // dst port
+		}
+
+	case 0x86DD: // IPv6
+		ipHdr := data[ipStart:]
+		if len(ipHdr) < 40 {
+			h.Write(data)
+			return h.Sum32()
+		}
+		proto = ipHdr[6]      // next header
+		h.Write(ipHdr[8:24])  // src IP (16 bytes)
+		h.Write(ipHdr[24:40]) // dst IP (16 bytes)
+		h.Write([]byte{proto})
+
+		// Extract transport ports
+		transHdr := ipHdr[40:]
+		if (proto == 6 || proto == 17 || proto == 132) && len(transHdr) >= 4 {
+			h.Write(transHdr[0:2]) // src port
+			h.Write(transHdr[2:4]) // dst port
+		}
+
+	default:
+		// Non-IP frame: hash raw bytes
+		n := len(data)
+		if n > 64 {
+			n = 64
+		}
+		h.Write(data[:n])
+	}
+
 	return h.Sum32()
 }
 

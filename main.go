@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"firestige.xyz/otus/cmd"
+	_ "firestige.xyz/otus/plugins" // 触发所有内置插件 init() 注册
 )
 
 func main() {

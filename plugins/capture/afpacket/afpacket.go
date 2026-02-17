@@ -283,6 +283,17 @@ func (c *AFPacketCapturer) Stats() plugin.CaptureStats {
 }
 
 // parseFanoutType converts fanout type string to afpacket constant.
+//
+// Limitation: gopacket/afpacket v1.1.19 only exports FanoutHash.
+// The Linux kernel supports additional modes (PACKET_FANOUT_CPU,
+// PACKET_FANOUT_LB, PACKET_FANOUT_ROLLOVER, etc.), but gopacket's
+// afpacket package does not expose them as typed constants.
+// To support "cpu" or "lb" modes, either:
+//   - Upgrade to a gopacket version that exports them, or
+//   - Use golang.org/x/sys/unix.PACKET_FANOUT_* with raw socket syscalls
+//     (bypassing gopacket's TPacket abstraction).
+//
+// Architecture doc lists "hash | cpu | lb" — currently only "hash" is implemented.
 func parseFanoutType(ft string) (afpacket.FanoutType, error) {
 	switch ft {
 	case "hash":
@@ -291,10 +302,6 @@ func parseFanoutType(ft string) (afpacket.FanoutType, error) {
 		// Empty string means no fanout
 		return 0, nil
 	default:
-		// Note: gopacket v1.1.19 only exposes FanoutHash in the public API.
-		// Other fanout types (cpu, lb, rollover, etc.) are not available
-		// as named constants. For production use, consider using a newer
-		// version or accessing unix.PACKET_FANOUT_* constants directly.
-		return 0, fmt.Errorf("unknown fanout type: %q (only 'hash' is supported)", ft)
+		return 0, fmt.Errorf("unknown fanout type: %q (only 'hash' is supported; see code comments for limitation details)", ft)
 	}
 }

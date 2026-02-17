@@ -82,7 +82,7 @@ func runStopCommand() {
 		}
 
 		if resp.Error != nil {
-			fmt.Fprintf(os.Stderr, "Warning: task.delete %s failed: %s\n", id, resp.Error.Message)
+			fmt.Fprintf(os.Stderr, "Warning: task_delete %s failed: %s\n", id, resp.Error.Message)
 		}
 	}
 

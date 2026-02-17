@@ -94,7 +94,7 @@ firestige.xyz/otus
 │   │   ├── task.go                  // Task 实体（TaskConfig + 运行时状态）
 │   │   └── flow_registry.go         // FlowRegistry — per-Task sync.Map
 │   ├── command/                     // 控制面
-│   │   ├── handler.go               // 命令处理器（task.create / task.delete 等）
+│   │   ├── handler.go               // 命令处理器（task_create / task_delete 等）
 │   │   ├── kafka.go                 // Kafka 命令 topic 订阅
 │   │   ├── uds_server.go            // JSON-RPC over UDS 服务端
 │   │   └── uds_client.go            // JSON-RPC over UDS 客户端（CLI 使用）
@@ -337,60 +337,106 @@ type Reporter interface {
 
 ### 6.1 全局静态配置 (`configs/config.yml`)
 
+> 完整 YAML 层级、Go 结构体映射和设计决策详见 [config-design.md](config-design.md)。以下为精简示例。
+
 ```yaml
-# 守护进程配置
-daemon:
-  pid_file: /var/run/otus.pid
-  socket_path: /var/run/otus.sock
-  
-# 日志
-log:
-  level: info             # debug / info / warn / error
-  format: json            # json / text
-  outputs:
-    - type: file
-      path: /var/log/otus/otus.log
-      max_size_mb: 100
-      max_backups: 5
-      max_age_days: 30
-      compress: true
-    - type: loki
-      endpoint: http://loki:3100/loki/api/v1/push
-      labels:
-        app: otus
-        env: production
-      batch_size: 100
-      flush_interval: 5s
-    - type: stdout          # 开发调试时启用
+otus:
+  node:
+    ip: ""                       # 空 = 自动探测（ADR-023: env > auto-detect > error）
+    hostname: edge-beijing-01
+    tags:
+      datacenter: cn-north
+      environment: production
 
-# Kafka
-kafka:
-  brokers:
-    - kafka-1:9092
-    - kafka-2:9092
-    - kafka-3:9092
-  command_topic: otus-commands       # 命令 topic（输入）
-  command_group: otus-agent-group    # Consumer Group
-  
-# 指标
-metrics:
-  enabled: true
-  listen: :9090
-  path: /metrics
+  control:
+    socket: /var/run/otus.sock
+    pid_file: /var/run/otus.pid
 
-# Agent 标识
-agent:
-  id: ""                  # 留空则自动生成（hostname-based）
-  tags:
-    region: cn-east-1
-    role: edge
+  # Kafka 全局默认（ADR-024: command_channel 和 reporters 继承）
+  kafka:
+    brokers:
+      - kafka-1:9092
+      - kafka-2:9092
+      - kafka-3:9092
+    sasl:
+      enabled: false
+    tls:
+      enabled: false
+
+  command_channel:
+    enabled: true
+    type: kafka
+    kafka:
+      # brokers/sasl/tls 继承自 otus.kafka
+      topic: otus-commands
+      group_id: "otus-${node.hostname}"
+      auto_offset_reset: latest
+
+  reporters:
+    kafka:
+      # brokers/sasl/tls 继承自 otus.kafka
+      compression: snappy
+      max_message_bytes: 1048576
+
+  resources:
+    max_workers: 0               # 0 = auto（GOMAXPROCS）
+
+  backpressure:
+    pipeline_channel:
+      capacity: 65536
+      drop_policy: tail
+    send_buffer:
+      capacity: 16384
+      drop_policy: head
+      high_watermark: 0.8
+      low_watermark: 0.3
+    reporter:
+      send_timeout: 3s
+      max_retries: 1
+
+  core:
+    decoder:
+      tunnel:
+        vxlan: false
+        gre: false
+        geneve: false
+        ipip: false
+      ip_reassembly:
+        timeout: 30s
+        max_fragments: 10000
+
+  metrics:
+    enabled: true
+    listen: :9091
+    path: /metrics
+
+  log:
+    level: info
+    format: json
+    outputs:
+      file:
+        enabled: true
+        path: /var/log/otus/otus.log
+        rotation:
+          max_size_mb: 100       # ADR-025: 数值字段
+          max_age_days: 30
+          max_backups: 5
+          compress: true
+      loki:
+        enabled: false
+        endpoint: http://loki:3100/loki/api/v1/push
+        labels:
+          app: otus
+          env: production
+        batch_size: 100
+        batch_timeout: 1s
 ```
 
 ### 6.2 Task 动态配置（Kafka 命令 / CLI 创建）
 
 ```json
 {
-  "command": "task.create",
+  "command": "task_create",
   "task": {
     "id": "sip-capture-01",
     "capture": {
@@ -637,9 +683,10 @@ agent:
 
 ---
 
-### Step 8: Task 管理器
+### ✅ Step 8: Task 管理器
 **前置**: Step 7, Step 7.5  
 **目标**: Task 生命周期管理
+**状态**: ✅ 已完成
 
 **任务清单**:
 1. `internal/task/task.go` — Task 实体
@@ -776,11 +823,11 @@ agent:
    - Command/Response 结构体（类 JSON-RPC 协议）
    - 错误码定义（ParseError, InvalidRequest, MethodNotFound, InvalidParams, InternalError）
    - 5 个命令处理器：
-     - `task.create` → TaskManager.Create()
-     - `task.delete` → TaskManager.Delete()
-     - `task.list` → TaskManager.List()
-     - `task.status` → TaskManager.Status() (支持查询单个或全部)
-     - `config.reload` → ConfigReloader.Reload()
+     - `task_create` → TaskManager.Create()
+     - `task_delete` → TaskManager.Delete()
+     - `task_list` → TaskManager.List()
+     - `task_status` → TaskManager.Status() (支持查询单个或全部)
+     - `config_reload` → ConfigReloader.Reload()
 2. ✅ `internal/command/kafka.go` (180 行)
    - KafkaCommandConsumer 结构体
    - segmentio/kafka-go Reader（Consumer Group 模式）
@@ -789,14 +836,14 @@ agent:
    - processMessage() 方法：JSON 反序列化 → 调用 handler.Handle()
    - 优雅停止：Stop() 关闭 reader
 3. ✅ 单元测试：
-   - `handler_test.go`: 7 个测试用例（task.create/delete/list/status, config.reload, 未知方法, 非法参数）
+   - `handler_test.go`: 7 个测试用例（task_create/delete/list/status, config_reload, 未知方法, 非法参数）
    - `kafka_test.go`: 4 个测试用例（配置验证、默认值、生命周期、StartOffset）
 
 **实现细节**:
 - **命令协议格式**（类 JSON-RPC）：
   ```json
   {
-    "method": "task.create",
+    "method": "task_create",
     "params": {...},
     "id": "req-123"
   }
@@ -851,7 +898,7 @@ agent:
 - **JSON-RPC 2.0 协议格式**：
   ```json
   # Request
-  {"jsonrpc":"2.0","method":"task.create","params":{...},"id":"req-123"}
+  {"jsonrpc":"2.0","method":"task_create","params":{...},"id":"req-123"}
   
   # Response
   {"jsonrpc":"2.0","id":"req-123","result":{...}}
@@ -895,16 +942,65 @@ agent:
 
 ---
 
+### Step 14.5: CLI 补全 + YAML 支持 + 配置/Kafka 决策落地
+**前置**: Step 14  
+**目标**: 补充缺失的 CLI 命令和输入格式；落地 config-design.md 中的新增设计决策
+
+**任务清单**:
+
+#### A. CLI 补全
+1. CLI 支持 YAML 格式 task 文件：`otus task create -f task.yaml`
+   - 自动检测 JSON/YAML（基于扩展名或内容探测）
+   - 内部统一转换为 `TaskConfig` 结构
+2. `cmd/status.go` — `otus status`：查询 daemon 整体状态（版本、运行时间、Task 数量）
+3. `cmd/stats.go` — `otus stats`：查询运行时统计（抓包速率、丢包数）
+4. `cmd/validate.go` — `otus validate -f task.yaml`：预校验 task 配置文件（不创建 Task）
+5. 补充 `daemon_shutdown` 命令到 CommandHandler（当前 `otus stop` 直接 os.Kill，应改为命令优雅停止）
+
+#### B. 全局配置重构（ADR-023/024/025）
+6. `internal/config/config.go` — 重构 GlobalConfig 结构体
+   - 结构体对齐 [config-design.md](config-design.md) 附录 A（含 `GlobalKafkaConfig`）
+   - `validateAndApplyDefaults()` 实现 Kafka 继承逻辑（ADR-024: `otus.kafka` → `command_channel.kafka` / `reporters.kafka`）
+   - `resolveNodeIP()` 实现 Node IP 解析（ADR-023: env > auto-detect > error）
+   - 日志滚动字段改为 `MaxSizeMB` / `MaxAgeDays`（ADR-025）
+7. `configs/config.yml` — 更新为 `otus:` 嵌套格式（对齐 config-design.md §2）
+8. 单元测试：Kafka 继承合并、Node IP 解析、配置加载
+
+#### C. Kafka 命令格式升级（ADR-026）
+9. `internal/command/kafka.go` — `processMessage()` 升级
+   - 解析 `KafkaCommand{version, target, command, timestamp, request_id, payload}` 格式
+   - 增加 target 过滤（匹配 `node.hostname` 或 `"*"`）
+   - 增加 timestamp TTL 检查（可配置 `command_ttl`，默认 5m）
+   - 转换为内部 `Command{Method, Params, ID}` 后调用 handler
+10. 使用新的 `CommandChannelConfig`（继承 `otus.kafka` 全局默认）
+11. 单元测试：target 过滤、TTL 拒绝过期命令、KafkaCommand 解析
+
+#### D. Kafka Reporter 增强（ADR-027/028）
+12. `plugins/reporter/kafka/kafka.go` — 增加动态 topic 路由
+    - `TopicPrefix` 配置 + `resolveTopic()` 方法（`topic_prefix` 与 `topic` 互斥）
+    - Envelope 信息迁移到 Kafka Headers（task_id, agent_id, payload_type, src_ip, dst_ip, timestamp, l.* labels）
+    - 可配置 `serialization: json | binary`（Phase 1 默认 json）
+13. 连接配置从 `otus.reporters.kafka`（继承 `otus.kafka`）读取
+14. 单元测试：动态路由、Headers 序列化、serialization 切换
+
+**交付物**: CLI 功能完整覆盖日常运维操作；全局配置/Kafka 命令/Kafka Reporter 对齐设计文档
+
+---
+
 ### Step 15: Daemon 组装 + Graceful Shutdown
 **前置**: Step 5, 7, 8, 12, 13  
 **目标**: 组装完整 daemon
 
 **任务清单**:
-1. `internal/daemon/daemon.go`
+1. `internal/daemon/daemon.go` — daemon 主逻辑
+   - 重构：将当前 `cmd/daemon.go` 中的组装逻辑迁移到此文件
    - 加载配置 → 初始化日志 → 启动指标 → 启动 UDS Server → 启动 Kafka 命令订阅 → 等待信号
    - Graceful shutdown 顺序：停止 Kafka consumer → 停止所有 Task → Flush reporters → 关闭 UDS → 关闭日志
    - PID file 管理
-2. 集成测试：启动 → 创建 Task → 停止
+2. `internal/command/handler.go` — 新增 `daemon_shutdown` 命令
+   - 触发优雅停止流程（通过 channel 或 context 取消传播给 daemon）
+   - `otus stop` 通过 UDS 发送 `daemon_shutdown` 命令而非直接 kill
+3. 集成测试：启动 → 创建 Task → 停止
 
 **交付物**: `otus daemon` 可完整运行
 
@@ -977,6 +1073,6 @@ agent:
 
 ---
 
-**文档版本**: v0.1.0  
-**创建日期**: 2026-02-16  
+**文档版本**: v0.2.0  
+**更新日期**: 2026-02-17  
 **作者**: Otus Team

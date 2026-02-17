@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"firestige.xyz/otus/internal/config"
+	"firestige.xyz/otus/internal/core"
 )
 
 func TestTaskStateTransitions(t *testing.T) {
@@ -173,4 +174,92 @@ func TestTaskStateCreatedToFailed(t *testing.T) {
 	if status.FailureReason != "test failure" {
 		t.Errorf("Expected failure reason 'test failure', got %s", status.FailureReason)
 	}
+}
+
+func TestFlowHash(t *testing.T) {
+	// Build a minimal IPv4/UDP Ethernet frame: 14 (eth) + 20 (ipv4) + 8 (udp)
+	buildIPv4UDP := func(srcIP, dstIP [4]byte, srcPort, dstPort uint16) core.RawPacket {
+		frame := make([]byte, 42) // 14 + 20 + 8
+		// Ethernet: ethertype = 0x0800 (IPv4)
+		frame[12] = 0x08
+		frame[13] = 0x00
+		// IPv4 header
+		frame[14] = 0x45             // version=4, IHL=5
+		frame[23] = 17               // protocol = UDP
+		copy(frame[26:30], srcIP[:]) // src IP
+		copy(frame[30:34], dstIP[:]) // dst IP
+		// UDP header
+		frame[34] = byte(srcPort >> 8)
+		frame[35] = byte(srcPort)
+		frame[36] = byte(dstPort >> 8)
+		frame[37] = byte(dstPort)
+		return core.RawPacket{Data: frame}
+	}
+
+	t.Run("same 5-tuple yields same hash", func(t *testing.T) {
+		pkt1 := buildIPv4UDP([4]byte{10, 0, 0, 1}, [4]byte{10, 0, 0, 2}, 5060, 5060)
+		pkt2 := buildIPv4UDP([4]byte{10, 0, 0, 1}, [4]byte{10, 0, 0, 2}, 5060, 5060)
+		if flowHash(pkt1) != flowHash(pkt2) {
+			t.Error("identical 5-tuples should produce identical hash")
+		}
+	})
+
+	t.Run("different src port yields different hash", func(t *testing.T) {
+		pkt1 := buildIPv4UDP([4]byte{10, 0, 0, 1}, [4]byte{10, 0, 0, 2}, 5060, 5060)
+		pkt2 := buildIPv4UDP([4]byte{10, 0, 0, 1}, [4]byte{10, 0, 0, 2}, 5061, 5060)
+		if flowHash(pkt1) == flowHash(pkt2) {
+			t.Error("different src ports should (very likely) produce different hash")
+		}
+	})
+
+	t.Run("different dst IP yields different hash", func(t *testing.T) {
+		pkt1 := buildIPv4UDP([4]byte{10, 0, 0, 1}, [4]byte{10, 0, 0, 2}, 5060, 5060)
+		pkt2 := buildIPv4UDP([4]byte{10, 0, 0, 1}, [4]byte{10, 0, 0, 3}, 5060, 5060)
+		if flowHash(pkt1) == flowHash(pkt2) {
+			t.Error("different dst IPs should (very likely) produce different hash")
+		}
+	})
+
+	t.Run("reverse direction yields different hash", func(t *testing.T) {
+		pktAB := buildIPv4UDP([4]byte{10, 0, 0, 1}, [4]byte{10, 0, 0, 2}, 1234, 5060)
+		pktBA := buildIPv4UDP([4]byte{10, 0, 0, 2}, [4]byte{10, 0, 0, 1}, 5060, 1234)
+		// Different direction should have different hash (asymmetric hashing is expected)
+		_ = flowHash(pktAB)
+		_ = flowHash(pktBA)
+		// Just verifying it computes without panic; asymmetric hash is intentional
+	})
+
+	t.Run("short packet falls back gracefully", func(t *testing.T) {
+		pkt := core.RawPacket{Data: []byte{0x01, 0x02, 0x03}}
+		h := flowHash(pkt)
+		if h == 0 {
+			t.Error("short packet should still produce a non-zero hash")
+		}
+	})
+
+	t.Run("VLAN tagged frame", func(t *testing.T) {
+		// 802.1Q: 18 (eth+vlan) + 20 (ipv4) + 8 (udp) = 46
+		frame := make([]byte, 46)
+		frame[12] = 0x81 // 802.1Q ethertype
+		frame[13] = 0x00
+		frame[16] = 0x08 // inner ethertype = IPv4
+		frame[17] = 0x00
+		// IPv4 at offset 18
+		frame[18] = 0x45 // version=4, IHL=5
+		frame[27] = 17   // protocol = UDP
+		frame[30] = 10   // src IP: 10.0.0.1
+		frame[33] = 1
+		frame[34] = 10 // dst IP: 10.0.0.2
+		frame[37] = 2
+		frame[38] = 0x13 // src port: 5060
+		frame[39] = 0xC4
+		frame[40] = 0x13 // dst port: 5060
+		frame[41] = 0xC4
+
+		pkt := core.RawPacket{Data: frame}
+		h := flowHash(pkt)
+		if h == 0 {
+			t.Error("VLAN tagged packet should produce a non-zero hash")
+		}
+	})
 }

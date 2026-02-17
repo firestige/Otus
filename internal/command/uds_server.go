@@ -17,7 +17,7 @@ type UDSServer struct {
 	socketPath string
 	handler    *CommandHandler
 	listener   net.Listener
-	
+
 	mu      sync.Mutex
 	conns   map[net.Conn]struct{}
 	wg      sync.WaitGroup
@@ -62,7 +62,7 @@ func (s *UDSServer) Start(ctx context.Context) error {
 	// Wait for context cancellation
 	<-ctx.Done()
 	slog.Info("uds server stopping", "reason", ctx.Err())
-	
+
 	return s.Stop()
 }
 
@@ -74,11 +74,11 @@ func (s *UDSServer) acceptLoop(ctx context.Context) {
 			s.mu.Lock()
 			stopped := s.stopped
 			s.mu.Unlock()
-			
+
 			if stopped {
 				return
 			}
-			
+
 			slog.Error("failed to accept connection", "error", err)
 			continue
 		}
@@ -116,7 +116,7 @@ func (s *UDSServer) handleConnection(ctx context.Context, conn net.Conn) {
 
 	for scanner.Scan() {
 		line := scanner.Bytes()
-		
+
 		// Parse JSON-RPC request
 		var req JSONRPCRequest
 		if err := json.Unmarshal(line, &req); err != nil {

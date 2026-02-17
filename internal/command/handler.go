@@ -32,7 +32,7 @@ func NewCommandHandler(tm *task.TaskManager, reloader ConfigReloader) *CommandHa
 
 // Command represents a control plane command.
 type Command struct {
-	Method string          `json:"method"` // e.g., "task.create", "task.delete"
+	Method string          `json:"method"` // e.g., "task_create", "task_delete"
 	Params json.RawMessage `json:"params"` // command-specific parameters
 	ID     string          `json:"id"`     // request ID for tracking
 }
@@ -64,15 +64,15 @@ func (h *CommandHandler) Handle(ctx context.Context, cmd Command) Response {
 	slog.Info("handling command", "method", cmd.Method, "id", cmd.ID)
 
 	switch cmd.Method {
-	case "task.create":
+	case "task_create":
 		return h.handleTaskCreate(ctx, cmd)
-	case "task.delete":
+	case "task_delete":
 		return h.handleTaskDelete(ctx, cmd)
-	case "task.list":
+	case "task_list":
 		return h.handleTaskList(ctx, cmd)
-	case "task.status":
+	case "task_status":
 		return h.handleTaskStatus(ctx, cmd)
-	case "config.reload":
+	case "config_reload":
 		return h.handleConfigReload(ctx, cmd)
 	default:
 		return Response{
@@ -85,12 +85,12 @@ func (h *CommandHandler) Handle(ctx context.Context, cmd Command) Response {
 	}
 }
 
-// TaskCreateParams represents parameters for task.create command.
+// TaskCreateParams represents parameters for task_create command.
 type TaskCreateParams struct {
 	Config config.TaskConfig `json:"config"`
 }
 
-// handleTaskCreate handles task.create command.
+// handleTaskCreate handles task_create command.
 func (h *CommandHandler) handleTaskCreate(ctx context.Context, cmd Command) Response {
 	var params TaskCreateParams
 	if err := json.Unmarshal(cmd.Params, &params); err != nil {

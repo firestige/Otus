@@ -46,7 +46,7 @@ func TestCommandHandler_HandleTaskCreate(t *testing.T) {
 	}
 
 	cmd := Command{
-		Method: "task.create",
+		Method: "task_create",
 		Params: params,
 		ID:     "req-1",
 	}
@@ -70,7 +70,7 @@ func TestCommandHandler_HandleTaskList(t *testing.T) {
 	handler := NewCommandHandler(tm, nil)
 
 	cmd := Command{
-		Method: "task.list",
+		Method: "task_list",
 		Params: json.RawMessage{},
 		ID:     "req-2",
 	}
@@ -106,7 +106,7 @@ func TestCommandHandler_HandleTaskStatus(t *testing.T) {
 
 	// Test getting all task status (empty)
 	cmd := Command{
-		Method: "task.status",
+		Method: "task_status",
 		Params: json.RawMessage{},
 		ID:     "req-3",
 	}
@@ -128,7 +128,7 @@ func TestCommandHandler_HandleTaskDelete(t *testing.T) {
 
 	params, _ := json.Marshal(TaskDeleteParams{TaskID: "non-existent"})
 	cmd := Command{
-		Method: "task.delete",
+		Method: "task_delete",
 		Params: params,
 		ID:     "req-4",
 	}
@@ -159,7 +159,7 @@ func TestCommandHandler_HandleConfigReload(t *testing.T) {
 	handler := NewCommandHandler(tm, reloader)
 
 	cmd := Command{
-		Method: "config.reload",
+		Method: "config_reload",
 		Params: json.RawMessage{},
 		ID:     "req-5",
 	}
@@ -210,7 +210,7 @@ func TestCommandHandler_InvalidParams(t *testing.T) {
 
 	// Invalid JSON params
 	cmd := Command{
-		Method: "task.create",
+		Method: "task_create",
 		Params: json.RawMessage(`{invalid json}`),
 		ID:     "req-7",
 	}

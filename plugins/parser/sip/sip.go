@@ -46,12 +46,13 @@ type sdpInfo struct {
 
 // mediaStream represents one m= line with associated a= attributes.
 type mediaStream struct {
-	mediaType string // "audio" or "video"
-	rtpPort   uint16 // RTP port from m= line
-	rtcpPort  uint16 // RTCP port (rtpPort+1 or from a=rtcp:)
-	rtcpMux   bool   // Whether RTCP is multiplexed on RTP port
-	codec     string // From a=rtpmap: (optional, for labels)
-	direction string // sendrecv/sendonly/recvonly/inactive
+	mediaType    string     // "audio" or "video"
+	rtpPort      uint16     // RTP port from m= line
+	rtcpPort     uint16     // RTCP port (rtpPort+1 or from a=rtcp:)
+	rtcpMux      bool       // Whether RTCP is multiplexed on RTP port
+	codec        string     // From a=rtpmap: (optional, for labels)
+	direction    string     // sendrecv/sendonly/recvonly/inactive
+	connectionIP netip.Addr // Media-level c= IP (overrides session-level per RFC 4566)
 }
 
 // NewSIPParser creates a new SIP parser.
@@ -316,8 +317,8 @@ func (p *SIPParser) parseSDPBody(body []byte) (*sdpInfo, error) {
 			ip := parseConnectionLine(value)
 			if ip.IsValid() {
 				if currentMedia != nil {
-					// Media-level c= line
-					sdp.connectionIP = ip
+					// Media-level c= overrides session-level for this media (RFC 4566 §5.7)
+					currentMedia.connectionIP = ip
 				} else {
 					// Session-level c= line
 					sessionIP = ip
@@ -394,8 +395,8 @@ func (p *SIPParser) parseSDPBody(body []byte) (*sdpInfo, error) {
 		sdp.mediaStreams = append(sdp.mediaStreams, *currentMedia)
 	}
 
-	// Use session-level c= if no media-level c=
-	if !sdp.connectionIP.IsValid() && sessionIP.IsValid() {
+	// Use session-level c= as default; media-level overrides are in each mediaStream
+	if sessionIP.IsValid() {
 		sdp.connectionIP = sessionIP
 	}
 
@@ -477,10 +478,10 @@ func (p *SIPParser) registerMediaFlows(session *sipSession, pkt *core.DecodedPac
 		return
 	}
 
-	offerIP := session.offerSDP.connectionIP
-	answerIP := session.answerSDP.connectionIP
+	offerBaseIP := session.offerSDP.connectionIP
+	answerBaseIP := session.answerSDP.connectionIP
 
-	if !offerIP.IsValid() || !answerIP.IsValid() {
+	if !offerBaseIP.IsValid() && !answerBaseIP.IsValid() {
 		return
 	}
 
@@ -493,6 +494,20 @@ func (p *SIPParser) registerMediaFlows(session *sipSession, pkt *core.DecodedPac
 	for i := 0; i < maxStreams; i++ {
 		offerMedia := session.offerSDP.mediaStreams[i]
 		answerMedia := session.answerSDP.mediaStreams[i]
+
+		// Per-media c= overrides session-level c= (RFC 4566 §5.7)
+		offerIP := offerMedia.connectionIP
+		if !offerIP.IsValid() {
+			offerIP = offerBaseIP
+		}
+		answerIP := answerMedia.connectionIP
+		if !answerIP.IsValid() {
+			answerIP = answerBaseIP
+		}
+
+		if !offerIP.IsValid() || !answerIP.IsValid() {
+			continue
+		}
 
 		// Register RTP flows
 		p.registerBidirectionalFlow(

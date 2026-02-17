@@ -335,6 +335,49 @@ func TestParseSDPBody(t *testing.T) {
 			t.Error("second stream should be video")
 		}
 	})
+
+	t.Run("per-media c= overrides session-level", func(t *testing.T) {
+		// RFC 4566 §5.7: media-level c= overrides session-level c= for that media
+		sdpBody := []byte("v=0\r\n" +
+			"o=alice 1 1 IN IP4 10.0.0.1\r\n" +
+			"s=-\r\n" +
+			"c=IN IP4 10.0.0.1\r\n" + // Session-level
+			"t=0 0\r\n" +
+			"m=audio 20000 RTP/AVP 0\r\n" +
+			"c=IN IP4 172.16.0.1\r\n" + // Media-level override for audio
+			"a=rtpmap:0 PCMU/8000\r\n" +
+			"m=video 30000 RTP/AVP 31\r\n" + // No media-level c=, uses session-level
+			"a=rtpmap:31 H261/90000\r\n")
+
+		sdp, err := parser.parseSDPBody(sdpBody)
+		if err != nil {
+			t.Fatalf("parseSDPBody failed: %v", err)
+		}
+
+		sessionIP := netip.MustParseAddr("10.0.0.1")
+		audioIP := netip.MustParseAddr("172.16.0.1")
+
+		// Session-level connectionIP should be the session c= line
+		if sdp.connectionIP != sessionIP {
+			t.Errorf("session connectionIP = %v, want %v", sdp.connectionIP, sessionIP)
+		}
+
+		if len(sdp.mediaStreams) != 2 {
+			t.Fatalf("len(mediaStreams) = %d, want 2", len(sdp.mediaStreams))
+		}
+
+		// Audio stream should have its own media-level c= IP
+		if sdp.mediaStreams[0].connectionIP != audioIP {
+			t.Errorf("audio connectionIP = %v, want %v (media-level override)",
+				sdp.mediaStreams[0].connectionIP, audioIP)
+		}
+
+		// Video stream has no media-level c=, so connectionIP should be zero value
+		if sdp.mediaStreams[1].connectionIP.IsValid() {
+			t.Errorf("video connectionIP = %v, want invalid (should fall back to session-level at usage time)",
+				sdp.mediaStreams[1].connectionIP)
+		}
+	})
 }
 
 func TestHandleINVITEAndResponse(t *testing.T) {
@@ -535,6 +578,111 @@ func TestPluginLifecycle(t *testing.T) {
 
 	if parser.sessionCache.ItemCount() != 0 {
 		t.Error("session cache should be empty after Stop")
+	}
+}
+
+// TestPerMediaConnectionIP verifies that media-level c= lines produce correct
+// per-stream flow registrations (RFC 4566 §5.7).
+func TestPerMediaConnectionIP(t *testing.T) {
+	parser := NewSIPParser().(*SIPParser)
+	registry := newMockFlowRegistry()
+	parser.SetFlowRegistry(registry)
+
+	// INVITE: audio on 172.16.0.1 (media-level c=), video on 10.0.0.1 (session-level fallback)
+	invitePayload := []byte("INVITE sip:bob@example.com SIP/2.0\r\n" +
+		"Call-ID: per-media-ip-test@example.com\r\n" +
+		"From: <sip:alice@example.com>\r\n" +
+		"To: <sip:bob@example.com>\r\n" +
+		"CSeq: 1 INVITE\r\n" +
+		"Content-Type: application/sdp\r\n" +
+		"\r\n" +
+		"v=0\r\n" +
+		"o=alice 1 1 IN IP4 10.0.0.1\r\n" +
+		"s=-\r\n" +
+		"c=IN IP4 10.0.0.1\r\n" + // Session-level
+		"t=0 0\r\n" +
+		"m=audio 20000 RTP/AVP 0\r\n" +
+		"c=IN IP4 172.16.0.1\r\n" + // Media-level override
+		"a=rtpmap:0 PCMU/8000\r\n" +
+		"m=video 30000 RTP/AVP 31\r\n" + // No media c=, falls back to session
+		"a=rtpmap:31 H261/90000\r\n")
+
+	invitePkt := &core.DecodedPacket{
+		Transport: core.TransportHeader{DstPort: 5060},
+		Payload:   invitePayload,
+	}
+	parser.Handle(invitePkt)
+
+	// 200 OK: audio on 172.16.0.2 (media-level), video on 10.0.0.2 (session-level)
+	responsePayload := []byte("SIP/2.0 200 OK\r\n" +
+		"Call-ID: per-media-ip-test@example.com\r\n" +
+		"From: <sip:alice@example.com>\r\n" +
+		"To: <sip:bob@example.com>\r\n" +
+		"CSeq: 1 INVITE\r\n" +
+		"Content-Type: application/sdp\r\n" +
+		"\r\n" +
+		"v=0\r\n" +
+		"o=bob 1 1 IN IP4 10.0.0.2\r\n" +
+		"s=-\r\n" +
+		"c=IN IP4 10.0.0.2\r\n" + // Session-level
+		"t=0 0\r\n" +
+		"m=audio 40000 RTP/AVP 0\r\n" +
+		"c=IN IP4 172.16.0.2\r\n" + // Media-level override
+		"a=rtpmap:0 PCMU/8000\r\n" +
+		"m=video 50000 RTP/AVP 31\r\n" + // No media c=, falls back to session
+		"a=rtpmap:31 H261/90000\r\n")
+
+	responsePkt := &core.DecodedPacket{
+		Transport: core.TransportHeader{DstPort: 5060},
+		Payload:   responsePayload,
+	}
+	parser.Handle(responsePkt)
+
+	// Audio: 172.16.0.1:20000 ↔ 172.16.0.2:40000 (media-level IPs)
+	// Video: 10.0.0.1:30000 ↔ 10.0.0.2:50000  (session-level fallback)
+	audioAlice := netip.MustParseAddr("172.16.0.1")
+	audioBob := netip.MustParseAddr("172.16.0.2")
+	videoAlice := netip.MustParseAddr("10.0.0.1")
+	videoBob := netip.MustParseAddr("10.0.0.2")
+
+	testCases := []struct {
+		name    string
+		srcIP   netip.Addr
+		dstIP   netip.Addr
+		srcPort uint16
+		dstPort uint16
+	}{
+		// Audio RTP uses media-level IPs
+		{"Audio RTP A→B", audioAlice, audioBob, 20000, 40000},
+		{"Audio RTP B→A", audioBob, audioAlice, 40000, 20000},
+		// Audio RTCP uses media-level IPs
+		{"Audio RTCP A→B", audioAlice, audioBob, 20001, 40001},
+		{"Audio RTCP B→A", audioBob, audioAlice, 40001, 20001},
+		// Video RTP uses session-level IPs (no media-level c=)
+		{"Video RTP A→B", videoAlice, videoBob, 30000, 50000},
+		{"Video RTP B→A", videoBob, videoAlice, 50000, 30000},
+		// Video RTCP uses session-level IPs
+		{"Video RTCP A→B", videoAlice, videoBob, 30001, 50001},
+		{"Video RTCP B→A", videoBob, videoAlice, 50001, 30001},
+	}
+
+	for _, tc := range testCases {
+		key := plugin.FlowKey{
+			SrcIP:   tc.srcIP,
+			DstIP:   tc.dstIP,
+			SrcPort: tc.srcPort,
+			DstPort: tc.dstPort,
+			Proto:   17,
+		}
+		if _, ok := registry.Get(key); !ok {
+			t.Errorf("Flow not registered: %s (%v:%d → %v:%d)",
+				tc.name, tc.srcIP, tc.srcPort, tc.dstIP, tc.dstPort)
+		}
+	}
+
+	// Verify total: 2 streams × (2 RTP + 2 RTCP) = 8 flows
+	if registry.Count() != 8 {
+		t.Errorf("FlowRegistry count = %d, want 8", registry.Count())
 	}
 }
 

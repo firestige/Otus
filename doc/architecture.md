@@ -450,21 +450,47 @@ Reporter 通过 `Payload.MarshalJSON()` 或 `Payload.MarshalBinary()` 选择序�
 - **gRPC Reporter**：通过 gRPC 发送
 - **OpenTelemetry Reporter**：发送到 OTEL Collector
 
-**Kafka Reporter 示例**：
+**Kafka Reporter 示例**（见 ADR-027、ADR-028）：
 ```go
-func (r *KafkaReporter) Report(pkt *OutputPacket) error {
-    topic := "otus-" + pkt.Protocol          // 按协议分 topic
-    key := []byte(pkt.FlowID.String())
-    value, err := pkt.Payload.MarshalBinary()
+func (r *KafkaReporter) Report(ctx context.Context, pkt *OutputPacket) error {
+    // Payload → binary 或 JSON（由 serialization 配置决定）
+    var value []byte
+    var err error
+    if r.config.Serialization == "binary" {
+        value, err = pkt.Payload.MarshalBinary()
+    } else {
+        value, err = pkt.Payload.MarshalJSON()
+    }
     if err != nil {
         return err
     }
-    // Labels 作为 Kafka Headers
-    headers := make([]kafka.Header, 0, len(pkt.Labels))
-    for k, v := range pkt.Labels {
-        headers = append(headers, kafka.Header{Key: k, Value: []byte(v)})
+    // Envelope → Kafka Headers
+    headers := []kafka.Header{
+        {Key: "task_id",      Value: []byte(pkt.TaskID)},
+        {Key: "agent_id",     Value: []byte(pkt.AgentID)},
+        {Key: "payload_type", Value: []byte(pkt.PayloadType)},
+        {Key: "src_ip",       Value: []byte(pkt.SrcIP.String())},
+        {Key: "dst_ip",       Value: []byte(pkt.DstIP.String())},
+        {Key: "timestamp",    Value: []byte(fmt.Sprintf("%d", pkt.Timestamp.UnixMilli()))},
     }
-    return r.producer.Send(topic, key, value, headers)
+    for k, v := range pkt.Labels {
+        headers = append(headers, kafka.Header{Key: "l." + k, Value: []byte(v)})
+    }
+    return r.writer.WriteMessages(ctx, kafka.Message{
+        Topic:   r.resolveTopic(pkt),         // 动态路由
+        Key:     []byte(pkt.FlowID.String()),
+        Value:   value,
+        Headers: headers,
+    })
+}
+
+func (r *KafkaReporter) resolveTopic(pkt *OutputPacket) string {
+    if r.config.TopicPrefix != "" {
+        proto := pkt.PayloadType
+        if proto == "" { proto = "raw" }
+        return r.config.TopicPrefix + "-" + proto
+    }
+    return r.config.Topic
 }
 ```
 
@@ -473,10 +499,9 @@ func (r *KafkaReporter) Report(pkt *OutputPacket) error {
 reporters:
   - name: kafka
     config:
-      brokers:
-        - kafka-1.example.com:9092
-        - kafka-2.example.com:9092
-      topic_prefix: otus       # 实际 topic = otus-{protocol}
+      topic_prefix: otus           # 动态路由：otus-sip, otus-rtp（与 topic 互斥）
+      # topic: voip-packets        # 或固定 topic（与 topic_prefix 互斥）
+      serialization: json          # "json"（默认）| "binary"（生产推荐）
       compression: snappy
       batch_size: 1000
       batch_timeout: 100ms
@@ -622,12 +647,12 @@ import (
 
 ### 4.4 Task 组装流程
 
-当收到 `create_task` 命令时，TaskManager 从 Registry 查找工厂并组装完整的 Task。
+当收到 `task_create` 命令时，TaskManager 从 Registry 查找工厂并组装完整的 Task。
 
 #### 4.4.1 组装阶段
 
 ```
-create_task 命令 (TaskConfig JSON)
+task_create 命令 (TaskConfig JSON)
        │
        ▼
   ① Validate — 校验 TaskConfig 字段完整性
@@ -687,7 +712,7 @@ for i, rc := range cfg.Reporters {
 }
 ```
 
-**提前失败原则**：如果任何一个插件名在 Registry 中找不到，整个 `create_task` 操作立即失败，不会创建部分实例再回滚。
+**提前失败原则**：如果任何一个插件名在 Registry 中找不到，整个 `task_create` 操作立即失败，不会创建部分实例再回滚。
 
 #### 4.4.3 Construct 阶段详解
 
@@ -863,13 +888,13 @@ if dispatchMode == "dispatch" {
   ▼
 Registry (只读)
   │
-  │  create_task 命令
+  │  task_create 命令
   ▼
 Validate → Resolve → Construct → Init → Wire → Assemble → Start
   │                                                          │
   │                                                     运行中...
   │                                                          │
-  │  delete_task 命令                                         │
+  │  task_delete 命令                                          │
   ▼                                                          ▼
 Stop (Capturers → Pipelines[WaitGroup] → Sender → Reporters.Flush)
 ```
@@ -887,44 +912,56 @@ Stop (Capturers → Pipelines[WaitGroup] → Sender → Reporters.Flush)
 otus:
   # 节点信息（Label Processor 自动引用）
   node:
-    ip: 192.168.1.100
+    ip: ""                         # 空 = 自动探测（见 ADR-023）
     hostname: edge-beijing-01
-    dc: cn-north
-    env: production
+    tags:
+      datacenter: cn-north
+      environment: production
 
   # 本地控制 Socket（CLI 通过此 socket 与 daemon 通信）
   control:
     socket: /var/run/otus.sock
+    pid_file: /var/run/otus.pid
+
+  # Kafka 全局默认（见 ADR-024）
+  # command_channel.kafka 和 reporters.kafka 继承此处的 brokers/sasl/tls
+  kafka:
+    brokers:
+      - kafka-1.example.com:9092
+      - kafka-2.example.com:9092
+    sasl:
+      enabled: false
+      mechanism: PLAIN
+    tls:
+      enabled: false
 
   # 远程命令通道（订阅 Kafka topic 接收任务指令）
   command_channel:
     enabled: true
     type: kafka                    # Phase 1 仅 kafka
     kafka:
-      brokers:                     # 复用 reporters.kafka.brokers 或单独指定
-        - kafka-1.example.com:9092
-        - kafka-2.example.com:9092
+      # brokers/sasl/tls 继承自 otus.kafka，如需覆盖可在此显式设置
       topic: otus-commands         # 命令 topic
-      group_id: "otus-${node.id}"  # 按节点隔离消费
+      group_id: "otus-${node.hostname}"  # 按节点隔离消费
       auto_offset_reset: latest    # 只处理启动后的新命令
 
   # Prometheus 指标
   metrics:
+    enabled: true
     listen: 0.0.0.0:9091
+    path: /metrics
 
   # 共享 Reporter 连接配置（Task 引用，不重复声明）
   reporters:
     kafka:
-      brokers:
-        - kafka-1.example.com:9092
-        - kafka-2.example.com:9092
+      # brokers/sasl/tls 继承自 otus.kafka，如需覆盖可在此显式设置
       compression: snappy
       max_message_bytes: 1048576
-    grpc:
-      endpoint: collector.example.com:4317
-      tls:
-        enabled: true
-        ca_cert: /etc/otus/ca.pem
+    # grpc:                        # Phase 2
+    #   endpoint: collector.example.com:4317
+    #   tls:
+    #     enabled: true
+    #     ca_cert: /etc/otus/ca.pem
 
   # 全局资源上限
   resources:
@@ -966,8 +1003,8 @@ otus:
         enabled: true
         path: /var/log/otus/otus.log
         rotation:
-          max_size: 100MB          # 单文件最大大小
-          max_age: 7d              # 保留天数
+          max_size_mb: 100         # 单文件最大大小（MB）（见 ADR-025）
+          max_age_days: 7          # 保留天数
           max_backups: 5           # 保留的旧日志文件数
           compress: true           # gzip 压缩旧日志
       loki:
@@ -981,8 +1018,10 @@ otus:
 ```
 
 **关键原则**：
-- Reporter 的**连接配置**（brokers、endpoint、TLS）全局声明一次，Task 按名称引用
-- 节点元数据（ip、hostname、dc、env）全局声明，Label Processor 自动注入
+- **Kafka 全局默认**（ADR-024）：`otus.kafka` 提供 brokers/sasl/tls 共享默认，`command_channel.kafka` 和 `reporters.kafka` 继承，显式覆盖优先
+- Reporter 的**连接配置**全局声明一次，Task 按名称引用
+- **Node IP 自动解析**（ADR-023）：环境变量 `OTUS_NODE_IP` > 自动探测 > 启动报错
+- 节点元数据（ip、hostname、tags）全局声明，Label Processor 自动注入
 - 协议栈解码器配置（隧道开关、分片重组参数）属于全局，因为它是核心引擎的固有行为
 - 背压参数属于全局，所有 Task 共享相同的资源保护策略
 
@@ -1039,7 +1078,8 @@ task:
 
 | 配置项 | 来源 | 示例 |
 |--------|------|------|
-| Reporter 连接（brokers/endpoint） | 全局静态 | `otus.reporters.kafka.brokers` |
+| Kafka 连接默认（brokers/sasl/tls） | 全局静态 | `otus.kafka.brokers` |
+| Reporter 连接（继承或覆盖） | 全局静态 | `otus.reporters.kafka.brokers` |
 | Reporter 业务参数（topic） | Task 动态 | `task.reporters[].config.topic` |
 | 节点元数据 | 全局静态 | `otus.node.hostname` |
 | BPF 过滤规则 | Task 动态 | `task.capture.bpf_filter` |
@@ -1906,7 +1946,7 @@ otus validate --task task-voip.yml
 {
   "version": "v1",
   "target": "edge-beijing-01",
-  "command": "create_task",
+  "command": "task_create",
   "timestamp": "2026-02-13T10:30:00Z",
   "request_id": "req-abc-123",
   "payload": {
@@ -1946,14 +1986,21 @@ otus validate --task task-voip.yml
 
 | command | 说明 | payload |
 |---------|------|---------|
-| `create_task` | 创建观测任务 | 完整 Task 配置 |
-| `stop_task` | 停止观测任务 | `{ "task_id": "..." }` |
-| `reload` | 重新加载全局配置 | 无 |
+| `task_create` | 创建观测任务 | 完整 Task 配置 |
+| `task_delete` | 删除（停止）观测任务 | `{ "task_id": "..." }` |
+| `task_list` | 列出所有观测任务 | 无 |
+| `task_status` | 查询任务状态 | `{ "task_id": "..." }`（可选，为空返回全部） |
+| `config_reload` | 重新加载全局配置 | 无 |
 
 **消息路由**：
-- `target` 字段匹配全局配置中的 `node.id`，不匹配的消息直接跳过
+- `target` 字段匹配全局配置中的 `node.hostname`，不匹配的消息直接跳过
 - `target: "*"` 表示广播到所有节点
-- `request_id` 用于状态上报时关联请求（Phase 2 实现 response topic）
+- `request_id` 用于日志链路追踪（Phase 1）和精确去重（Phase 2 LRU 缓存）
+
+**可靠性保障**（见 ADR-026）：
+- **发送端要求**：必须使用 `target` 作为 Kafka message key，保证同一目标节点的命令落到同一 partition 保持有序
+- **过期检查**：Agent 收到命令后检查 `timestamp`，超过 `command_ttl`（默认 5m）的命令跳过并记 WARN
+- **乱序容忍**：`task_create` 做冲突检查，`task_delete` 做存在性检查，天然容忍乱序
 
 **状态上报**（Phase 2）：
 - Agent 向独立的 `otus-status` topic 发布心跳和 Task 状态
@@ -1990,7 +2037,7 @@ Kafka 命令消息 / CLI create
 │ 记录 Task 状态为 running                │
 └──────────────────────┬──────────────────┘
                        │
-          Kafka stop_task / CLI stop / ctx cancel
+          Kafka task_delete / CLI stop / ctx cancel
                        │
                        ▼
 ┌─ 清理 ──────────────────────────────────┐
@@ -2007,7 +2054,7 @@ Kafka 命令消息 / CLI create
 - SIGHUP 信号或 CLI `otus reload` 或 Kafka `reload` 命令触发
 - 仅重载全局静态配置（Reporter 连接参数、背压参数、日志级别等）
 - **不影响正在运行的 Task**——Task 的运行时状态由 Task 自身管理
-- 如需更改 Task 配置，需 stop_task + create_task
+- 如需更改 Task 配置，需 task_delete + task_create
 
 ## 7. 部署方案
 
@@ -2246,9 +2293,9 @@ otus_plugin_health{name="kafka_reporter",status="healthy"} 1
 | **Loki** | HTTP Push 到 Loki（批量发送） | 有集中式日志平台时 |
 | **Stdout** | 标准输出（容器环境自动启用） | K8s / Docker 环境 |
 
-**本地日志滚动**：基于 [lumberjack](https://github.com/natefinch/lumberjack) 实现，配置项见 4.4.1 `log.outputs.file.rotation`。滚动策略：
-- 文件达到 `max_size` → 重命名为 `otus-2026-02-13T10-30.log.gz` 并创建新文件
-- 超过 `max_age` 天的旧日志自动删除
+**本地日志滚动**：基于 [lumberjack](https://github.com/natefinch/lumberjack) 实现，配置项见 4.5.1 `log.outputs.file.rotation`。字段使用数值格式（ADR-025）。滚动策略：
+- 文件达到 `max_size_mb` → 重命名为 `otus-2026-02-13T10-30.log.gz` 并创建新文件
+- 超过 `max_age_days` 天的旧日志自动删除
 - 保留最多 `max_backups` 个历史文件
 
 ### 8.3 追踪

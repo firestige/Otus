@@ -784,6 +784,179 @@ Factory(构造空实例) → Init(注入配置) → Wire(注入共享资源) →
 
 ---
 
+### ADR-023: Node IP 解析策略
+
+**状态**: 已决定  
+**日期**: 2026-02-17  
+**关联文档**: config-design.md §6.1
+
+### 背景
+
+`otus.node.ip` 用于 Label 注入（每个 OutputPacket 携带采集节点 IP）和人类识读。需要在"必须手动配置"和"支持自动探测"之间选择。
+
+### 决定
+
+**混合方案：环境变量 > 自动探测 > 启动报错**。
+
+解析优先级：
+1. 环境变量 `OTUS_NODE_IP`（Viper `AutomaticEnv()` 映射）
+2. YAML 配置 `otus.node.ip` 显式值
+3. 自动探测：`net.Interfaces()` 遍历，取首个 UP 且非 loopback 的 IPv4 地址（排除 169.254.x.x link-local）
+4. 全部失败 → `log.Fatal("cannot resolve node IP: set OTUS_NODE_IP or otus.node.ip")`
+
+### 理由
+
+- 容器/K8s 环境通过 `OTUS_NODE_IP` env 注入最方便（Downward API）
+- 裸机部署自动探测减少配置负担
+- 不允许静默成功（如 fallback 到 127.0.0.1），宁可启动失败也要获得正确的节点 IP
+
+---
+
+### ADR-024: Kafka 全局配置继承
+
+**状态**: 已决定  
+**日期**: 2026-02-17  
+**关联文档**: config-design.md §6.2
+
+### 背景
+
+`command_channel.kafka` 和 `reporters.kafka` 经常连接同一 Kafka 集群，brokers/sasl/tls 配置重复声明。
+
+### 决定
+
+新增顶层 `otus.kafka` 全局配置节，提供 `brokers`/`sasl`/`tls` 默认值。`command_channel.kafka` 和 `reporters.kafka` 自动继承，显式设置的字段覆盖全局默认。
+
+### 继承规则
+
+- `otus.kafka.brokers` → 被 `command_channel.kafka.brokers`（空时）和 `reporters.kafka.brokers`（空时）继承
+- `otus.kafka.sasl` → 被子节点的 `sasl`（零值时）继承
+- `otus.kafka.tls` → 被子节点的 `tls`（零值时）继承
+- 合并逻辑在 `GlobalConfig.validateAndApplyDefaults()` 中实现
+
+### 理由
+
+- 消除 90%+ 场景下的配置重复
+- 显式覆盖保证灵活性（命令通道和数据面连不同集群时各自声明）
+- 合并在加载后一次完成，运行时无间接层
+
+---
+
+### ADR-025: 日志滚动字段格式
+
+**状态**: 已决定  
+**日期**: 2026-02-17  
+**关联文档**: config-design.md §6.3
+
+### 背景
+
+日志滚动配置是用人类可读格式（`"100MB"`, `"7d"`）还是纯数值？
+
+### 决定
+
+**纯数值字段，单位编码在字段名中**：`max_size_mb: 100`, `max_age_days: 7`。
+
+### 理由
+
+- 无需解析函数，无单位歧义
+- Viper 环境变量覆盖直接传数值（`OTUS_LOG_OUTPUTS_FILE_ROTATION_MAX_SIZE_MB=200`）
+- 与 lumberjack 库的 API 直接映射（`MaxSize int` 单位 MB，`MaxAge int` 单位天）
+
+---
+
+### ADR-026: Kafka 命令可靠性策略
+
+**状态**: 已决定  
+**日期**: 2026-02-17  
+**关联文档**: config-design.md §7.3
+
+### 背景
+
+Kafka at-least-once 语义下需要处理三个可靠性问题：重复投递、乱序消费、过期命令。
+
+### 决定
+
+#### 去重
+
+- Phase 1：`KafkaCommand` 结构体包含 `request_id` 字段，日志中关联记录便于链路追踪
+- Phase 2：Agent 侧维护 LRU 缓存（最近 N 条已处理 request_id），实现精确去重
+
+#### 排序
+
+- **发送端要求**：必须使用 `KafkaCommand.Target` 作为 Kafka message key，保证同一目标节点的命令落到同一 partition（文档化到 API 接入指南）
+- **Agent 侧**：`task_create` 做冲突检查，`task_delete` 做存在性检查，天然容忍乱序
+
+#### 过期命令
+
+- 默认 `auto_offset_reset=latest` + 持久化 offset
+- `KafkaCommand.Timestamp` + 可配置 TTL（`command_ttl`，默认 5m），超时命令跳过并记 WARN
+
+### 理由
+
+- Phase 1 命令天然幂等/无害重试，不需要立即实现精确去重
+- target 做 partition key 是最小侵入的排序保证
+- TTL 防御性检查避免 Agent 重启后消费到历史积压命令
+
+---
+
+### ADR-027: Kafka Reporter 动态 Topic 路由
+
+**状态**: 已决定  
+**日期**: 2026-02-17  
+**关联文档**: config-design.md §8
+
+### 背景
+
+架构文档示例代码使用 `"otus-" + pkt.Protocol` 的动态 topic 路由，但当前实现使用固定 `topic`。
+
+### 决定
+
+支持两种互斥模式，配置项决定：
+
+| 配置 | 路由行为 | topic 示例 |
+|------|---------|-----------|
+| `topic: "voip-packets"` | 固定 topic | `voip-packets` |
+| `topic_prefix: "otus"` | 动态路由 | `otus-sip`, `otus-rtp`, `otus-raw` |
+
+`topic_prefix` 存在时优先使用动态路由。路由键为 `OutputPacket.PayloadType`（`"sip"`, `"rtp"`, `"raw"` 等）。
+
+### 理由
+
+- 按协议分 topic 便于下游独立消费和独立 retention 策略
+- 保留固定 topic 模式兼容简单部署场景
+- `PayloadType` 由 Parser 返回，核心协议无关
+
+---
+
+### ADR-028: Kafka 数据序列化——Headers + Value 分离
+
+**状态**: 已决定  
+**日期**: 2026-02-17  
+**关联文档**: config-design.md §9
+
+### 背景
+
+Kafka `message.value` 是 `[]byte`，支持任意格式。需要确定 Envelope（元数据）和 Payload（协议数据）的序列化方案。
+
+### 决定
+
+**Kafka Headers 承载 Envelope，Value 承载 Payload**：
+
+- Kafka Headers: `task_id`, `agent_id`, `payload_type`, `src_ip`, `dst_ip`, `timestamp`, Labels（以 `l.` 前缀区分）
+- Kafka Value: `Payload.MarshalJSON()` 或 `Payload.MarshalBinary()`（由 `serialization` 配置项决定）
+
+可配置的序列化格式：
+- `serialization: json`（默认，Phase 1）— 调试友好
+- `serialization: binary`（生产推荐）— 零膨胀，性能最高
+
+### 理由
+
+- Headers 可被 Kafka Streams / ksqlDB 过滤，无需反序列化 Value
+- Value 纯 binary 零膨胀（对比 base64 in JSON 膨胀 33%）
+- 与架构文档 `Payload.MarshalBinary()` 接口设计完全一致
+- Phase 1 先用 JSON 模式（已实现），binary 模式在 Payload 接口完善后启用
+
+---
+
 ## 决策优先级总览
 
 | ADR | 决策点 | 结论 | 实施阶段 |
@@ -818,9 +991,15 @@ Factory(构造空实例) → Init(注入配置) → Wire(注入共享资源) →
 | 020 | 本地控制通道 | JSON-RPC over UDS，不用 gRPC | Phase 1 |
 | 021 | DecodedPacket 类型 | 自定义值类型 struct，隔离 gopacket | Phase 1 |
 | 022 | 插件注册机制 | 静态链接 + init() 全局 Registry，不支持动态 .so | Phase 1 |
+| 023 | Node IP 解析策略 | 环境变量 > 自动探测 > 启动报错 | Phase 1 |
+| 024 | Kafka 全局配置继承 | `otus.kafka` 提供 brokers/sasl/tls 默认，子节点显式覆盖 | Phase 1 |
+| 025 | 日志滚动字段格式 | 数值字段 `max_size_mb` / `max_age_days`，单位编码在字段名中 | Phase 1 |
+| 026 | Kafka 命令可靠性 | 去重 Phase2(LRU)、排序(target 做 key)、TTL 过期检查 | Phase 1 |
+| 027 | Kafka Reporter 动态 Topic | `topic_prefix` 优先动态路由，与 `topic` 互斥 | Phase 1 |
+| 028 | Kafka 数据序列化 | Headers 承载 envelope，Value 承载 binary/json payload | Phase 1 |
 
 ---
 
-**文档版本**: v0.2.0
-**更新日期**: 2026-02-16
+**文档版本**: v0.3.0
+**更新日期**: 2026-02-17
 **作者**: Otus Team

@@ -99,33 +99,33 @@ func (c *UDSClient) Call(ctx context.Context, method string, params interface{})
 	return resp, nil
 }
 
-// TaskCreate is a convenience method for task.create command.
+// TaskCreate is a convenience method for task_create command.
 func (c *UDSClient) TaskCreate(ctx context.Context, params TaskCreateParams) (*Response, error) {
-	return c.Call(ctx, "task.create", params)
+	return c.Call(ctx, "task_create", params)
 }
 
-// TaskDelete is a convenience method for task.delete command.
+// TaskDelete is a convenience method for task_delete command.
 func (c *UDSClient) TaskDelete(ctx context.Context, taskID string) (*Response, error) {
-	return c.Call(ctx, "task.delete", TaskDeleteParams{TaskID: taskID})
+	return c.Call(ctx, "task_delete", TaskDeleteParams{TaskID: taskID})
 }
 
-// TaskList is a convenience method for task.list command.
+// TaskList is a convenience method for task_list command.
 func (c *UDSClient) TaskList(ctx context.Context) (*Response, error) {
-	return c.Call(ctx, "task.list", nil)
+	return c.Call(ctx, "task_list", nil)
 }
 
-// TaskStatus is a convenience method for task.status command.
+// TaskStatus is a convenience method for task_status command.
 func (c *UDSClient) TaskStatus(ctx context.Context, taskID string) (*Response, error) {
 	params := TaskStatusParams{}
 	if taskID != "" {
 		params.TaskID = taskID
 	}
-	return c.Call(ctx, "task.status", params)
+	return c.Call(ctx, "task_status", params)
 }
 
-// ConfigReload is a convenience method for config.reload command.
+// ConfigReload is a convenience method for config_reload command.
 func (c *UDSClient) ConfigReload(ctx context.Context) (*Response, error) {
-	return c.Call(ctx, "config.reload", nil)
+	return c.Call(ctx, "config_reload", nil)
 }
 
 // Ping sends a simple ping command to check if daemon is alive.
