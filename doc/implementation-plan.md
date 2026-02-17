@@ -767,20 +767,56 @@ agent:
 
 ### Step 12: 控制面 — Kafka 命令订阅
 **前置**: Step 8  
-**目标**: 实现远程控制通道
+**目标**: 实现远程控制通道  
+**状态**: ✅ 已完成
 
 **任务清单**:
-1. `internal/command/handler.go` — 命令路由
-   - `task.create` → TaskManager.Create()
-   - `task.delete` → TaskManager.Delete()
-   - `task.list` → TaskManager.List()
-   - `task.status` → TaskManager.Status()
-   - `reload` → 重载全局配置
-2. `internal/command/kafka.go` — Kafka Consumer
-   - segmentio/kafka-go Reader
-   - Consumer Group 订阅命令 topic
-   - JSON 反序列化 → 命令分发
-3. 集成测试：mock Kafka → 命令执行
+1. ✅ `internal/command/handler.go` (270 行)
+   - CommandHandler 结构体，包含 TaskManager 和 ConfigReloader
+   - Command/Response 结构体（类 JSON-RPC 协议）
+   - 错误码定义（ParseError, InvalidRequest, MethodNotFound, InvalidParams, InternalError）
+   - 5 个命令处理器：
+     - `task.create` → TaskManager.Create()
+     - `task.delete` → TaskManager.Delete()
+     - `task.list` → TaskManager.List()
+     - `task.status` → TaskManager.Status() (支持查询单个或全部)
+     - `config.reload` → ConfigReloader.Reload()
+2. ✅ `internal/command/kafka.go` (180 行)
+   - KafkaCommandConsumer 结构体
+   - segmentio/kafka-go Reader（Consumer Group 模式）
+   - 配置：Brokers, Topic, GroupID, StartOffset (earliest/latest), PollInterval, MaxRetries
+   - Start() 方法：阻塞式消费循环，自动提交 offset
+   - processMessage() 方法：JSON 反序列化 → 调用 handler.Handle()
+   - 优雅停止：Stop() 关闭 reader
+3. ✅ 单元测试：
+   - `handler_test.go`: 7 个测试用例（task.create/delete/list/status, config.reload, 未知方法, 非法参数）
+   - `kafka_test.go`: 4 个测试用例（配置验证、默认值、生命周期、StartOffset）
+
+**实现细节**:
+- **命令协议格式**（类 JSON-RPC）：
+  ```json
+  {
+    "method": "task.create",
+    "params": {...},
+    "id": "req-123"
+  }
+  ```
+- **响应格式**：
+  ```json
+  {
+    "id": "req-123",
+    "result": {...},
+    "error": {"code": -32603, "message": "..."}
+  }
+  ```
+- **Kafka Consumer 配置**：
+  - MinBytes=1, MaxBytes=10MB
+  - CommitInterval=1s (自动提交)
+  - MaxWait=PollInterval (默认 1s)
+- **错误处理**：
+  - 消息处理失败不中断消费循环
+  - 记录详细日志（partition, offset, error message）
+  - 支持优雅停止（context 取消传播）
 
 **交付物**: 从 Kafka 接收命令可驱动 Task 生命周期
 
