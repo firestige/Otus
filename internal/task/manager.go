@@ -212,6 +212,7 @@ func (m *TaskManager) Create(cfg config.TaskConfig) error {
 	slog.Debug("starting task", "task_id", cfg.ID)
 
 	if err := task.Start(); err != nil {
+		task.cancel() // Release context resources on failed start
 		return fmt.Errorf("task start failed: %w", err)
 	}
 

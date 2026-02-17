@@ -152,6 +152,8 @@ func (t *Task) setState(s TaskState) {
 // It starts all components in reverse dependency order:
 // Reporters → Sender → Pipelines → Capturers
 // This ensures data has a destination before the source starts producing.
+//
+// If any component fails to start, already-started components are rolled back.
 func (t *Task) Start() error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -164,13 +166,25 @@ func (t *Task) Start() error {
 	t.startedAt = time.Now()
 
 	// Step 1: Start Reporters (data sinks)
+	startedReporters := 0
 	for i, rep := range t.Reporters {
 		slog.Debug("starting reporter", "task_id", t.Config.ID, "reporter_id", i, "name", rep.Name())
 		if err := rep.Start(t.ctx); err != nil {
+			// Rollback: stop already-started reporters
+			slog.Warn("reporter start failed, rolling back", "task_id", t.Config.ID, "reporter_id", i, "error", err)
+			rollbackCtx, rollbackCancel := context.WithTimeout(context.Background(), 10*time.Second)
+			for j := startedReporters - 1; j >= 0; j-- {
+				if stopErr := t.Reporters[j].Stop(rollbackCtx); stopErr != nil {
+					slog.Error("rollback: failed to stop reporter",
+						"task_id", t.Config.ID, "reporter_id", j, "error", stopErr)
+				}
+			}
+			rollbackCancel()
 			t.setState(StateFailed)
 			t.failureReason = fmt.Sprintf("reporter[%d] start failed: %v", i, err)
 			return fmt.Errorf("reporter[%d] start failed: %w", i, err)
 		}
+		startedReporters++
 	}
 
 	// Step 2: Start Sender goroutine (consumes sendBuffer → all Reporters)
@@ -253,14 +267,16 @@ func (t *Task) Stop() error {
 	// Step 3: Wait for all pipelines to finish processing
 	t.pipelineWg.Wait()
 
-	// Step 4: Cancel context and close sendBuffer
-	t.cancel()
+	// Step 4: Close sendBuffer (safe: pipelineWg.Wait() ensures no writers remain)
 	close(t.sendBuffer)
 
-	// Step 5: Wait for sender to finish draining sendBuffer
+	// Step 5: Wait for sender to finish draining sendBuffer with valid ctx
 	<-t.doneCh
 
-	// Step 6: Flush and stop all reporters
+	// Step 6: Cancel context (senderLoop already exited, stats goroutine will exit)
+	t.cancel()
+
+	// Step 7: Flush and stop all reporters
 	flushCtx, flushCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer flushCancel()
 
@@ -468,27 +484,38 @@ func (t *Task) ID() string {
 }
 
 // statsCollectorLoop periodically collects stats from capturers and updates Prometheus metrics.
+// Uses per-capturer tracking to correctly compute deltas in binding mode (multiple capturers).
 func (t *Task) statsCollectorLoop() {
 	ticker := time.NewTicker(5 * time.Second) // Collect stats every 5 seconds
 	defer ticker.Stop()
 
-	var lastPacketsReceived uint64
-	var lastPacketsDropped uint64
+	// Per-capturer last-seen counters to avoid cross-capturer delta contamination.
+	type capStats struct {
+		packetsReceived uint64
+		packetsDropped  uint64
+	}
+	lastStats := make([]capStats, len(t.Capturers))
 
 	for {
 		select {
 		case <-t.ctx.Done():
 			return
 		case <-ticker.C:
-			// Collect stats from all capturers and update Prometheus metrics
 			for i, cap := range t.Capturers {
 				stats := cap.Stats()
 
-				// Calculate deltas since last collection
-				deltaReceived := stats.PacketsReceived - lastPacketsReceived
-				deltaDropped := stats.PacketsDropped - lastPacketsDropped
+				// Calculate per-capturer deltas with underflow protection
+				deltaReceived := stats.PacketsReceived - lastStats[i].packetsReceived
+				if stats.PacketsReceived < lastStats[i].packetsReceived {
+					// Counter reset (capturer restart) — treat current value as delta
+					deltaReceived = stats.PacketsReceived
+				}
 
-				// Update Prometheus counters (use Add instead of Set for counters)
+				deltaDropped := stats.PacketsDropped - lastStats[i].packetsDropped
+				if stats.PacketsDropped < lastStats[i].packetsDropped {
+					deltaDropped = stats.PacketsDropped
+				}
+
 				if deltaReceived > 0 {
 					ifaceName, _ := t.Config.Capture.Config["interface"].(string)
 					metrics.CapturePacketsTotal.WithLabelValues(
@@ -504,9 +531,11 @@ func (t *Task) statsCollectorLoop() {
 					).Add(float64(deltaDropped))
 				}
 
-				// Update last values
-				lastPacketsReceived = stats.PacketsReceived
-				lastPacketsDropped = stats.PacketsDropped
+				// Update per-capturer tracking
+				lastStats[i] = capStats{
+					packetsReceived: stats.PacketsReceived,
+					packetsDropped:  stats.PacketsDropped,
+				}
 
 				slog.Debug("capturer stats collected",
 					"task_id", t.Config.ID,
