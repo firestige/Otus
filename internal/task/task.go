@@ -32,6 +32,8 @@ const (
 	StateStopping TaskState = "stopping"
 	// StateStopped indicates task has stopped cleanly.
 	StateStopped TaskState = "stopped"
+	// StatePaused indicates task is temporarily paused.
+	StatePaused TaskState = "paused"
 	// StateFailed indicates task failed during startup or runtime.
 	StateFailed TaskState = "failed"
 )
@@ -75,6 +77,9 @@ type Task struct {
 	// Hot-reloadable settings
 	metricsInterval atomic.Int64 // nanoseconds; 0 = use default (5s)
 
+	// Dispatch strategy for multi-pipeline distribution
+	dispatchStrategy DispatchStrategy
+
 	// Context and cancellation
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -110,15 +115,16 @@ func NewTask(cfg config.TaskConfig) *Task {
 	}
 
 	t := &Task{
-		Config:     cfg,
-		Pipelines:  make([]*pipeline.Pipeline, 0, numPipelines),
-		rawStreams: rawStreams,
-		sendBuffer: make(chan core.OutputPacket, sendCap),
-		doneCh:     make(chan struct{}),
-		state:      StateCreated,
-		createdAt:  time.Now(),
-		ctx:        ctx,
-		cancel:     cancel,
+		Config:           cfg,
+		Pipelines:        make([]*pipeline.Pipeline, 0, numPipelines),
+		rawStreams:       rawStreams,
+		sendBuffer:       make(chan core.OutputPacket, sendCap),
+		doneCh:           make(chan struct{}),
+		state:            StateCreated,
+		createdAt:        time.Now(),
+		dispatchStrategy: NewDispatchStrategy(cfg.Capture.DispatchStrategy),
+		ctx:              ctx,
+		cancel:           cancel,
 	}
 
 	// dispatch mode needs an intermediate channel
@@ -159,6 +165,8 @@ func (t *Task) setState(s TaskState) {
 		statusValue = metrics.TaskStatusRunning
 	case StateFailed:
 		statusValue = metrics.TaskStatusError
+	case StatePaused:
+		statusValue = metrics.TaskStatusPaused
 	default:
 		// For Created, Starting, Stopping - use 0 (stopped)
 		statusValue = metrics.TaskStatusStopped
@@ -323,6 +331,166 @@ func (t *Task) Stop() error {
 	return nil
 }
 
+// Pause pauses the task by calling Pause() on all pausable plugins.
+// Only running tasks can be paused. The task transitions to StatePaused.
+func (t *Task) Pause() error {
+	t.mu.Lock()
+	if t.state != StateRunning {
+		t.mu.Unlock()
+		return fmt.Errorf("cannot pause task in state %s", t.state)
+	}
+	t.setState(StatePaused)
+	t.mu.Unlock()
+
+	slog.Info("pausing task", "task_id", t.Config.ID)
+
+	// Pause capturers (stop packet ingestion first)
+	for i, cap := range t.Capturers {
+		if p, ok := cap.(plugin.Pausable); ok {
+			if err := p.Pause(); err != nil {
+				slog.Warn("capturer pause error", "task_id", t.Config.ID, "capturer_id", i, "error", err)
+			}
+		}
+	}
+
+	// Pause reporters
+	for i, rep := range t.Reporters {
+		if p, ok := rep.(plugin.Pausable); ok {
+			if err := p.Pause(); err != nil {
+				slog.Warn("reporter pause error", "task_id", t.Config.ID, "reporter_id", i, "error", err)
+			}
+		}
+	}
+
+	// Pause pipelines' parsers/processors
+	for _, pl := range t.Pipelines {
+		for _, parser := range pl.Parsers() {
+			if p, ok := parser.(plugin.Pausable); ok {
+				if err := p.Pause(); err != nil {
+					slog.Warn("parser pause error", "task_id", t.Config.ID, "error", err)
+				}
+			}
+		}
+		for _, proc := range pl.Processors() {
+			if p, ok := proc.(plugin.Pausable); ok {
+				if err := p.Pause(); err != nil {
+					slog.Warn("processor pause error", "task_id", t.Config.ID, "error", err)
+				}
+			}
+		}
+	}
+
+	slog.Info("task paused", "task_id", t.Config.ID)
+	return nil
+}
+
+// Resume resumes a paused task by calling Resume() on all pausable plugins.
+func (t *Task) Resume() error {
+	t.mu.Lock()
+	if t.state != StatePaused {
+		t.mu.Unlock()
+		return fmt.Errorf("cannot resume task in state %s", t.state)
+	}
+	t.setState(StateRunning)
+	t.mu.Unlock()
+
+	slog.Info("resuming task", "task_id", t.Config.ID)
+
+	// Resume in reverse order: parsers/processors → reporters → capturers
+	for _, pl := range t.Pipelines {
+		for _, proc := range pl.Processors() {
+			if p, ok := proc.(plugin.Pausable); ok {
+				if err := p.Resume(); err != nil {
+					slog.Warn("processor resume error", "task_id", t.Config.ID, "error", err)
+				}
+			}
+		}
+		for _, parser := range pl.Parsers() {
+			if p, ok := parser.(plugin.Pausable); ok {
+				if err := p.Resume(); err != nil {
+					slog.Warn("parser resume error", "task_id", t.Config.ID, "error", err)
+				}
+			}
+		}
+	}
+
+	for i, rep := range t.Reporters {
+		if p, ok := rep.(plugin.Pausable); ok {
+			if err := p.Resume(); err != nil {
+				slog.Warn("reporter resume error", "task_id", t.Config.ID, "reporter_id", i, "error", err)
+			}
+		}
+	}
+
+	// Resume capturers last (start packet ingestion after everything is ready)
+	for i, cap := range t.Capturers {
+		if p, ok := cap.(plugin.Pausable); ok {
+			if err := p.Resume(); err != nil {
+				slog.Warn("capturer resume error", "task_id", t.Config.ID, "capturer_id", i, "error", err)
+			}
+		}
+	}
+
+	slog.Info("task resumed", "task_id", t.Config.ID)
+	return nil
+}
+
+// Reconfigure dynamically updates plugins that support the Reconfigurable interface.
+// Does not require task restart. Only works on running or paused tasks.
+func (t *Task) Reconfigure(pluginConfigs map[string]map[string]any) error {
+	t.mu.RLock()
+	if t.state != StateRunning && t.state != StatePaused {
+		t.mu.RUnlock()
+		return fmt.Errorf("cannot reconfigure task in state %s", t.state)
+	}
+	t.mu.RUnlock()
+
+	slog.Info("reconfiguring task plugins", "task_id", t.Config.ID, "plugins", len(pluginConfigs))
+
+	var errs []error
+
+	// Reconfigure all plugin types
+	allPlugins := make(map[string]plugin.Plugin)
+	for _, cap := range t.Capturers {
+		allPlugins[cap.Name()] = cap
+	}
+	for _, rep := range t.Reporters {
+		allPlugins[rep.Name()] = rep
+	}
+	for _, pl := range t.Pipelines {
+		for _, parser := range pl.Parsers() {
+			allPlugins[parser.Name()] = parser
+		}
+		for _, proc := range pl.Processors() {
+			allPlugins[proc.Name()] = proc
+		}
+	}
+
+	for pluginName, cfg := range pluginConfigs {
+		p, ok := allPlugins[pluginName]
+		if !ok {
+			errs = append(errs, fmt.Errorf("plugin %q not found", pluginName))
+			continue
+		}
+		rc, ok := p.(plugin.Reconfigurable)
+		if !ok {
+			errs = append(errs, fmt.Errorf("plugin %q does not support reconfigure", pluginName))
+			continue
+		}
+		if err := rc.Reconfigure(cfg); err != nil {
+			errs = append(errs, fmt.Errorf("plugin %q reconfigure failed: %w", pluginName, err))
+			slog.Warn("plugin reconfigure failed", "task_id", t.Config.ID, "plugin", pluginName, "error", err)
+		} else {
+			slog.Info("plugin reconfigured", "task_id", t.Config.ID, "plugin", pluginName)
+		}
+	}
+
+	if len(errs) > 0 {
+		return fmt.Errorf("%d reconfigure errors: %v", len(errs), errs)
+	}
+	return nil
+}
+
 // captureLoop runs a single capturer, writing packets to the given output channel.
 func (t *Task) captureLoop(cap plugin.Capturer, output chan<- core.RawPacket) {
 	if err := cap.Capture(t.ctx, output); err != nil {
@@ -355,8 +523,8 @@ func (t *Task) dispatchLoop() {
 	}
 
 	for pkt := range t.captureCh {
-		// Flow-hash distribution for flow affinity
-		idx := flowHash(pkt) % uint32(numPipelines)
+		// Use configured dispatch strategy
+		idx := t.dispatchStrategy.Dispatch(pkt, numPipelines)
 
 		select {
 		case t.rawStreams[idx] <- pkt:
@@ -613,6 +781,10 @@ func (t *Task) statsCollectorLoop() {
 					"delta_received", deltaReceived,
 					"delta_dropped", deltaDropped)
 			}
+
+			// Update flow registry size gauge
+			metrics.FlowRegistrySize.WithLabelValues(t.Config.ID).
+				Set(float64(t.Registry.Count()))
 		}
 	}
 }

@@ -129,6 +129,7 @@ func (d *Daemon) Stop() {
 		if err := d.kafkaConsumer.Stop(); err != nil {
 			slog.Error("error stopping kafka consumer", "error", err)
 		}
+		d.kafkaConsumer = nil // prevent double-stop on repeated calls
 	}
 
 	// 2. Stop all running tasks

@@ -11,7 +11,7 @@ import (
 
 func TestRegisterAndGetCapturer(t *testing.T) {
 	// Clear registry before test
-	capturerRegistry = make(map[string]CapturerFactory)
+	capturerReg.Reset()
 
 	// Register
 	RegisterCapturer("test_cap", func() Capturer {
@@ -34,7 +34,7 @@ func TestRegisterAndGetCapturer(t *testing.T) {
 }
 
 func TestRegisterAndGetParser(t *testing.T) {
-	parserRegistry = make(map[string]ParserFactory)
+	parserReg.Reset()
 
 	RegisterParser("test_parser", func() Parser {
 		return &mockParser{
@@ -54,7 +54,7 @@ func TestRegisterAndGetParser(t *testing.T) {
 }
 
 func TestRegisterAndGetProcessor(t *testing.T) {
-	processorRegistry = make(map[string]ProcessorFactory)
+	processorReg.Reset()
 
 	RegisterProcessor("test_proc", func() Processor {
 		return &mockProcessor{
@@ -74,7 +74,7 @@ func TestRegisterAndGetProcessor(t *testing.T) {
 }
 
 func TestRegisterAndGetReporter(t *testing.T) {
-	reporterRegistry = make(map[string]ReporterFactory)
+	reporterReg.Reset()
 
 	RegisterReporter("test_rep", func() Reporter {
 		return &mockReporter{
@@ -94,10 +94,10 @@ func TestRegisterAndGetReporter(t *testing.T) {
 }
 
 func TestGetNotFoundReturnsError(t *testing.T) {
-	capturerRegistry = make(map[string]CapturerFactory)
-	parserRegistry = make(map[string]ParserFactory)
-	processorRegistry = make(map[string]ProcessorFactory)
-	reporterRegistry = make(map[string]ReporterFactory)
+	capturerReg.Reset()
+	parserReg.Reset()
+	processorReg.Reset()
+	reporterReg.Reset()
 
 	// Capturer
 	_, err := GetCapturerFactory("nonexistent")
@@ -137,7 +137,7 @@ func TestGetNotFoundReturnsError(t *testing.T) {
 }
 
 func TestDuplicateRegisterPanics(t *testing.T) {
-	capturerRegistry = make(map[string]CapturerFactory)
+	capturerReg.Reset()
 
 	// First registration
 	RegisterCapturer("dup", func() Capturer {
@@ -156,7 +156,7 @@ func TestDuplicateRegisterPanics(t *testing.T) {
 }
 
 func TestEmptyNamePanics(t *testing.T) {
-	capturerRegistry = make(map[string]CapturerFactory)
+	capturerReg.Reset()
 
 	defer func() {
 		if r := recover(); r == nil {
@@ -169,7 +169,7 @@ func TestEmptyNamePanics(t *testing.T) {
 }
 
 func TestNilFactoryPanics(t *testing.T) {
-	capturerRegistry = make(map[string]CapturerFactory)
+	capturerReg.Reset()
 
 	defer func() {
 		if r := recover(); r == nil {
@@ -181,10 +181,10 @@ func TestNilFactoryPanics(t *testing.T) {
 
 func TestList(t *testing.T) {
 	// Clear and populate
-	capturerRegistry = make(map[string]CapturerFactory)
-	parserRegistry = make(map[string]ParserFactory)
-	processorRegistry = make(map[string]ProcessorFactory)
-	reporterRegistry = make(map[string]ReporterFactory)
+	capturerReg.Reset()
+	parserReg.Reset()
+	processorReg.Reset()
+	reporterReg.Reset()
 
 	RegisterCapturer("cap_c", func() Capturer { return &mockCapturer{mockPlugin: mockPlugin{name: "cap_c"}} })
 	RegisterCapturer("cap_a", func() Capturer { return &mockCapturer{mockPlugin: mockPlugin{name: "cap_a"}} })
@@ -224,10 +224,10 @@ func TestList(t *testing.T) {
 
 func TestTypeSeparation(t *testing.T) {
 	// Clear all
-	capturerRegistry = make(map[string]CapturerFactory)
-	parserRegistry = make(map[string]ParserFactory)
-	processorRegistry = make(map[string]ProcessorFactory)
-	reporterRegistry = make(map[string]ReporterFactory)
+	capturerReg.Reset()
+	parserReg.Reset()
+	processorReg.Reset()
+	reporterReg.Reset()
 
 	// Same name, different types should not conflict
 	name := "common_name"

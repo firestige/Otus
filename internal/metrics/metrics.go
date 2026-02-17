@@ -60,6 +60,34 @@ var (
 			Help: "Number of active IP fragments in reassembly queue",
 		},
 	)
+
+	// ReporterBatchSize tracks Kafka batch size distribution (for ReporterWrapper)
+	ReporterBatchSize = promauto.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "otus_reporter_batch_size",
+			Help:    "Number of packets sent per reporter batch",
+			Buckets: prometheus.ExponentialBuckets(1, 2, 12), // 1, 2, 4, ..., 2048
+		},
+		[]string{"task", "reporter"},
+	)
+
+	// ReporterErrorsTotal counts reporter errors by name and error type
+	ReporterErrorsTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "otus_reporter_errors_total",
+			Help: "Total number of reporter errors",
+		},
+		[]string{"task", "reporter", "error_type"},
+	)
+
+	// FlowRegistrySize tracks the current number of flows in a task's FlowRegistry
+	FlowRegistrySize = promauto.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "otus_flow_registry_size",
+			Help: "Current number of flows tracked in the flow registry",
+		},
+		[]string{"task"},
+	)
 )
 
 // TaskStatusValue represents task status as a numeric value for Prometheus gauge
@@ -67,4 +95,5 @@ const (
 	TaskStatusStopped = 0
 	TaskStatusRunning = 1
 	TaskStatusError   = 2
+	TaskStatusPaused  = 3
 )

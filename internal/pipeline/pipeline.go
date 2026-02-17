@@ -215,6 +215,16 @@ func (p *Pipeline) Stats() Stats {
 	}
 }
 
+// Parsers returns the pipeline's parser instances for lifecycle management.
+func (p *Pipeline) Parsers() []plugin.Parser {
+	return p.parsers
+}
+
+// Processors returns the pipeline's processor instances for lifecycle management.
+func (p *Pipeline) Processors() []plugin.Processor {
+	return p.processors
+}
+
 // Stats represents pipeline statistics.
 // Reporter statistics (Reported, ReportErrors) are tracked at Task level.
 type Stats struct {

@@ -241,6 +241,7 @@ func (m *TaskManager) Create(cfg config.TaskConfig) error {
 		w := NewReporterWrapper(WrapperConfig{
 			Primary:      rep,
 			Fallback:     fallback,
+			TaskID:       cfg.ID,
 			BatchSize:    rcfg.BatchSize,
 			BatchTimeout: batchTimeout,
 		})

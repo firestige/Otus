@@ -197,8 +197,8 @@ func TestReassembler_OutOfOrder(t *testing.T) {
 
 	// 3 fragments of 80 bytes each, sent in reverse order
 	frag3 := buildIPv4Fragment(src, dst, proto, fragID, 20, false, payload[160:240]) // offset 20*8=160
-	frag2 := buildIPv4Fragment(src, dst, proto, fragID, 10, true, payload[80:160])  // offset 10*8=80
-	frag1 := buildIPv4Fragment(src, dst, proto, fragID, 0, true, payload[0:80])     // offset 0
+	frag2 := buildIPv4Fragment(src, dst, proto, fragID, 10, true, payload[80:160])   // offset 10*8=80
+	frag1 := buildIPv4Fragment(src, dst, proto, fragID, 0, true, payload[0:80])      // offset 0
 
 	// Process last fragment first (MF=0)
 	_, complete, err := r.Process(frag3, now)

@@ -8,6 +8,62 @@ import (
 	"firestige.xyz/otus/internal/core"
 )
 
+// Registry is a type-safe generic plugin registry that stores factory functions.
+// It eliminates duplicated register/get/list logic across plugin types.
+// T must be a plugin interface type (Capturer, Parser, Processor, Reporter).
+type Registry[T any] struct {
+	factories map[string]func() T
+	typeName  string // e.g. "capturer", for error messages
+}
+
+// NewRegistry creates a new generic plugin registry.
+func NewRegistry[T any](typeName string) *Registry[T] {
+	return &Registry[T]{
+		factories: make(map[string]func() T),
+		typeName:  typeName,
+	}
+}
+
+// Register registers a factory function by name.
+// Panics if name is empty, factory is nil, or name is already registered.
+func (r *Registry[T]) Register(name string, factory func() T) {
+	if name == "" {
+		panic(fmt.Sprintf("plugin: %s name cannot be empty", r.typeName))
+	}
+	if factory == nil {
+		panic(fmt.Sprintf("plugin: %s factory cannot be nil", r.typeName))
+	}
+	if _, exists := r.factories[name]; exists {
+		panic(fmt.Sprintf("plugin: %s %q already registered", r.typeName, name))
+	}
+	r.factories[name] = factory
+}
+
+// Get returns the factory for the named plugin.
+// Returns core.ErrPluginNotFound if not registered.
+func (r *Registry[T]) Get(name string) (func() T, error) {
+	factory, ok := r.factories[name]
+	if !ok {
+		return nil, fmt.Errorf("%s %q: %w", r.typeName, name, core.ErrPluginNotFound)
+	}
+	return factory, nil
+}
+
+// List returns a sorted list of all registered plugin names.
+func (r *Registry[T]) List() []string {
+	names := make([]string, 0, len(r.factories))
+	for name := range r.factories {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// Reset clears the registry. Intended for testing only.
+func (r *Registry[T]) Reset() {
+	r.factories = make(map[string]func() T)
+}
+
 // Factory types - zero-parameter functions that return empty plugin instances.
 // Configuration injection happens later via Init().
 type (
@@ -17,150 +73,78 @@ type (
 	ReporterFactory  func() Reporter
 )
 
-// Global registry maps - populated during init() phase, read-only at runtime.
+// Global registry instances — populated during init() phase, read-only at runtime.
 var (
-	capturerRegistry  = make(map[string]CapturerFactory)
-	parserRegistry    = make(map[string]ParserFactory)
-	processorRegistry = make(map[string]ProcessorFactory)
-	reporterRegistry  = make(map[string]ReporterFactory)
+	capturerReg  = NewRegistry[Capturer]("capturer")
+	parserReg    = NewRegistry[Parser]("parser")
+	processorReg = NewRegistry[Processor]("processor")
+	reporterReg  = NewRegistry[Reporter]("reporter")
 )
 
+// ──── Capturer ────
+
 // RegisterCapturer registers a capturer factory by name.
-// Panics if the name is already registered (indicates a compile-time bug).
 func RegisterCapturer(name string, factory CapturerFactory) {
-	if name == "" {
-		panic("plugin: capturer name cannot be empty")
-	}
-	if factory == nil {
-		panic("plugin: capturer factory cannot be nil")
-	}
-	if _, exists := capturerRegistry[name]; exists {
-		panic(fmt.Sprintf("plugin: capturer %q already registered", name))
-	}
-	capturerRegistry[name] = factory
-}
-
-// RegisterParser registers a parser factory by name.
-// Panics if the name is already registered (indicates a compile-time bug).
-func RegisterParser(name string, factory ParserFactory) {
-	if name == "" {
-		panic("plugin: parser name cannot be empty")
-	}
-	if factory == nil {
-		panic("plugin: parser factory cannot be nil")
-	}
-	if _, exists := parserRegistry[name]; exists {
-		panic(fmt.Sprintf("plugin: parser %q already registered", name))
-	}
-	parserRegistry[name] = factory
-}
-
-// RegisterProcessor registers a processor factory by name.
-// Panics if the name is already registered (indicates a compile-time bug).
-func RegisterProcessor(name string, factory ProcessorFactory) {
-	if name == "" {
-		panic("plugin: processor name cannot be empty")
-	}
-	if factory == nil {
-		panic("plugin: processor factory cannot be nil")
-	}
-	if _, exists := processorRegistry[name]; exists {
-		panic(fmt.Sprintf("plugin: processor %q already registered", name))
-	}
-	processorRegistry[name] = factory
-}
-
-// RegisterReporter registers a reporter factory by name.
-// Panics if the name is already registered (indicates a compile-time bug).
-func RegisterReporter(name string, factory ReporterFactory) {
-	if name == "" {
-		panic("plugin: reporter name cannot be empty")
-	}
-	if factory == nil {
-		panic("plugin: reporter factory cannot be nil")
-	}
-	if _, exists := reporterRegistry[name]; exists {
-		panic(fmt.Sprintf("plugin: reporter %q already registered", name))
-	}
-	reporterRegistry[name] = factory
+	capturerReg.Register(name, factory)
 }
 
 // GetCapturerFactory returns the factory for the named capturer.
-// Returns core.ErrPluginNotFound if not registered.
 func GetCapturerFactory(name string) (CapturerFactory, error) {
-	factory, ok := capturerRegistry[name]
-	if !ok {
-		return nil, fmt.Errorf("capturer %q: %w", name, core.ErrPluginNotFound)
-	}
-	return factory, nil
-}
-
-// GetParserFactory returns the factory for the named parser.
-// Returns core.ErrPluginNotFound if not registered.
-func GetParserFactory(name string) (ParserFactory, error) {
-	factory, ok := parserRegistry[name]
-	if !ok {
-		return nil, fmt.Errorf("parser %q: %w", name, core.ErrPluginNotFound)
-	}
-	return factory, nil
-}
-
-// GetProcessorFactory returns the factory for the named processor.
-// Returns core.ErrPluginNotFound if not registered.
-func GetProcessorFactory(name string) (ProcessorFactory, error) {
-	factory, ok := processorRegistry[name]
-	if !ok {
-		return nil, fmt.Errorf("processor %q: %w", name, core.ErrPluginNotFound)
-	}
-	return factory, nil
-}
-
-// GetReporterFactory returns the factory for the named reporter.
-// Returns core.ErrPluginNotFound if not registered.
-func GetReporterFactory(name string) (ReporterFactory, error) {
-	factory, ok := reporterRegistry[name]
-	if !ok {
-		return nil, fmt.Errorf("reporter %q: %w", name, core.ErrPluginNotFound)
-	}
-	return factory, nil
+	return capturerReg.Get(name)
 }
 
 // ListCapturers returns a sorted list of all registered capturer names.
 func ListCapturers() []string {
-	names := make([]string, 0, len(capturerRegistry))
-	for name := range capturerRegistry {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	return names
+	return capturerReg.List()
+}
+
+// ──── Parser ────
+
+// RegisterParser registers a parser factory by name.
+func RegisterParser(name string, factory ParserFactory) {
+	parserReg.Register(name, factory)
+}
+
+// GetParserFactory returns the factory for the named parser.
+func GetParserFactory(name string) (ParserFactory, error) {
+	return parserReg.Get(name)
 }
 
 // ListParsers returns a sorted list of all registered parser names.
 func ListParsers() []string {
-	names := make([]string, 0, len(parserRegistry))
-	for name := range parserRegistry {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	return names
+	return parserReg.List()
+}
+
+// ──── Processor ────
+
+// RegisterProcessor registers a processor factory by name.
+func RegisterProcessor(name string, factory ProcessorFactory) {
+	processorReg.Register(name, factory)
+}
+
+// GetProcessorFactory returns the factory for the named processor.
+func GetProcessorFactory(name string) (ProcessorFactory, error) {
+	return processorReg.Get(name)
 }
 
 // ListProcessors returns a sorted list of all registered processor names.
 func ListProcessors() []string {
-	names := make([]string, 0, len(processorRegistry))
-	for name := range processorRegistry {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	return names
+	return processorReg.List()
+}
+
+// ──── Reporter ────
+
+// RegisterReporter registers a reporter factory by name.
+func RegisterReporter(name string, factory ReporterFactory) {
+	reporterReg.Register(name, factory)
+}
+
+// GetReporterFactory returns the factory for the named reporter.
+func GetReporterFactory(name string) (ReporterFactory, error) {
+	return reporterReg.Get(name)
 }
 
 // ListReporters returns a sorted list of all registered reporter names.
 func ListReporters() []string {
-	names := make([]string, 0, len(reporterRegistry))
-	for name := range reporterRegistry {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	return names
+	return reporterReg.List()
 }

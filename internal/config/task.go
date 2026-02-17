@@ -31,12 +31,13 @@ type ChannelCapacityConfig struct {
 
 // CaptureConfig contains capture plugin configuration.
 type CaptureConfig struct {
-	Name         string         `json:"name" yaml:"name"`
-	DispatchMode string         `json:"dispatch_mode" yaml:"dispatch_mode"`
-	Interface    string         `json:"interface" yaml:"interface"`
-	BPFFilter    string         `json:"bpf_filter" yaml:"bpf_filter"`
-	SnapLen      int            `json:"snap_len" yaml:"snap_len"`
-	Config       map[string]any `json:"config" yaml:"config"`
+	Name             string         `json:"name" yaml:"name"`
+	DispatchMode     string         `json:"dispatch_mode" yaml:"dispatch_mode"`
+	DispatchStrategy string         `json:"dispatch_strategy" yaml:"dispatch_strategy"` // "flow-hash" (default), "round-robin"
+	Interface        string         `json:"interface" yaml:"interface"`
+	BPFFilter        string         `json:"bpf_filter" yaml:"bpf_filter"`
+	SnapLen          int            `json:"snap_len" yaml:"snap_len"`
+	Config           map[string]any `json:"config" yaml:"config"`
 }
 
 // DecoderConfig contains decoder configuration.

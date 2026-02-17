@@ -24,6 +24,8 @@ type ReassemblyConfig struct {
 	MaxFragments      int // Maximum fragments per flow (default 100)
 	MaxReassembleSize int // Maximum reassembled packet size (default 65535)
 	Timeout           int // Timeout in seconds (default 60)
+	MaxFragsPerIP     int // Per-source-IP fragment rate limit per window (0 = disabled)
+	RateLimitWindow   int // Rate limit window in seconds (default 10)
 }
 
 // fragmentKey uniquely identifies a fragmented IPv4 datagram.
@@ -57,9 +59,10 @@ type fragmentList struct {
 
 // Reassembler handles IPv4 fragment reassembly using BSD-Right algorithm.
 type Reassembler struct {
-	mu     sync.Mutex
-	flows  map[fragmentKey]*fragmentList
-	config ReassemblyConfig
+	mu          sync.Mutex
+	flows       map[fragmentKey]*fragmentList
+	config      ReassemblyConfig
+	rateLimiter *FragmentRateLimiter // nil if rate limiting disabled
 }
 
 // NewReassembler creates a new IP fragment reassembler.
@@ -77,6 +80,10 @@ func NewReassembler(cfg ReassemblyConfig) *Reassembler {
 	r := &Reassembler{
 		flows:  make(map[fragmentKey]*fragmentList),
 		config: cfg,
+		rateLimiter: NewFragmentRateLimiter(FragmentRateLimiterConfig{
+			MaxFragsPerIP:   cfg.MaxFragsPerIP,
+			RateLimitWindow: time.Duration(cfg.RateLimitWindow) * time.Second,
+		}),
 	}
 
 	// Start cleanup goroutine for expired fragments
@@ -136,6 +143,14 @@ func (r *Reassembler) Process(ipData []byte, timestamp time.Time) ([]byte, bool,
 	// Security checks (ported from reference implementation)
 	if err := r.securityChecks(fragPayloadLen, fragOffset); err != nil {
 		return nil, false, err
+	}
+
+	// Per-source-IP rate limiting (DoS protection)
+	var srcIPKey [4]byte
+	copy(srcIPKey[:], ipData[12:16])
+	if r.rateLimiter != nil && !r.rateLimiter.Allow(srcIPKey, timestamp) {
+		return nil, false, fmt.Errorf("fragment rate limit exceeded for source IP %d.%d.%d.%d",
+			srcIPKey[0], srcIPKey[1], srcIPKey[2], srcIPKey[3])
 	}
 
 	// Build fragment key from raw bytes

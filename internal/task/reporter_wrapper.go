@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"firestige.xyz/otus/internal/core"
+	"firestige.xyz/otus/internal/metrics"
 	"firestige.xyz/otus/pkg/plugin"
 )
 
@@ -25,6 +26,7 @@ type ReporterWrapper struct {
 	primary  plugin.Reporter
 	fallback plugin.Reporter // nil if no fallback configured
 
+	taskID       string // for Prometheus label
 	batchSize    int
 	batchTimeout time.Duration
 
@@ -36,6 +38,7 @@ type ReporterWrapper struct {
 type WrapperConfig struct {
 	Primary      plugin.Reporter
 	Fallback     plugin.Reporter // nil if no fallback
+	TaskID       string          // task ID for Prometheus labels
 	BatchSize    int
 	BatchTimeout time.Duration
 }
@@ -54,6 +57,7 @@ func NewReporterWrapper(cfg WrapperConfig) *ReporterWrapper {
 	return &ReporterWrapper{
 		primary:      cfg.Primary,
 		fallback:     cfg.Fallback,
+		taskID:       cfg.TaskID,
 		batchSize:    batchSize,
 		batchTimeout: batchTimeout,
 		batchCh:      make(chan *core.OutputPacket, defaultWrapperChanCap),
@@ -99,6 +103,7 @@ func (w *ReporterWrapper) batchLoop(ctx context.Context) {
 			if w.fallback != nil {
 				for _, pkt := range batch {
 					if fbErr := w.fallback.Report(ctx, pkt); fbErr != nil {
+						metrics.ReporterErrorsTotal.WithLabelValues(w.taskID, w.fallback.Name(), "fallback").Inc()
 						slog.Warn("fallback reporter also failed",
 							"reporter", w.fallback.Name(),
 							"error", fbErr)
@@ -130,15 +135,26 @@ func (w *ReporterWrapper) batchLoop(ctx context.Context) {
 // sendBatch sends a batch of packets using BatchReporter if available,
 // otherwise falls back to calling Report() one-by-one.
 func (w *ReporterWrapper) sendBatch(ctx context.Context, batch []*core.OutputPacket) error {
+	reporterName := w.primary.Name()
+
+	// Record batch size metric
+	metrics.ReporterBatchSize.WithLabelValues(w.taskID, reporterName).
+		Observe(float64(len(batch)))
+
 	// Prefer BatchReporter interface for high-throughput reporters (e.g., Kafka)
 	if br, ok := w.primary.(plugin.BatchReporter); ok {
-		return br.ReportBatch(ctx, batch)
+		if err := br.ReportBatch(ctx, batch); err != nil {
+			metrics.ReporterErrorsTotal.WithLabelValues(w.taskID, reporterName, "batch").Inc()
+			return err
+		}
+		return nil
 	}
 
 	// Fallback: sequential Report() calls
 	var lastErr error
 	for _, pkt := range batch {
 		if err := w.primary.Report(ctx, pkt); err != nil {
+			metrics.ReporterErrorsTotal.WithLabelValues(w.taskID, reporterName, "report").Inc()
 			lastErr = err
 		}
 	}
