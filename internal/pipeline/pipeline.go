@@ -55,24 +55,24 @@ func New(cfg Config) *Pipeline {
 // This is the single goroutine main loop that does synchronous processing (zero internal channels).
 func (p *Pipeline) Run(ctx context.Context, input <-chan core.RawPacket, output chan<- core.OutputPacket) {
 	slog.Info("pipeline starting", "task_id", p.taskID, "pipeline_id", p.id)
-	
+
 	defer func() {
 		slog.Info("pipeline stopped", "task_id", p.taskID, "pipeline_id", p.id)
 	}()
-	
+
 	for {
 		select {
 		case <-ctx.Done():
 			return
-			
+
 		case raw, ok := <-input:
 			if !ok {
 				// Input stream closed
 				return
 			}
-			
+
 			p.metrics.Received.Add(1)
-			
+
 			// Process packet synchronously (zero channel internal passing)
 			if result, ok := p.processPacket(raw); ok {
 				// Non-blocking send to output

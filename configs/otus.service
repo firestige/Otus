@@ -1,32 +1,51 @@
 [Unit]
-Description=Otus Service Daemon
+Description=Otus Network Packet Capture Daemon
 Documentation=https://github.com/firestige/otus
-After=network.target
+After=network-online.target
+Wants=network-online.target
 
 [Service]
 Type=simple
-User=firestige
-Group=firestige
+# Run as root for raw socket access (or use CAP_NET_RAW+CAP_NET_ADMIN)
+User=root
+Group=root
 
-# 前台运行模式
-ExecStart=/usr/local/bin/otus start --foreground
-ExecStop=/usr/local/bin/otus stop
-ExecReload=/usr/local/bin/otus reload
+# Daemon mode (foreground for systemd)
+ExecStart=/usr/local/bin/otus daemon
+ExecReload=/bin/kill -HUP $MAINPID
 
+# Graceful shutdown (SIGTERM)
+KillMode=mixed
+KillSignal=SIGTERM
+TimeoutStopSec=30
+
+# Auto-restart on failure
 Restart=on-failure
 RestartSec=5s
 
-# 安全加固
-NoNewPrivileges=true
-PrivateTmp=true
-ProtectSystem=strict
-ProtectHome=true
-ReadWritePaths=/tmp
+# Resource limits
+LimitNOFILE=65536
+LimitNPROC=512
 
-# 日志
+# Security hardening (compatible with packet capture)
+# Note: Some restrictions are relaxed due to raw socket requirements
+NoNewPrivileges=false
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/var/lib/otus /var/log/otus /etc/otus
+
+# Required capabilities for packet capture
+AmbientCapabilities=CAP_NET_RAW CAP_NET_ADMIN
+CapabilityBoundingSet=CAP_NET_RAW CAP_NET_ADMIN CAP_DAC_OVERRIDE
+
+# Logging
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=otus
+
+# Working directory
+WorkingDirectory=/var/lib/otus
 
 [Install]
 WantedBy=multi-user.target

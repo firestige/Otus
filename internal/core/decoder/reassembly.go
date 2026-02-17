@@ -83,7 +83,7 @@ func (r *Reassembler) Process(ip core.IPHeader, data []byte, timestamp time.Time
 			lastSeen:  timestamp,
 		}
 		r.flows[key] = entry
-		
+
 		// Update Prometheus metric
 		metrics.ReassemblyActiveFragments.Inc()
 	}
@@ -175,7 +175,7 @@ func (r *Reassembler) cleanup() {
 				expiredCount++
 			}
 		}
-		
+
 		// Update Prometheus metric for expired fragments
 		if expiredCount > 0 {
 			metrics.ReassemblyActiveFragments.Sub(float64(expiredCount))
