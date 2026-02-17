@@ -824,16 +824,49 @@ agent:
 
 ### Step 13: 控制面 — UDS 本地通信
 **前置**: Step 8  
-**目标**: 实现 CLI ↔ daemon 本地控制
+**目标**: 实现 CLI ↔ daemon 本地控制  
+**状态**: ✅ 已完成
 
 **任务清单**:
-1. `internal/command/uds_server.go` — JSON-RPC Server
-   - Unix Domain Socket 监听
-   - 协议：`{"jsonrpc":"2.0","method":"task.create","params":{...},"id":1}`
-   - 路由到 handler.go 同一套处理函数
-2. `internal/command/uds_client.go` — JSON-RPC Client（CLI 使用）
-   - Dial UDS + 发送 request + 等待 response
-3. 单元测试：request/response 序列化、error 码
+1. ✅ `internal/command/uds_server.go` (210 行)
+   - UDSServer 结构体，管理 listener 和多个连接
+   - Start() 方法：创建 Unix listener，设置权限 0600，接受连接循环
+   - acceptLoop() 方法：并发接受多个连接
+   - handleConnection() 方法：每个连接一个 goroutine，处理 JSON-RPC 请求
+   - Stop() 方法：优雅停止（关闭 listener，关闭所有连接，等待 goroutine 结束）
+   - JSONRPCRequest/JSONRPCResponse 结构体（JSON-RPC 2.0 协议）
+2. ✅ `internal/command/uds_client.go` (145 行)
+   - UDSClient 结构体，包含 socketPath 和 timeout
+   - Call() 方法：通用调用方法（连接 UDS，发送请求，接收响应，ID 验证）
+   - 便捷方法：TaskCreate(), TaskDelete(), TaskList(), TaskStatus(), ConfigReload(), Ping()
+   - 超时控制：默认 10s，支持 context deadline
+   - 错误处理：连接失败、超时、ID 不匹配
+3. ✅ 单元测试：`uds_test.go` (8 个测试用例)
+   - 集成测试：Server + Client 完整交互
+   - 错误测试：连接失败、超时
+   - 并发测试：多个客户端同时连接
+   - 便捷方法测试：所有便捷方法调用
+
+**实现细节**:
+- **JSON-RPC 2.0 协议格式**：
+  ```json
+  # Request
+  {"jsonrpc":"2.0","method":"task.create","params":{...},"id":"req-123"}
+  
+  # Response
+  {"jsonrpc":"2.0","id":"req-123","result":{...}}
+  # or
+  {"jsonrpc":"2.0","id":"req-123","error":{"code":-32601,"message":"..."}}
+  ```
+- **请求 ID 格式**：字符串 "req-{timestamp}" 避免 JSON 数字精度问题
+- **连接管理**：
+  - 每个连接独立 goroutine，使用 bufio.Scanner 读取行分隔的 JSON
+  - 连接追踪（map[net.Conn]struct{}）用于优雅停止
+  - WaitGroup 确保所有 handler 完成后才退出
+- **权限设置**：socket 文件权限 0600（仅 owner 可读写）
+- **资源清理**：
+  - Server Stop 时删除 socket 文件
+  - Client 每次调用后关闭连接（短连接模式）
 
 **交付物**: CLI 命令可通过 UDS 控制 daemon
 

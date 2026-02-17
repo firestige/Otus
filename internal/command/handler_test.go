@@ -147,7 +147,7 @@ func TestCommandHandler_HandleTaskDelete(t *testing.T) {
 
 func TestCommandHandler_HandleConfigReload(t *testing.T) {
 	tm := task.NewTaskManager("test-agent")
-	
+
 	reloadCalled := false
 	reloader := &mockConfigReloader{
 		reloadFunc: func() error {
@@ -155,7 +155,7 @@ func TestCommandHandler_HandleConfigReload(t *testing.T) {
 			return nil
 		},
 	}
-	
+
 	handler := NewCommandHandler(tm, reloader)
 
 	cmd := Command{

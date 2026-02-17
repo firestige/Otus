@@ -13,12 +13,12 @@ import (
 
 // KafkaCommandConfig represents Kafka command consumer configuration.
 type KafkaCommandConfig struct {
-	Brokers      []string      `json:"brokers"`        // Kafka brokers
-	Topic        string        `json:"topic"`          // Command topic
-	GroupID      string        `json:"group_id"`       // Consumer group ID
-	StartOffset  string        `json:"start_offset"`   // "earliest" or "latest", default "latest"
-	PollInterval time.Duration `json:"poll_interval"`  // Poll interval, default 1s
-	MaxRetries   int           `json:"max_retries"`    // Max retries for processing errors, default 3
+	Brokers      []string      `json:"brokers"`       // Kafka brokers
+	Topic        string        `json:"topic"`         // Command topic
+	GroupID      string        `json:"group_id"`      // Consumer group ID
+	StartOffset  string        `json:"start_offset"`  // "earliest" or "latest", default "latest"
+	PollInterval time.Duration `json:"poll_interval"` // Poll interval, default 1s
+	MaxRetries   int           `json:"max_retries"`   // Max retries for processing errors, default 3
 }
 
 // KafkaCommandConsumer consumes commands from Kafka and dispatches to handler.
@@ -68,8 +68,8 @@ func NewKafkaCommandConsumer(config KafkaCommandConfig, handler *CommandHandler)
 		Topic:          config.Topic,
 		GroupID:        config.GroupID,
 		StartOffset:    startOffset,
-		MinBytes:       1,         // Fetch as soon as 1 byte available
-		MaxBytes:       10 << 20,  // 10MB max
+		MinBytes:       1,           // Fetch as soon as 1 byte available
+		MaxBytes:       10 << 20,    // 10MB max
 		CommitInterval: time.Second, // Auto-commit every second
 		MaxWait:        config.PollInterval,
 	})
