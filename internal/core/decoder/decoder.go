@@ -94,6 +94,9 @@ func (sd *StandardDecoder) Decode(raw core.RawPacket) (core.DecodedPacket, error
 		return decoded, nil
 	}
 
+	// Save raw IP data before decodeIP strips the header (needed for reassembly)
+	ipRawData := data
+
 	// L3 IP decoding
 	ip, payload, err := decodeIP(data)
 	if err != nil {
@@ -101,6 +104,22 @@ func (sd *StandardDecoder) Decode(raw core.RawPacket) (core.DecodedPacket, error
 	}
 	decoded.IP = ip
 	data = payload
+
+	// Handle IP fragmentation (before tunnel decap — outer IP is what gets fragmented)
+	if sd.reassembler != nil && ip.Version == 4 {
+		if isIPFragment(ipRawData, ip.Version) {
+			reassembled, complete, err := sd.reassembler.Process(ipRawData, raw.Timestamp)
+			if err != nil {
+				return decoded, fmt.Errorf("reassembly failed: %w", err)
+			}
+			if !complete {
+				return decoded, core.ErrFragmentIncomplete
+			}
+			// Use reassembled payload (transport layer onwards)
+			data = reassembled
+			decoded.Reassembled = true
+		}
+	}
 
 	// Handle tunnels (VXLAN, GRE, etc.)
 	if sd.shouldDecapTunnel(ip.Protocol) {
@@ -111,25 +130,6 @@ func (sd *StandardDecoder) Decode(raw core.RawPacket) (core.DecodedPacket, error
 			decoded.IP.InnerDstIP = innerIP.DstIP
 			ip = innerIP
 			data = innerPayload
-		}
-	}
-
-	// Handle IP fragmentation
-	if sd.reassembler != nil {
-		isFragmented := isIPFragment(raw.Data[:len(raw.Data)-len(data)], ip.Version)
-		if isFragmented {
-			// Try reassembly
-			reassembled, complete, err := sd.reassembler.Process(ip, data, raw.Timestamp)
-			if err != nil {
-				return decoded, fmt.Errorf("reassembly failed: %w", err)
-			}
-			if !complete {
-				// Fragment not complete yet, return empty
-				return decoded, core.ErrFragmentIncomplete
-			}
-			// Use reassembled data
-			data = reassembled
-			decoded.Reassembled = true
 		}
 	}
 

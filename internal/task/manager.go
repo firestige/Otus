@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"time"
 
 	"firestige.xyz/otus/internal/config"
 	"firestige.xyz/otus/internal/core/decoder"
@@ -208,10 +209,50 @@ func (m *TaskManager) Create(cfg config.TaskConfig) error {
 		task.Pipelines = append(task.Pipelines, p)
 	}
 
+	// Build ReporterWrappers (batching + fallback) for each reporter.
+	// Build a name→reporter index for fallback resolution.
+	reporterByName := make(map[string]plugin.Reporter, len(task.Reporters))
+	for _, rep := range task.Reporters {
+		reporterByName[rep.Name()] = rep
+	}
+
+	for i, rep := range task.Reporters {
+		rcfg := cfg.Reporters[i]
+		var fallback plugin.Reporter
+		if rcfg.Fallback != "" {
+			if fb, ok := reporterByName[rcfg.Fallback]; ok {
+				fallback = fb
+			} else {
+				slog.Warn("fallback reporter not found, ignoring",
+					"task_id", cfg.ID, "reporter", rcfg.Name, "fallback", rcfg.Fallback)
+			}
+		}
+
+		var batchTimeout time.Duration
+		if rcfg.BatchTimeout != "" {
+			if parsed, err := time.ParseDuration(rcfg.BatchTimeout); err == nil {
+				batchTimeout = parsed
+			} else {
+				slog.Warn("invalid batch_timeout, using default",
+					"task_id", cfg.ID, "reporter", rcfg.Name, "value", rcfg.BatchTimeout, "error", err)
+			}
+		}
+
+		w := NewReporterWrapper(WrapperConfig{
+			Primary:      rep,
+			Fallback:     fallback,
+			TaskID:       cfg.ID,
+			BatchSize:    rcfg.BatchSize,
+			BatchTimeout: batchTimeout,
+		})
+		task.ReporterWrappers = append(task.ReporterWrappers, w)
+	}
+
 	// ========== Phase 7: Start ==========
 	slog.Debug("starting task", "task_id", cfg.ID)
 
 	if err := task.Start(); err != nil {
+		task.cancel() // Release context resources on failed start
 		return fmt.Errorf("task start failed: %w", err)
 	}
 
@@ -320,4 +361,17 @@ func (m *TaskManager) StopAll() error {
 	m.tasks = make(map[string]*Task)
 
 	return lastErr
+}
+
+// UpdateMetricsInterval propagates a new metrics collection interval to all running tasks.
+// This is called by Daemon.Reload() when the metrics.collect_interval config changes.
+func (m *TaskManager) UpdateMetricsInterval(d time.Duration) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	for _, t := range m.tasks {
+		t.UpdateMetricsInterval(d)
+	}
+
+	slog.Info("metrics interval updated for all tasks", "interval", d, "task_count", len(m.tasks))
 }

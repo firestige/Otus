@@ -2,6 +2,7 @@ package task
 
 import (
 	"net/netip"
+	"sync"
 	"testing"
 
 	"firestige.xyz/otus/pkg/plugin"
@@ -143,5 +144,74 @@ func TestFlowRegistryConcurrent(t *testing.T) {
 	// Value should be one of the written values
 	if _, ok := registry.Get(key); !ok {
 		t.Error("Expected Get to return true")
+	}
+}
+
+func TestFlowRegistryCountAccuracy(t *testing.T) {
+	// Stress-test the atomic counter with concurrent Set/Delete on distinct keys.
+	registry := NewFlowRegistry()
+	const N = 500
+	var wg sync.WaitGroup
+
+	// Phase 1: concurrent inserts of N distinct keys
+	wg.Add(N)
+	for i := 0; i < N; i++ {
+		go func(n int) {
+			defer wg.Done()
+			key := plugin.FlowKey{
+				SrcIP:   netip.MustParseAddr("10.0.0.1"),
+				DstIP:   netip.MustParseAddr("10.0.0.2"),
+				SrcPort: uint16(n),
+				DstPort: 80,
+				Proto:   6,
+			}
+			registry.Set(key, n)
+		}(i)
+	}
+	wg.Wait()
+	if got := registry.Count(); got != N {
+		t.Fatalf("After %d inserts, Count()=%d", N, got)
+	}
+
+	// Phase 2: concurrent deletes of first half
+	half := N / 2
+	wg.Add(half)
+	for i := 0; i < half; i++ {
+		go func(n int) {
+			defer wg.Done()
+			key := plugin.FlowKey{
+				SrcIP:   netip.MustParseAddr("10.0.0.1"),
+				DstIP:   netip.MustParseAddr("10.0.0.2"),
+				SrcPort: uint16(n),
+				DstPort: 80,
+				Proto:   6,
+			}
+			registry.Delete(key)
+		}(i)
+	}
+	wg.Wait()
+	if got := registry.Count(); got != N-half {
+		t.Fatalf("After deleting %d, Count()=%d, want %d", half, got, N-half)
+	}
+
+	// Phase 3: delete already-deleted keys should not decrement further
+	for i := 0; i < half; i++ {
+		key := plugin.FlowKey{
+			SrcIP:   netip.MustParseAddr("10.0.0.1"),
+			DstIP:   netip.MustParseAddr("10.0.0.2"),
+			SrcPort: uint16(i),
+			DstPort: 80,
+			Proto:   6,
+		}
+		registry.Delete(key)
+	}
+	if got := registry.Count(); got != N-half {
+		t.Fatalf("After re-deleting, Count()=%d, want %d", got, N-half)
+	}
+
+	// Phase 4: Clear should reset to 0
+	registry.Clear()
+	if got := registry.Count(); got != 0 {
+		t.Fatalf("After Clear(), Count()=%d, want 0", got)
 	}
 }

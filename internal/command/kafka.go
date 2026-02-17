@@ -213,12 +213,16 @@ func (c *KafkaCommandConsumer) processMessage(ctx context.Context, msg kafka.Mes
 }
 
 // Stop stops the Kafka consumer and closes the connection.
+// Always nils the reader to prevent double-close, even if Close() returns an error.
 func (c *KafkaCommandConsumer) Stop() error {
-	if c.reader != nil {
-		slog.Info("closing kafka command consumer")
-		if err := c.reader.Close(); err != nil {
-			return fmt.Errorf("failed to close kafka reader: %w", err)
-		}
+	if c.reader == nil {
+		return nil
+	}
+	reader := c.reader
+	c.reader = nil // prevent double-close regardless of outcome
+	slog.Info("closing kafka command consumer")
+	if err := reader.Close(); err != nil {
+		return fmt.Errorf("failed to close kafka reader: %w", err)
 	}
 	return nil
 }

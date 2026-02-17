@@ -3,6 +3,7 @@ package task
 
 import (
 	"sync"
+	"sync/atomic"
 
 	"firestige.xyz/otus/pkg/plugin"
 )
@@ -11,7 +12,8 @@ import (
 // It is shared across all pipelines within a task and is thread-safe.
 // Typical use case: SIP parser tracking INVITE → 200 OK → ACK dialog state.
 type FlowRegistry struct {
-	data sync.Map // map[plugin.FlowKey]any - stores arbitrary flow state
+	data  sync.Map // map[plugin.FlowKey]any - stores arbitrary flow state
+	count atomic.Int64
 }
 
 // NewFlowRegistry creates a new flow registry.
@@ -28,12 +30,18 @@ func (r *FlowRegistry) Get(key plugin.FlowKey) (any, bool) {
 // Set stores flow state for the given key.
 // Overwrites existing value if present.
 func (r *FlowRegistry) Set(key plugin.FlowKey, value any) {
-	r.data.Store(key, value)
+	_, loaded := r.data.Swap(key, value)
+	if !loaded {
+		r.count.Add(1)
+	}
 }
 
 // Delete removes flow state for the given key.
 func (r *FlowRegistry) Delete(key plugin.FlowKey) {
-	r.data.Delete(key)
+	_, loaded := r.data.LoadAndDelete(key)
+	if loaded {
+		r.count.Add(-1)
+	}
 }
 
 // Range iterates over all flows in the registry.
@@ -48,21 +56,17 @@ func (r *FlowRegistry) Range(f func(key plugin.FlowKey, value any) bool) {
 	})
 }
 
-// Count returns the approximate number of flows in the registry.
-// Note: This is O(n) as sync.Map doesn't track size.
+// Count returns the number of flows in the registry.
+// O(1) via atomic counter maintained by Set/Delete/Clear.
 func (r *FlowRegistry) Count() int {
-	count := 0
-	r.data.Range(func(_, _ any) bool {
-		count++
-		return true
-	})
-	return count
+	return int(r.count.Load())
 }
 
 // Clear removes all flows from the registry.
 func (r *FlowRegistry) Clear() {
 	r.data.Range(func(key, _ any) bool {
 		r.data.Delete(key)
+		r.count.Add(-1)
 		return true
 	})
 }

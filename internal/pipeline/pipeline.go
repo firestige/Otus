@@ -5,6 +5,7 @@ import (
 	"context"
 	"log/slog"
 	"strconv"
+	"sync/atomic"
 	"time"
 
 	"firestige.xyz/otus/internal/core"
@@ -24,6 +25,7 @@ type Pipeline struct {
 	parsers    []plugin.Parser
 	processors []plugin.Processor
 	metrics    *Metrics
+	dropCount  atomic.Uint64 // total drops for sampled logging
 }
 
 // Config contains pipeline configuration.
@@ -84,7 +86,11 @@ func (p *Pipeline) Run(ctx context.Context, input <-chan core.RawPacket, output 
 				default:
 					// Output channel full, drop packet
 					p.metrics.Dropped.Add(1)
-					slog.Debug("output channel full, dropping packet", "task_id", p.taskID, "pipeline_id", p.id)
+					if p.dropCount.Add(1)%1000 == 1 {
+						slog.Warn("pipeline output full, dropping packets",
+							"task_id", p.taskID, "pipeline_id", p.id,
+							"total_dropped", p.dropCount.Load())
+					}
 				}
 			}
 		}
@@ -207,6 +213,16 @@ func (p *Pipeline) Stats() Stats {
 		Processed:    p.metrics.Processed.Load(),
 		Dropped:      p.metrics.Dropped.Load(),
 	}
+}
+
+// Parsers returns the pipeline's parser instances for lifecycle management.
+func (p *Pipeline) Parsers() []plugin.Parser {
+	return p.parsers
+}
+
+// Processors returns the pipeline's processor instances for lifecycle management.
+func (p *Pipeline) Processors() []plugin.Processor {
+	return p.processors
 }
 
 // Stats represents pipeline statistics.

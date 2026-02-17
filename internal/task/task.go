@@ -8,6 +8,7 @@ import (
 	"hash/fnv"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"firestige.xyz/otus/internal/config"
@@ -31,6 +32,8 @@ const (
 	StateStopping TaskState = "stopping"
 	// StateStopped indicates task has stopped cleanly.
 	StateStopped TaskState = "stopped"
+	// StatePaused indicates task is temporarily paused.
+	StatePaused TaskState = "paused"
 	// StateFailed indicates task failed during startup or runtime.
 	StateFailed TaskState = "failed"
 )
@@ -46,9 +49,10 @@ type Task struct {
 	Config config.TaskConfig
 
 	// Plugin instances (owned by Task)
-	Capturers []plugin.Capturer
-	Reporters []plugin.Reporter
-	Registry  *FlowRegistry
+	Capturers        []plugin.Capturer
+	Reporters        []plugin.Reporter
+	ReporterWrappers []*ReporterWrapper // batching + fallback wrappers around Reporters
+	Registry         *FlowRegistry
 
 	// Pipeline instances (N copies)
 	Pipelines []*pipeline.Pipeline
@@ -70,6 +74,12 @@ type Task struct {
 	stoppedAt     time.Time
 	failureReason string
 
+	// Hot-reloadable settings
+	metricsInterval atomic.Int64 // nanoseconds; 0 = use default (5s)
+
+	// Dispatch strategy for multi-pipeline distribution
+	dispatchStrategy DispatchStrategy
+
 	// Context and cancellation
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -85,26 +95,41 @@ func NewTask(cfg config.TaskConfig) *Task {
 		numPipelines = 1
 	}
 
+	// Channel capacities: use configured values or sensible defaults.
+	rawCap := cfg.ChannelCapacity.RawStream
+	if rawCap <= 0 {
+		rawCap = 1000
+	}
+	sendCap := cfg.ChannelCapacity.SendBuffer
+	if sendCap <= 0 {
+		sendCap = 10000
+	}
+	capCap := cfg.ChannelCapacity.CaptureCh
+	if capCap <= 0 {
+		capCap = 1000
+	}
+
 	rawStreams := make([]chan core.RawPacket, numPipelines)
 	for i := 0; i < numPipelines; i++ {
-		rawStreams[i] = make(chan core.RawPacket, 1000) // TODO: configurable buffer size
+		rawStreams[i] = make(chan core.RawPacket, rawCap)
 	}
 
 	t := &Task{
-		Config:     cfg,
-		Pipelines:  make([]*pipeline.Pipeline, 0, numPipelines),
-		rawStreams: rawStreams,
-		sendBuffer: make(chan core.OutputPacket, 10000), // TODO: configurable
-		doneCh:     make(chan struct{}),
-		state:      StateCreated,
-		createdAt:  time.Now(),
-		ctx:        ctx,
-		cancel:     cancel,
+		Config:           cfg,
+		Pipelines:        make([]*pipeline.Pipeline, 0, numPipelines),
+		rawStreams:       rawStreams,
+		sendBuffer:       make(chan core.OutputPacket, sendCap),
+		doneCh:           make(chan struct{}),
+		state:            StateCreated,
+		createdAt:        time.Now(),
+		dispatchStrategy: NewDispatchStrategy(cfg.Capture.DispatchStrategy),
+		ctx:              ctx,
+		cancel:           cancel,
 	}
 
 	// dispatch mode needs an intermediate channel
 	if cfg.Capture.DispatchMode == "dispatch" {
-		t.captureCh = make(chan core.RawPacket, 1000) // TODO: configurable
+		t.captureCh = make(chan core.RawPacket, capCap)
 	}
 
 	return t
@@ -140,6 +165,8 @@ func (t *Task) setState(s TaskState) {
 		statusValue = metrics.TaskStatusRunning
 	case StateFailed:
 		statusValue = metrics.TaskStatusError
+	case StatePaused:
+		statusValue = metrics.TaskStatusPaused
 	default:
 		// For Created, Starting, Stopping - use 0 (stopped)
 		statusValue = metrics.TaskStatusStopped
@@ -152,6 +179,8 @@ func (t *Task) setState(s TaskState) {
 // It starts all components in reverse dependency order:
 // Reporters → Sender → Pipelines → Capturers
 // This ensures data has a destination before the source starts producing.
+//
+// If any component fails to start, already-started components are rolled back.
 func (t *Task) Start() error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -164,16 +193,33 @@ func (t *Task) Start() error {
 	t.startedAt = time.Now()
 
 	// Step 1: Start Reporters (data sinks)
+	startedReporters := 0
 	for i, rep := range t.Reporters {
 		slog.Debug("starting reporter", "task_id", t.Config.ID, "reporter_id", i, "name", rep.Name())
 		if err := rep.Start(t.ctx); err != nil {
+			// Rollback: stop already-started reporters
+			slog.Warn("reporter start failed, rolling back", "task_id", t.Config.ID, "reporter_id", i, "error", err)
+			rollbackCtx, rollbackCancel := context.WithTimeout(context.Background(), 10*time.Second)
+			for j := startedReporters - 1; j >= 0; j-- {
+				if stopErr := t.Reporters[j].Stop(rollbackCtx); stopErr != nil {
+					slog.Error("rollback: failed to stop reporter",
+						"task_id", t.Config.ID, "reporter_id", j, "error", stopErr)
+				}
+			}
+			rollbackCancel()
 			t.setState(StateFailed)
 			t.failureReason = fmt.Sprintf("reporter[%d] start failed: %v", i, err)
 			return fmt.Errorf("reporter[%d] start failed: %w", i, err)
 		}
+		startedReporters++
 	}
 
-	// Step 2: Start Sender goroutine (consumes sendBuffer → all Reporters)
+	// Step 2: Start ReporterWrappers (batching goroutines)
+	for _, w := range t.ReporterWrappers {
+		w.Start(t.ctx)
+	}
+
+	// Step 3: Start Sender goroutine (consumes sendBuffer → all Wrappers)
 	go t.senderLoop()
 
 	// Step 3: Start Pipelines (processing chains)
@@ -253,14 +299,16 @@ func (t *Task) Stop() error {
 	// Step 3: Wait for all pipelines to finish processing
 	t.pipelineWg.Wait()
 
-	// Step 4: Cancel context and close sendBuffer
-	t.cancel()
+	// Step 4: Close sendBuffer (safe: pipelineWg.Wait() ensures no writers remain)
 	close(t.sendBuffer)
 
-	// Step 5: Wait for sender to finish draining sendBuffer
+	// Step 5: Wait for sender to finish draining sendBuffer with valid ctx
 	<-t.doneCh
 
-	// Step 6: Flush and stop all reporters
+	// Step 6: Cancel context (senderLoop already exited, stats goroutine will exit)
+	t.cancel()
+
+	// Step 7: Flush and stop all reporters
 	flushCtx, flushCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer flushCancel()
 
@@ -280,6 +328,166 @@ func (t *Task) Stop() error {
 	t.mu.Unlock()
 
 	slog.Info("task stopped", "task_id", t.Config.ID)
+	return nil
+}
+
+// Pause pauses the task by calling Pause() on all pausable plugins.
+// Only running tasks can be paused. The task transitions to StatePaused.
+func (t *Task) Pause() error {
+	t.mu.Lock()
+	if t.state != StateRunning {
+		t.mu.Unlock()
+		return fmt.Errorf("cannot pause task in state %s", t.state)
+	}
+	t.setState(StatePaused)
+	t.mu.Unlock()
+
+	slog.Info("pausing task", "task_id", t.Config.ID)
+
+	// Pause capturers (stop packet ingestion first)
+	for i, cap := range t.Capturers {
+		if p, ok := cap.(plugin.Pausable); ok {
+			if err := p.Pause(); err != nil {
+				slog.Warn("capturer pause error", "task_id", t.Config.ID, "capturer_id", i, "error", err)
+			}
+		}
+	}
+
+	// Pause reporters
+	for i, rep := range t.Reporters {
+		if p, ok := rep.(plugin.Pausable); ok {
+			if err := p.Pause(); err != nil {
+				slog.Warn("reporter pause error", "task_id", t.Config.ID, "reporter_id", i, "error", err)
+			}
+		}
+	}
+
+	// Pause pipelines' parsers/processors
+	for _, pl := range t.Pipelines {
+		for _, parser := range pl.Parsers() {
+			if p, ok := parser.(plugin.Pausable); ok {
+				if err := p.Pause(); err != nil {
+					slog.Warn("parser pause error", "task_id", t.Config.ID, "error", err)
+				}
+			}
+		}
+		for _, proc := range pl.Processors() {
+			if p, ok := proc.(plugin.Pausable); ok {
+				if err := p.Pause(); err != nil {
+					slog.Warn("processor pause error", "task_id", t.Config.ID, "error", err)
+				}
+			}
+		}
+	}
+
+	slog.Info("task paused", "task_id", t.Config.ID)
+	return nil
+}
+
+// Resume resumes a paused task by calling Resume() on all pausable plugins.
+func (t *Task) Resume() error {
+	t.mu.Lock()
+	if t.state != StatePaused {
+		t.mu.Unlock()
+		return fmt.Errorf("cannot resume task in state %s", t.state)
+	}
+	t.setState(StateRunning)
+	t.mu.Unlock()
+
+	slog.Info("resuming task", "task_id", t.Config.ID)
+
+	// Resume in reverse order: parsers/processors → reporters → capturers
+	for _, pl := range t.Pipelines {
+		for _, proc := range pl.Processors() {
+			if p, ok := proc.(plugin.Pausable); ok {
+				if err := p.Resume(); err != nil {
+					slog.Warn("processor resume error", "task_id", t.Config.ID, "error", err)
+				}
+			}
+		}
+		for _, parser := range pl.Parsers() {
+			if p, ok := parser.(plugin.Pausable); ok {
+				if err := p.Resume(); err != nil {
+					slog.Warn("parser resume error", "task_id", t.Config.ID, "error", err)
+				}
+			}
+		}
+	}
+
+	for i, rep := range t.Reporters {
+		if p, ok := rep.(plugin.Pausable); ok {
+			if err := p.Resume(); err != nil {
+				slog.Warn("reporter resume error", "task_id", t.Config.ID, "reporter_id", i, "error", err)
+			}
+		}
+	}
+
+	// Resume capturers last (start packet ingestion after everything is ready)
+	for i, cap := range t.Capturers {
+		if p, ok := cap.(plugin.Pausable); ok {
+			if err := p.Resume(); err != nil {
+				slog.Warn("capturer resume error", "task_id", t.Config.ID, "capturer_id", i, "error", err)
+			}
+		}
+	}
+
+	slog.Info("task resumed", "task_id", t.Config.ID)
+	return nil
+}
+
+// Reconfigure dynamically updates plugins that support the Reconfigurable interface.
+// Does not require task restart. Only works on running or paused tasks.
+func (t *Task) Reconfigure(pluginConfigs map[string]map[string]any) error {
+	t.mu.RLock()
+	if t.state != StateRunning && t.state != StatePaused {
+		t.mu.RUnlock()
+		return fmt.Errorf("cannot reconfigure task in state %s", t.state)
+	}
+	t.mu.RUnlock()
+
+	slog.Info("reconfiguring task plugins", "task_id", t.Config.ID, "plugins", len(pluginConfigs))
+
+	var errs []error
+
+	// Reconfigure all plugin types
+	allPlugins := make(map[string]plugin.Plugin)
+	for _, cap := range t.Capturers {
+		allPlugins[cap.Name()] = cap
+	}
+	for _, rep := range t.Reporters {
+		allPlugins[rep.Name()] = rep
+	}
+	for _, pl := range t.Pipelines {
+		for _, parser := range pl.Parsers() {
+			allPlugins[parser.Name()] = parser
+		}
+		for _, proc := range pl.Processors() {
+			allPlugins[proc.Name()] = proc
+		}
+	}
+
+	for pluginName, cfg := range pluginConfigs {
+		p, ok := allPlugins[pluginName]
+		if !ok {
+			errs = append(errs, fmt.Errorf("plugin %q not found", pluginName))
+			continue
+		}
+		rc, ok := p.(plugin.Reconfigurable)
+		if !ok {
+			errs = append(errs, fmt.Errorf("plugin %q does not support reconfigure", pluginName))
+			continue
+		}
+		if err := rc.Reconfigure(cfg); err != nil {
+			errs = append(errs, fmt.Errorf("plugin %q reconfigure failed: %w", pluginName, err))
+			slog.Warn("plugin reconfigure failed", "task_id", t.Config.ID, "plugin", pluginName, "error", err)
+		} else {
+			slog.Info("plugin reconfigured", "task_id", t.Config.ID, "plugin", pluginName)
+		}
+	}
+
+	if len(errs) > 0 {
+		return fmt.Errorf("%d reconfigure errors: %v", len(errs), errs)
+	}
 	return nil
 }
 
@@ -309,10 +517,14 @@ func (t *Task) dispatchLoop() {
 	}()
 
 	numPipelines := len(t.rawStreams)
+	if numPipelines == 0 {
+		slog.Error("dispatchLoop: no pipelines configured, exiting", "task_id", t.Config.ID)
+		return
+	}
 
 	for pkt := range t.captureCh {
-		// Flow-hash distribution for flow affinity
-		idx := flowHash(pkt) % uint32(numPipelines)
+		// Use configured dispatch strategy
+		idx := t.dispatchStrategy.Dispatch(pkt, numPipelines)
 
 		select {
 		case t.rawStreams[idx] <- pkt:
@@ -411,16 +623,31 @@ func flowHash(pkt core.RawPacket) uint32 {
 	return h.Sum32()
 }
 
-// senderLoop consumes OutputPackets from sendBuffer and sends them to all Reporters.
+// senderLoop consumes OutputPackets from sendBuffer and distributes them to ReporterWrappers.
+// If no wrappers are configured, falls back to direct Reporter.Report() calls.
 // It runs until sendBuffer is closed.
 func (t *Task) senderLoop() {
 	defer close(t.doneCh)
 
-	for pkt := range t.sendBuffer {
-		for i, rep := range t.Reporters {
-			if err := rep.Report(t.ctx, &pkt); err != nil {
-				slog.Warn("reporter error", "task_id", t.Config.ID, "reporter_id", i, "error", err)
-				// Continue processing, don't fail the task on Reporter errors
+	if len(t.ReporterWrappers) > 0 {
+		// Batched path: distribute to wrappers
+		for pkt := range t.sendBuffer {
+			p := pkt // copy for pointer safety
+			for _, w := range t.ReporterWrappers {
+				w.Send(&p)
+			}
+		}
+		// sendBuffer closed — close all wrapper channels and wait for flush
+		for _, w := range t.ReporterWrappers {
+			w.Close()
+		}
+	} else {
+		// Legacy path: direct Reporter.Report() calls (no wrappers)
+		for pkt := range t.sendBuffer {
+			for i, rep := range t.Reporters {
+				if err := rep.Report(t.ctx, &pkt); err != nil {
+					slog.Warn("reporter error", "task_id", t.Config.ID, "reporter_id", i, "error", err)
+				}
 			}
 		}
 	}
@@ -467,28 +694,64 @@ func (t *Task) ID() string {
 	return t.Config.ID
 }
 
+// getMetricsInterval returns the current metrics collection interval.
+// If no custom interval is set (atomic value 0), defaults to 5 seconds.
+func (t *Task) getMetricsInterval() time.Duration {
+	ns := t.metricsInterval.Load()
+	if ns <= 0 {
+		return 5 * time.Second
+	}
+	return time.Duration(ns)
+}
+
+// UpdateMetricsInterval sets a new metrics collection interval.
+// The change takes effect on the next tick of the statsCollectorLoop.
+func (t *Task) UpdateMetricsInterval(d time.Duration) {
+	if d > 0 {
+		t.metricsInterval.Store(int64(d))
+	}
+}
+
 // statsCollectorLoop periodically collects stats from capturers and updates Prometheus metrics.
+// Uses per-capturer tracking to correctly compute deltas in binding mode (multiple capturers).
 func (t *Task) statsCollectorLoop() {
-	ticker := time.NewTicker(5 * time.Second) // Collect stats every 5 seconds
+	interval := t.getMetricsInterval()
+	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
-	var lastPacketsReceived uint64
-	var lastPacketsDropped uint64
+	// Per-capturer last-seen counters to avoid cross-capturer delta contamination.
+	type capStats struct {
+		packetsReceived uint64
+		packetsDropped  uint64
+	}
+	lastStats := make([]capStats, len(t.Capturers))
 
 	for {
 		select {
 		case <-t.ctx.Done():
 			return
 		case <-ticker.C:
-			// Collect stats from all capturers and update Prometheus metrics
+			// Check if interval was updated (hot-reload)
+			if newInterval := t.getMetricsInterval(); newInterval != interval {
+				interval = newInterval
+				ticker.Reset(interval)
+				slog.Info("metrics collect interval updated", "task_id", t.Config.ID, "interval", interval)
+			}
 			for i, cap := range t.Capturers {
 				stats := cap.Stats()
 
-				// Calculate deltas since last collection
-				deltaReceived := stats.PacketsReceived - lastPacketsReceived
-				deltaDropped := stats.PacketsDropped - lastPacketsDropped
+				// Calculate per-capturer deltas with underflow protection
+				deltaReceived := stats.PacketsReceived - lastStats[i].packetsReceived
+				if stats.PacketsReceived < lastStats[i].packetsReceived {
+					// Counter reset (capturer restart) — treat current value as delta
+					deltaReceived = stats.PacketsReceived
+				}
 
-				// Update Prometheus counters (use Add instead of Set for counters)
+				deltaDropped := stats.PacketsDropped - lastStats[i].packetsDropped
+				if stats.PacketsDropped < lastStats[i].packetsDropped {
+					deltaDropped = stats.PacketsDropped
+				}
+
 				if deltaReceived > 0 {
 					ifaceName, _ := t.Config.Capture.Config["interface"].(string)
 					metrics.CapturePacketsTotal.WithLabelValues(
@@ -504,9 +767,11 @@ func (t *Task) statsCollectorLoop() {
 					).Add(float64(deltaDropped))
 				}
 
-				// Update last values
-				lastPacketsReceived = stats.PacketsReceived
-				lastPacketsDropped = stats.PacketsDropped
+				// Update per-capturer tracking
+				lastStats[i] = capStats{
+					packetsReceived: stats.PacketsReceived,
+					packetsDropped:  stats.PacketsDropped,
+				}
 
 				slog.Debug("capturer stats collected",
 					"task_id", t.Config.ID,
@@ -516,6 +781,10 @@ func (t *Task) statsCollectorLoop() {
 					"delta_received", deltaReceived,
 					"delta_dropped", deltaDropped)
 			}
+
+			// Update flow registry size gauge
+			metrics.FlowRegistrySize.WithLabelValues(t.Config.ID).
+				Set(float64(t.Registry.Count()))
 		}
 	}
 }

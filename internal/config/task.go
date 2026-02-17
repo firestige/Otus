@@ -12,23 +12,32 @@ import (
 
 // TaskConfig represents dynamic per-task configuration.
 type TaskConfig struct {
-	ID         string            `json:"id" yaml:"id"`
-	Workers    int               `json:"workers" yaml:"workers"`
-	Capture    CaptureConfig     `json:"capture" yaml:"capture"`
-	Decoder    DecoderConfig     `json:"decoder" yaml:"decoder"`
-	Parsers    []ParserConfig    `json:"parsers" yaml:"parsers"`
-	Processors []ProcessorConfig `json:"processors" yaml:"processors"`
-	Reporters  []ReporterConfig  `json:"reporters" yaml:"reporters"`
+	ID              string                `json:"id" yaml:"id"`
+	Workers         int                   `json:"workers" yaml:"workers"`
+	Capture         CaptureConfig         `json:"capture" yaml:"capture"`
+	Decoder         DecoderConfig         `json:"decoder" yaml:"decoder"`
+	Parsers         []ParserConfig        `json:"parsers" yaml:"parsers"`
+	Processors      []ProcessorConfig     `json:"processors" yaml:"processors"`
+	Reporters       []ReporterConfig      `json:"reporters" yaml:"reporters"`
+	ChannelCapacity ChannelCapacityConfig `json:"channel_capacity" yaml:"channel_capacity"`
+}
+
+// ChannelCapacityConfig allows tuning internal channel buffer sizes.
+type ChannelCapacityConfig struct {
+	RawStream  int `json:"raw_stream" yaml:"raw_stream"`   // per-pipeline input channel (default 1000)
+	SendBuffer int `json:"send_buffer" yaml:"send_buffer"` // pipeline→sender channel (default 10000)
+	CaptureCh  int `json:"capture_ch" yaml:"capture_ch"`   // dispatch mode intermediate channel (default 1000)
 }
 
 // CaptureConfig contains capture plugin configuration.
 type CaptureConfig struct {
-	Name         string         `json:"name" yaml:"name"`
-	DispatchMode string         `json:"dispatch_mode" yaml:"dispatch_mode"`
-	Interface    string         `json:"interface" yaml:"interface"`
-	BPFFilter    string         `json:"bpf_filter" yaml:"bpf_filter"`
-	SnapLen      int            `json:"snap_len" yaml:"snap_len"`
-	Config       map[string]any `json:"config" yaml:"config"`
+	Name             string         `json:"name" yaml:"name"`
+	DispatchMode     string         `json:"dispatch_mode" yaml:"dispatch_mode"`
+	DispatchStrategy string         `json:"dispatch_strategy" yaml:"dispatch_strategy"` // "flow-hash" (default), "round-robin"
+	Interface        string         `json:"interface" yaml:"interface"`
+	BPFFilter        string         `json:"bpf_filter" yaml:"bpf_filter"`
+	SnapLen          int            `json:"snap_len" yaml:"snap_len"`
+	Config           map[string]any `json:"config" yaml:"config"`
 }
 
 // DecoderConfig contains decoder configuration.
@@ -51,8 +60,11 @@ type ProcessorConfig struct {
 
 // ReporterConfig contains reporter plugin configuration.
 type ReporterConfig struct {
-	Name   string         `json:"name" yaml:"name"`
-	Config map[string]any `json:"config" yaml:"config"`
+	Name         string         `json:"name" yaml:"name"`
+	Config       map[string]any `json:"config" yaml:"config"`
+	BatchSize    int            `json:"batch_size" yaml:"batch_size"`       // Wrapper batch size (default 100)
+	BatchTimeout string         `json:"batch_timeout" yaml:"batch_timeout"` // Wrapper batch timeout (default 50ms)
+	Fallback     string         `json:"fallback" yaml:"fallback"`           // Fallback reporter name (optional)
 }
 
 // Validate validates task configuration.
