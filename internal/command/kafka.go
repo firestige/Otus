@@ -9,75 +9,90 @@ import (
 	"time"
 
 	"github.com/segmentio/kafka-go"
+
+	"firestige.xyz/otus/internal/config"
 )
 
-// KafkaCommandConfig represents Kafka command consumer configuration.
-type KafkaCommandConfig struct {
-	Brokers      []string      `json:"brokers"`       // Kafka brokers
-	Topic        string        `json:"topic"`         // Command topic
-	GroupID      string        `json:"group_id"`      // Consumer group ID
-	StartOffset  string        `json:"start_offset"`  // "earliest" or "latest", default "latest"
-	PollInterval time.Duration `json:"poll_interval"` // Poll interval, default 1s
-	MaxRetries   int           `json:"max_retries"`   // Max retries for processing errors, default 3
+// KafkaCommand is the wire format for commands received via Kafka (ADR-026).
+//
+// Example JSON:
+//
+//	{
+//	  "version":    "v1",
+//	  "target":     "node-01",
+//	  "command":    "task_create",
+//	  "timestamp":  "2024-01-15T10:30:00Z",
+//	  "request_id": "req-abc-123",
+//	  "payload":    { ... }
+//	}
+type KafkaCommand struct {
+	Version   string          `json:"version"`    // Protocol version ("v1")
+	Target    string          `json:"target"`     // Node hostname or "*" for broadcast
+	Command   string          `json:"command"`    // Command name (e.g., "task_create")
+	Timestamp time.Time       `json:"timestamp"`  // When the command was issued
+	RequestID string          `json:"request_id"` // Unique request ID for tracing
+	Payload   json.RawMessage `json:"payload"`    // Command-specific parameters
 }
 
 // KafkaCommandConsumer consumes commands from Kafka and dispatches to handler.
 type KafkaCommandConsumer struct {
-	config  KafkaCommandConfig
-	reader  *kafka.Reader
-	handler *CommandHandler
+	ccConfig config.CommandChannelConfig
+	hostname string // local node hostname for target matching
+	reader   *kafka.Reader
+	handler  *CommandHandler
+	ttl      time.Duration // command TTL for stale-command rejection
 }
 
-// NewKafkaCommandConsumer creates a new Kafka command consumer.
-func NewKafkaCommandConsumer(config KafkaCommandConfig, handler *CommandHandler) (*KafkaCommandConsumer, error) {
-	if len(config.Brokers) == 0 {
+// NewKafkaCommandConsumer creates a new Kafka command consumer using the global config.
+func NewKafkaCommandConsumer(ccConfig config.CommandChannelConfig, hostname string, handler *CommandHandler) (*KafkaCommandConsumer, error) {
+	kc := ccConfig.Kafka
+	if len(kc.Brokers) == 0 {
 		return nil, fmt.Errorf("brokers is required")
 	}
-	if config.Topic == "" {
+	if kc.Topic == "" {
 		return nil, fmt.Errorf("topic is required")
 	}
-	if config.GroupID == "" {
+	if kc.GroupID == "" {
 		return nil, fmt.Errorf("group_id is required")
 	}
 
-	// Set defaults
-	if config.StartOffset == "" {
-		config.StartOffset = "latest"
-	}
-	if config.PollInterval == 0 {
-		config.PollInterval = 1 * time.Second
-	}
-	if config.MaxRetries == 0 {
-		config.MaxRetries = 3
+	// Parse command TTL
+	ttl := 5 * time.Minute // default
+	if ccConfig.CommandTTL != "" {
+		var err error
+		ttl, err = time.ParseDuration(ccConfig.CommandTTL)
+		if err != nil {
+			return nil, fmt.Errorf("invalid command_ttl %q: %w", ccConfig.CommandTTL, err)
+		}
 	}
 
 	// Determine start offset
 	var startOffset int64
-	switch config.StartOffset {
+	switch kc.AutoOffsetReset {
 	case "earliest":
 		startOffset = kafka.FirstOffset
-	case "latest":
-		startOffset = kafka.LastOffset
 	default:
-		return nil, fmt.Errorf("invalid start_offset %q, must be 'earliest' or 'latest'", config.StartOffset)
+		startOffset = kafka.LastOffset
 	}
 
 	// Create Kafka reader (consumer)
 	reader := kafka.NewReader(kafka.ReaderConfig{
-		Brokers:        config.Brokers,
-		Topic:          config.Topic,
-		GroupID:        config.GroupID,
+		Brokers:        kc.Brokers,
+		Topic:          kc.Topic,
+		GroupID:        kc.GroupID,
 		StartOffset:    startOffset,
-		MinBytes:       1,           // Fetch as soon as 1 byte available
-		MaxBytes:       10 << 20,    // 10MB max
-		CommitInterval: time.Second, // Auto-commit every second
-		MaxWait:        config.PollInterval,
+		MinBytes:       1,
+		MaxBytes:       10 << 20,
+		CommitInterval: time.Second,
+		MaxWait:        1 * time.Second,
 	})
 
 	return &KafkaCommandConsumer{
-		config:  config,
-		reader:  reader,
-		handler: handler,
+		ccConfig: ccConfig,
+		hostname: hostname,
+		reader:   reader,
+		handler:  handler,
+		ttl:      ttl,
 	}, nil
 }
 
@@ -85,10 +100,11 @@ func NewKafkaCommandConsumer(config KafkaCommandConfig, handler *CommandHandler)
 // Blocks until context is cancelled or an unrecoverable error occurs.
 func (c *KafkaCommandConsumer) Start(ctx context.Context) error {
 	slog.Info("kafka command consumer started",
-		"brokers", c.config.Brokers,
-		"topic", c.config.Topic,
-		"group_id", c.config.GroupID,
-		"start_offset", c.config.StartOffset,
+		"brokers", c.ccConfig.Kafka.Brokers,
+		"topic", c.ccConfig.Kafka.Topic,
+		"group_id", c.ccConfig.Kafka.GroupID,
+		"hostname", c.hostname,
+		"ttl", c.ttl,
 	)
 
 	for {
@@ -106,7 +122,6 @@ func (c *KafkaCommandConsumer) Start(ctx context.Context) error {
 				return err
 			}
 			slog.Error("failed to fetch kafka message", "error", err)
-			// Wait a bit before retrying
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
@@ -123,7 +138,6 @@ func (c *KafkaCommandConsumer) Start(ctx context.Context) error {
 				"partition", msg.Partition,
 				"offset", msg.Offset,
 			)
-			// Continue processing even if one message fails
 		}
 
 		// Commit the message
@@ -133,30 +147,57 @@ func (c *KafkaCommandConsumer) Start(ctx context.Context) error {
 	}
 }
 
-// processMessage processes a single Kafka message as a command.
+// processMessage processes a single Kafka message as a KafkaCommand (ADR-026).
 func (c *KafkaCommandConsumer) processMessage(ctx context.Context, msg kafka.Message) error {
-	// Parse command from JSON
-	var cmd Command
-	if err := json.Unmarshal(msg.Value, &cmd); err != nil {
-		return fmt.Errorf("failed to parse command: %w", err)
+	// 1. Deserialize into KafkaCommand
+	var kCmd KafkaCommand
+	if err := json.Unmarshal(msg.Value, &kCmd); err != nil {
+		return fmt.Errorf("failed to parse kafka command: %w", err)
 	}
 
-	// Log the received command
-	slog.Info("received command",
-		"method", cmd.Method,
-		"id", cmd.ID,
-		"partition", msg.Partition,
-		"offset", msg.Offset,
+	// 2. Target filter: skip if not for this node and not broadcast
+	if kCmd.Target != "*" && kCmd.Target != "" && kCmd.Target != c.hostname {
+		slog.Debug("skipping command not targeting this node",
+			"target", kCmd.Target,
+			"hostname", c.hostname,
+			"request_id", kCmd.RequestID,
+		)
+		return nil
+	}
+
+	// 3. Stale command check: reject commands older than TTL
+	if !kCmd.Timestamp.IsZero() && time.Since(kCmd.Timestamp) > c.ttl {
+		slog.Warn("skipping stale command",
+			"command", kCmd.Command,
+			"request_id", kCmd.RequestID,
+			"timestamp", kCmd.Timestamp,
+			"age", time.Since(kCmd.Timestamp),
+			"ttl", c.ttl,
+		)
+		return nil
+	}
+
+	slog.Info("received kafka command",
+		"command", kCmd.Command,
+		"request_id", kCmd.RequestID,
+		"target", kCmd.Target,
+		"version", kCmd.Version,
 	)
 
-	// Handle the command
+	// 4. Convert KafkaCommand → internal Command
+	cmd := Command{
+		Method: kCmd.Command,
+		Params: kCmd.Payload,
+		ID:     kCmd.RequestID,
+	}
+
+	// 5. Handle the command
 	response := c.handler.Handle(ctx, cmd)
 
-	// Log the response
 	if response.Error != nil {
 		slog.Error("command execution failed",
 			"method", cmd.Method,
-			"id", cmd.ID,
+			"request_id", cmd.ID,
 			"error_code", response.Error.Code,
 			"error_message", response.Error.Message,
 		)
@@ -165,8 +206,7 @@ func (c *KafkaCommandConsumer) processMessage(ctx context.Context, msg kafka.Mes
 
 	slog.Info("command executed successfully",
 		"method", cmd.Method,
-		"id", cmd.ID,
-		"result", response.Result,
+		"request_id", cmd.ID,
 	)
 
 	return nil

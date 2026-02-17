@@ -1,69 +1,108 @@
 # Otus Global Configuration
-# This configuration is loaded once at startup and defines system-wide settings.
-# For task-specific configuration, use TaskConfig JSON from Kafka commands or CLI.
+# All settings live under the `otus:` root key.
+# See doc/config-design.md for full hierarchy and design rationale.
 
-# Daemon configuration
-daemon:
-  pid_file: "/var/run/otus.pid"       # PID file location
-  socket_path: "/var/run/otus.sock"   # Unix socket for local RPC communication
+otus:
+  # ────────────── Node Identity ──────────────
+  node:
+    ip: ""                            # Empty = auto-detect (ADR-023: env > auto-detect > error)
+    hostname: ""                      # Empty = os.Hostname()
+    tags:
+      datacenter: "dc1"
+      environment: "production"
 
-# Logging configuration
-log:
-  level: "info"                        # Log level: debug, info, warn, error
-  format: "json"                       # Log format: json or text
-  outputs:                             # Multiple output destinations
-    # Console output (stdout)
-    - type: "console"
-      enabled: true
+  # ────────────── Local Control ──────────────
+  control:
+    socket: "/var/run/otus.sock"
+    pid_file: "/var/run/otus.pid"
 
-    # File output
-    - type: "file"
-      enabled: true
-      path: "/var/log/otus/otus.log"
-      max_size: 100                    # MB per file
-      max_age: 30                      # Days to keep
-      max_backups: 10                  # Number of backup files
-      compress: true                   # Compress old files
-
-    # Loki output (log aggregation)
-    - type: "loki"
+  # ────────────── Kafka Global Default (ADR-024) ──────────────
+  # command_channel.kafka and reporters.kafka inherit brokers/sasl/tls from here.
+  kafka:
+    brokers:
+      - "localhost:9092"
+    sasl:
       enabled: false
-      url: "http://localhost:3100/loki/api/v1/push"
-      batch_size: 100
-      timeout: "10s"
-      labels:
-        service: "otus"
-        environment: "production"
+      mechanism: "PLAIN"
+      username: ""
+      password: ""
+    tls:
+      enabled: false
+      insecure_skip_verify: false
 
-# Kafka configuration (for command receiving and log output)
-kafka:
-  brokers:                             # Kafka broker addresses
-    - "localhost:9092"
-  command_topic: "otus-commands"       # Topic for receiving capture tasks
-  command_group: "otus-agents"         # Consumer group for command topic
-  log_topic: "otus-logs"               # Topic for structured logs (optional)
-  sasl:
-    enabled: false
-    mechanism: "PLAIN"                 # PLAIN, SCRAM-SHA-256, SCRAM-SHA-512
-    username: ""
-    password: ""
-  tls:
-    enabled: false
-    ca_cert: ""
-    client_cert: ""
-    client_key: ""
-    insecure_skip_verify: false
+  # ────────────── Remote Command Channel ──────────────
+  command_channel:
+    enabled: false                    # Set true to enable Kafka command subscription
+    type: "kafka"
+    kafka:
+      # brokers/sasl/tls inherited from otus.kafka; override here if needed
+      topic: "otus-commands"
+      group_id: ""                    # Empty = "otus-${hostname}"
+      auto_offset_reset: "latest"
+    command_ttl: "5m"                 # Reject commands older than this (ADR-026)
 
-# Metrics configuration (Prometheus)
-metrics:
-  enabled: true
-  listen: "0.0.0.0:9090"               # Prometheus metrics HTTP endpoint
-  path: "/metrics"                     # Metrics endpoint path
+  # ────────────── Shared Reporter Connections ──────────────
+  reporters:
+    kafka:
+      # brokers/sasl/tls inherited from otus.kafka; override here if needed
+      compression: "snappy"           # none | gzip | snappy | lz4 | zstd
+      max_message_bytes: 1048576
 
-# Agent identification
-agent:
-  id: ""                               # Agent ID (auto-generated from hostname if empty)
-  tags:                                # Custom tags for agent identification
-    datacenter: "dc1"
-    region: "us-west-1"
-    environment: "production"
+  # ────────────── Global Resources ──────────────
+  resources:
+    max_workers: 0                    # 0 = auto (GOMAXPROCS)
+
+  # ────────────── Backpressure Control ──────────────
+  backpressure:
+    pipeline_channel:
+      capacity: 65536
+      drop_policy: "tail"
+    send_buffer:
+      capacity: 16384
+      drop_policy: "head"
+      high_watermark: 0.8
+      low_watermark: 0.3
+    reporter:
+      send_timeout: "3s"
+      max_retries: 1
+
+  # ────────────── Core Decoder ──────────────
+  core:
+    decoder:
+      tunnel:
+        vxlan: false
+        gre: false
+        geneve: false
+        ipip: false
+      ip_reassembly:
+        timeout: "30s"
+        max_fragments: 10000
+
+  # ────────────── Prometheus Metrics ──────────────
+  metrics:
+    enabled: true
+    listen: ":9091"
+    path: "/metrics"
+
+  # ────────────── Logging ──────────────
+  log:
+    level: "info"                     # debug | info | warn | error
+    format: "json"                    # json | text
+    outputs:
+      file:
+        enabled: true
+        path: "/var/log/otus/otus.log"
+        rotation:
+          max_size_mb: 100            # ADR-025: numeric, unit in field name
+          max_age_days: 30
+          max_backups: 5
+          compress: true
+      loki:
+        enabled: false
+        endpoint: "http://loki:3100/loki/api/v1/push"
+        labels:
+          app: "otus"
+          env: "production"
+        batch_size: 100
+        batch_timeout: "1s"
+

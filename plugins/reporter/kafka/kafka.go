@@ -1,5 +1,6 @@
 // Package kafka implements Kafka reporter plugin.
-// Sends OutputPackets to Kafka with batching, compression, and retry support.
+// Sends OutputPackets to Kafka with dynamic topic routing (ADR-027),
+// envelope-as-headers separation (ADR-028), and configurable serialization.
 package kafka
 
 import (
@@ -7,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"sync/atomic"
 	"time"
 
@@ -18,10 +20,12 @@ import (
 )
 
 const (
-	defaultBatchSize    = 100
-	defaultBatchTimeout = 100 * time.Millisecond
-	defaultCompression  = "snappy"
-	defaultMaxAttempts  = 3
+	defaultBatchSize      = 100
+	defaultBatchTimeout   = 100 * time.Millisecond
+	defaultCompression    = "snappy"
+	defaultMaxAttempts    = 3
+	defaultSerialization  = "json"
+	defaultProtocolFallback = "raw"
 )
 
 // KafkaReporter sends packets to Kafka.
@@ -37,12 +41,24 @@ type KafkaReporter struct {
 
 // Config represents Kafka reporter configuration.
 type Config struct {
-	Brokers      []string      `json:"brokers"`       // required
-	Topic        string        `json:"topic"`         // required
-	BatchSize    int           `json:"batch_size"`    // optional, default 100
-	BatchTimeout time.Duration `json:"batch_timeout"` // optional, default 100ms
-	Compression  string        `json:"compression"`   // optional: none|gzip|snappy|lz4, default snappy
-	MaxAttempts  int           `json:"max_attempts"`  // optional, default 3
+	// Connection — may come from otus.reporters.kafka (ADR-028) or per-reporter config.
+	Brokers     []string `json:"brokers"`
+	Compression string   `json:"compression"` // none|gzip|snappy|lz4, default snappy
+	MaxAttempts int      `json:"max_attempts"` // default 3
+
+	// Topic routing (ADR-027): topic and topic_prefix are mutually exclusive.
+	// When topic_prefix is set, actual topic = "{prefix}-{protocol}" (e.g. "otus-sip").
+	Topic       string `json:"topic"`        // Fixed topic
+	TopicPrefix string `json:"topic_prefix"` // Dynamic routing prefix
+
+	// Batching
+	BatchSize    int           `json:"batch_size"`    // default 100
+	BatchTimeout time.Duration `json:"batch_timeout"` // default 100ms
+
+	// Serialization format for message Value.
+	// "json" = JSON envelope (Phase 1 default)
+	// "binary" = future binary format via Payload interface (Phase 2)
+	Serialization string `json:"serialization"` // default "json"
 }
 
 // NewKafkaReporter creates a new Kafka reporter.
@@ -63,12 +79,13 @@ func (r *KafkaReporter) Init(config map[string]any) error {
 		return fmt.Errorf("kafka reporter requires configuration")
 	}
 
-	// Parse configuration
+	// Apply defaults
 	cfg := Config{
-		BatchSize:    defaultBatchSize,
-		BatchTimeout: defaultBatchTimeout,
-		Compression:  defaultCompression,
-		MaxAttempts:  defaultMaxAttempts,
+		BatchSize:     defaultBatchSize,
+		BatchTimeout:  defaultBatchTimeout,
+		Compression:   defaultCompression,
+		MaxAttempts:   defaultMaxAttempts,
+		Serialization: defaultSerialization,
 	}
 
 	// Required: brokers
@@ -81,15 +98,26 @@ func (r *KafkaReporter) Init(config map[string]any) error {
 				return fmt.Errorf("invalid broker type at index %d", i)
 			}
 		}
+	} else if brokers, ok := config["brokers"].([]string); ok {
+		cfg.Brokers = brokers
 	} else {
 		return fmt.Errorf("brokers is required")
 	}
 
-	// Required: topic
-	if topic, ok := config["topic"].(string); ok {
+	// Topic routing: topic and topic_prefix are mutually exclusive (ADR-027)
+	hasTopic := false
+	if topic, ok := config["topic"].(string); ok && topic != "" {
 		cfg.Topic = topic
-	} else {
-		return fmt.Errorf("topic is required")
+		hasTopic = true
+	}
+	if prefix, ok := config["topic_prefix"].(string); ok && prefix != "" {
+		cfg.TopicPrefix = prefix
+		if hasTopic {
+			return fmt.Errorf("topic and topic_prefix are mutually exclusive")
+		}
+	}
+	if cfg.Topic == "" && cfg.TopicPrefix == "" {
+		return fmt.Errorf("either topic or topic_prefix is required")
 	}
 
 	// Optional: batch_size
@@ -97,7 +125,7 @@ func (r *KafkaReporter) Init(config map[string]any) error {
 		cfg.BatchSize = int(batchSize)
 	}
 
-	// Optional: batch_timeout (can be string or duration)
+	// Optional: batch_timeout (string duration)
 	if batchTimeout, ok := config["batch_timeout"].(string); ok {
 		timeout, err := time.ParseDuration(batchTimeout)
 		if err != nil {
@@ -116,23 +144,38 @@ func (r *KafkaReporter) Init(config map[string]any) error {
 		cfg.MaxAttempts = int(maxAttempts)
 	}
 
+	// Optional: serialization (ADR-028)
+	if ser, ok := config["serialization"].(string); ok {
+		switch ser {
+		case "json", "binary":
+			cfg.Serialization = ser
+		default:
+			return fmt.Errorf("invalid serialization: %s (must be json or binary)", ser)
+		}
+	}
+
 	r.config = cfg
 
-	// Create Kafka writer
+	// Create Kafka writer.
+	// When using dynamic topic routing (topic_prefix), Topic is left empty on the
+	// writer and set per-message in Report(). kafka-go supports this natively.
 	writerConfig := kafka.WriterConfig{
 		Brokers:      cfg.Brokers,
-		Topic:        cfg.Topic,
-		Balancer:     &kafka.Hash{}, // Use hash balancer for consistent routing
+		Balancer:     &kafka.Hash{},
 		BatchSize:    cfg.BatchSize,
 		BatchTimeout: cfg.BatchTimeout,
 		MaxAttempts:  cfg.MaxAttempts,
-		Async:        false, // Synchronous for error handling
+		Async:        false,
+	}
+	// Fixed topic mode: set on writer. Dynamic mode: leave empty.
+	if cfg.TopicPrefix == "" {
+		writerConfig.Topic = cfg.Topic
 	}
 
-	// Set compression codec
+	// Compression codec
 	switch cfg.Compression {
 	case "none", "":
-		writerConfig.CompressionCodec = nil // No compression
+		writerConfig.CompressionCodec = nil
 	case "gzip":
 		writerConfig.CompressionCodec = compress.Gzip.Codec()
 	case "snappy":
@@ -150,12 +193,17 @@ func (r *KafkaReporter) Init(config map[string]any) error {
 
 // Start starts the reporter.
 func (r *KafkaReporter) Start(ctx context.Context) error {
+	topicInfo := r.config.Topic
+	if r.config.TopicPrefix != "" {
+		topicInfo = r.config.TopicPrefix + "-{protocol}"
+	}
 	slog.Info("kafka reporter started",
 		"brokers", r.config.Brokers,
-		"topic", r.config.Topic,
+		"topic", topicInfo,
 		"batch_size", r.config.BatchSize,
 		"batch_timeout", r.config.BatchTimeout,
 		"compression", r.config.Compression,
+		"serialization", r.config.Serialization,
 	)
 	return nil
 }
@@ -163,7 +211,6 @@ func (r *KafkaReporter) Start(ctx context.Context) error {
 // Stop stops the reporter.
 func (r *KafkaReporter) Stop(ctx context.Context) error {
 	if r.writer != nil {
-		// Flush any pending messages
 		if err := r.writer.Close(); err != nil {
 			slog.Error("error closing kafka writer", "error", err)
 			return err
@@ -180,35 +227,29 @@ func (r *KafkaReporter) Stop(ctx context.Context) error {
 }
 
 // Report sends a packet to Kafka.
+// Envelope metadata is placed in Kafka Headers, payload data in Value (ADR-028).
 func (r *KafkaReporter) Report(ctx context.Context, pkt *core.OutputPacket) error {
 	if pkt == nil {
 		return fmt.Errorf("nil packet")
 	}
 
-	// Serialize packet to JSON
-	value, err := r.serializePacket(pkt)
+	// Serialize payload to Value
+	value, err := r.serializeValue(pkt)
 	if err != nil {
 		r.errorCount.Add(1)
 		return fmt.Errorf("serialize packet failed: %w", err)
 	}
 
-	// Create Kafka message
+	// Build Kafka message with envelope as Headers (ADR-028)
 	msg := kafka.Message{
+		Topic: r.resolveTopic(pkt),
 		Key:   []byte(fmt.Sprintf("%s:%d-%s:%d", pkt.SrcIP, pkt.SrcPort, pkt.DstIP, pkt.DstPort)),
 		Value: value,
 		Time:  pkt.Timestamp,
 	}
 
-	// Add labels as Kafka headers
-	if len(pkt.Labels) > 0 {
-		msg.Headers = make([]kafka.Header, 0, len(pkt.Labels))
-		for k, v := range pkt.Labels {
-			msg.Headers = append(msg.Headers, kafka.Header{
-				Key:   k,
-				Value: []byte(v),
-			})
-		}
-	}
+	// Envelope → Kafka Headers
+	msg.Headers = r.buildHeaders(pkt)
 
 	// Send to Kafka
 	err = r.writer.WriteMessages(ctx, msg)
@@ -221,9 +262,63 @@ func (r *KafkaReporter) Report(ctx context.Context, pkt *core.OutputPacket) erro
 	return nil
 }
 
-// serializePacket converts OutputPacket to JSON bytes.
-func (r *KafkaReporter) serializePacket(pkt *core.OutputPacket) ([]byte, error) {
-	// Create a JSON-serializable representation
+// resolveTopic returns the target topic for a packet (ADR-027).
+// With topic_prefix: "{prefix}-{protocol}" (e.g. "otus-sip", "otus-rtp").
+// With fixed topic: returns the configured topic directly.
+func (r *KafkaReporter) resolveTopic(pkt *core.OutputPacket) string {
+	if r.config.TopicPrefix != "" {
+		proto := pkt.PayloadType
+		if proto == "" {
+			proto = defaultProtocolFallback
+		}
+		return r.config.TopicPrefix + "-" + proto
+	}
+	return r.config.Topic
+}
+
+// buildHeaders creates Kafka headers from packet envelope metadata (ADR-028).
+// Envelope fields (task_id, agent_id, network context) go into headers so
+// Kafka Streams / consumers can filter without deserializing the value.
+func (r *KafkaReporter) buildHeaders(pkt *core.OutputPacket) []kafka.Header {
+	headers := make([]kafka.Header, 0, 8+len(pkt.Labels))
+
+	// Core envelope
+	headers = append(headers,
+		kafka.Header{Key: "task_id", Value: []byte(pkt.TaskID)},
+		kafka.Header{Key: "agent_id", Value: []byte(pkt.AgentID)},
+		kafka.Header{Key: "payload_type", Value: []byte(pkt.PayloadType)},
+		kafka.Header{Key: "src_ip", Value: []byte(pkt.SrcIP.String())},
+		kafka.Header{Key: "dst_ip", Value: []byte(pkt.DstIP.String())},
+		kafka.Header{Key: "src_port", Value: []byte(strconv.FormatUint(uint64(pkt.SrcPort), 10))},
+		kafka.Header{Key: "dst_port", Value: []byte(strconv.FormatUint(uint64(pkt.DstPort), 10))},
+		kafka.Header{Key: "timestamp", Value: []byte(strconv.FormatInt(pkt.Timestamp.UnixMilli(), 10))},
+	)
+
+	// Labels → headers with "l." prefix to avoid key collision
+	for k, v := range pkt.Labels {
+		headers = append(headers, kafka.Header{Key: "l." + k, Value: []byte(v)})
+	}
+
+	return headers
+}
+
+// serializeValue serializes the packet payload for the Kafka message value.
+// Phase 1: JSON serialization. Phase 2: binary via Payload interface.
+func (r *KafkaReporter) serializeValue(pkt *core.OutputPacket) ([]byte, error) {
+	switch r.config.Serialization {
+	case "json", "":
+		return r.serializeJSON(pkt)
+	case "binary":
+		// Phase 2: when Payload implements MarshalBinary(), use it directly.
+		// For now, fall back to JSON.
+		return r.serializeJSON(pkt)
+	default:
+		return nil, fmt.Errorf("unsupported serialization: %s", r.config.Serialization)
+	}
+}
+
+// serializeJSON converts OutputPacket payload to JSON bytes.
+func (r *KafkaReporter) serializeJSON(pkt *core.OutputPacket) ([]byte, error) {
 	output := map[string]any{
 		"task_id":      pkt.TaskID,
 		"agent_id":     pkt.AgentID,
@@ -238,11 +333,8 @@ func (r *KafkaReporter) serializePacket(pkt *core.OutputPacket) ([]byte, error) 
 		"labels":       pkt.Labels,
 	}
 
-	// Include raw payload as base64 if present
 	if len(pkt.RawPayload) > 0 {
 		output["raw_payload_len"] = len(pkt.RawPayload)
-		// Note: For production, you might want to base64 encode the raw payload
-		// or send it separately. For now, we only include the length.
 	}
 
 	return json.Marshal(output)
@@ -250,7 +342,5 @@ func (r *KafkaReporter) serializePacket(pkt *core.OutputPacket) ([]byte, error) 
 
 // Flush forces any pending messages to be sent.
 func (r *KafkaReporter) Flush(ctx context.Context) error {
-	// kafka.Writer automatically batches and flushes based on BatchSize/BatchTimeout
-	// No explicit flush needed, but we can close and reopen if needed
 	return nil
 }

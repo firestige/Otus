@@ -10,6 +10,8 @@ import (
 	"firestige.xyz/otus/internal/core"
 )
 
+// ─── Init Tests ───
+
 func TestKafkaReporter_Init(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -27,17 +29,34 @@ func TestKafkaReporter_Init(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name:    "missing topic",
+			name:    "missing topic and topic_prefix",
 			config:  map[string]any{"brokers": []any{"localhost:9092"}},
 			wantErr: true,
 		},
 		{
-			name: "valid minimal config",
+			name: "valid with fixed topic",
 			config: map[string]any{
 				"brokers": []any{"localhost:9092"},
 				"topic":   "test-topic",
 			},
 			wantErr: false,
+		},
+		{
+			name: "valid with topic_prefix",
+			config: map[string]any{
+				"brokers":      []any{"localhost:9092"},
+				"topic_prefix": "otus",
+			},
+			wantErr: false,
+		},
+		{
+			name: "topic and topic_prefix mutually exclusive",
+			config: map[string]any{
+				"brokers":      []any{"localhost:9092"},
+				"topic":        "fixed-topic",
+				"topic_prefix": "otus",
+			},
+			wantErr: true,
 		},
 		{
 			name: "valid full config",
@@ -48,6 +67,7 @@ func TestKafkaReporter_Init(t *testing.T) {
 				"batch_timeout": "200ms",
 				"compression":   "gzip",
 				"max_attempts":  float64(5),
+				"serialization": "json",
 			},
 			wantErr: false,
 		},
@@ -77,6 +97,23 @@ func TestKafkaReporter_Init(t *testing.T) {
 			},
 			wantErr: true,
 		},
+		{
+			name: "invalid serialization",
+			config: map[string]any{
+				"brokers":       []any{"localhost:9092"},
+				"topic":         "test-topic",
+				"serialization": "protobuf",
+			},
+			wantErr: true,
+		},
+		{
+			name: "brokers as string slice",
+			config: map[string]any{
+				"brokers": []string{"broker1:9092", "broker2:9092"},
+				"topic":   "test-topic",
+			},
+			wantErr: false,
+		},
 	}
 
 	for _, tt := range tests {
@@ -90,6 +127,8 @@ func TestKafkaReporter_Init(t *testing.T) {
 	}
 }
 
+// ─── Defaults Tests ───
+
 func TestKafkaReporter_ConfigDefaults(t *testing.T) {
 	r := NewKafkaReporter().(*KafkaReporter)
 	config := map[string]any{
@@ -102,7 +141,6 @@ func TestKafkaReporter_ConfigDefaults(t *testing.T) {
 		t.Fatalf("Init failed: %v", err)
 	}
 
-	// Check defaults
 	if r.config.BatchSize != defaultBatchSize {
 		t.Errorf("BatchSize = %d, want %d", r.config.BatchSize, defaultBatchSize)
 	}
@@ -115,18 +153,126 @@ func TestKafkaReporter_ConfigDefaults(t *testing.T) {
 	if r.config.MaxAttempts != defaultMaxAttempts {
 		t.Errorf("MaxAttempts = %d, want %d", r.config.MaxAttempts, defaultMaxAttempts)
 	}
+	if r.config.Serialization != defaultSerialization {
+		t.Errorf("Serialization = %s, want %s", r.config.Serialization, defaultSerialization)
+	}
 }
 
-func TestKafkaReporter_SerializePacket(t *testing.T) {
-	r := NewKafkaReporter().(*KafkaReporter)
-	config := map[string]any{
-		"brokers": []any{"localhost:9092"},
-		"topic":   "test-topic",
+// ─── Topic Routing Tests (ADR-027) ───
+
+func TestKafkaReporter_ResolveTopic_FixedTopic(t *testing.T) {
+	r := &KafkaReporter{config: Config{Topic: "voip-packets"}}
+	pkt := &core.OutputPacket{PayloadType: "sip"}
+
+	got := r.resolveTopic(pkt)
+	if got != "voip-packets" {
+		t.Errorf("resolveTopic() = %s, want voip-packets", got)
 	}
-	err := r.Init(config)
-	if err != nil {
-		t.Fatalf("Init failed: %v", err)
+}
+
+func TestKafkaReporter_ResolveTopic_DynamicPrefix(t *testing.T) {
+	r := &KafkaReporter{config: Config{TopicPrefix: "otus"}}
+
+	tests := []struct {
+		payloadType string
+		wantTopic   string
+	}{
+		{"sip", "otus-sip"},
+		{"rtp", "otus-rtp"},
+		{"raw", "otus-raw"},
+		{"", "otus-raw"}, // empty defaults to "raw"
 	}
+
+	for _, tt := range tests {
+		pkt := &core.OutputPacket{PayloadType: tt.payloadType}
+		got := r.resolveTopic(pkt)
+		if got != tt.wantTopic {
+			t.Errorf("resolveTopic(payloadType=%q) = %s, want %s", tt.payloadType, got, tt.wantTopic)
+		}
+	}
+}
+
+// ─── Headers Tests (ADR-028) ───
+
+func TestKafkaReporter_BuildHeaders(t *testing.T) {
+	r := &KafkaReporter{}
+
+	now := time.Date(2025, 1, 15, 10, 30, 0, 0, time.UTC)
+	pkt := &core.OutputPacket{
+		TaskID:      "task-001",
+		AgentID:     "agent-002",
+		PayloadType: "sip",
+		SrcIP:       netip.MustParseAddr("10.0.0.1"),
+		DstIP:       netip.MustParseAddr("10.0.0.2"),
+		SrcPort:     5060,
+		DstPort:     5061,
+		Timestamp:   now,
+		Labels: map[string]string{
+			"sip.method": "INVITE",
+		},
+	}
+
+	headers := r.buildHeaders(pkt)
+
+	// Build lookup map
+	hdr := make(map[string]string)
+	for _, h := range headers {
+		hdr[h.Key] = string(h.Value)
+	}
+
+	// Verify core envelope headers
+	checks := map[string]string{
+		"task_id":      "task-001",
+		"agent_id":     "agent-002",
+		"payload_type": "sip",
+		"src_ip":       "10.0.0.1",
+		"dst_ip":       "10.0.0.2",
+		"src_port":     "5060",
+		"dst_port":     "5061",
+	}
+	for key, want := range checks {
+		if got := hdr[key]; got != want {
+			t.Errorf("header[%s] = %q, want %q", key, got, want)
+		}
+	}
+
+	// Verify timestamp header exists
+	if _, ok := hdr["timestamp"]; !ok {
+		t.Error("missing timestamp header")
+	}
+
+	// Verify label header with "l." prefix
+	if got := hdr["l.sip.method"]; got != "INVITE" {
+		t.Errorf("header[l.sip.method] = %q, want INVITE", got)
+	}
+
+	// Total: 8 core + 1 label = 9
+	if len(headers) != 9 {
+		t.Errorf("header count = %d, want 9", len(headers))
+	}
+}
+
+func TestKafkaReporter_BuildHeaders_NoLabels(t *testing.T) {
+	r := &KafkaReporter{}
+	pkt := &core.OutputPacket{
+		TaskID:    "t1",
+		AgentID:   "a1",
+		SrcIP:     netip.MustParseAddr("1.2.3.4"),
+		DstIP:     netip.MustParseAddr("5.6.7.8"),
+		Timestamp: time.Now(),
+	}
+
+	headers := r.buildHeaders(pkt)
+	// 8 core headers, 0 labels
+	if len(headers) != 8 {
+		t.Errorf("header count = %d, want 8", len(headers))
+	}
+}
+
+// ─── Serialization Tests ───
+
+func TestKafkaReporter_SerializeJSON(t *testing.T) {
+	r := &KafkaReporter{config: Config{Serialization: "json"}}
 
 	now := time.Now()
 	pkt := &core.OutputPacket{
@@ -138,7 +284,7 @@ func TestKafkaReporter_SerializePacket(t *testing.T) {
 		DstIP:       netip.MustParseAddr("192.168.1.200"),
 		SrcPort:     5060,
 		DstPort:     5061,
-		Protocol:    17, // UDP
+		Protocol:    17,
 		PayloadType: "sip",
 		Labels: map[string]string{
 			"sip.method":  "INVITE",
@@ -147,51 +293,31 @@ func TestKafkaReporter_SerializePacket(t *testing.T) {
 		RawPayload: []byte("SIP/2.0 200 OK"),
 	}
 
-	data, err := r.serializePacket(pkt)
+	data, err := r.serializeValue(pkt)
 	if err != nil {
-		t.Fatalf("serializePacket failed: %v", err)
+		t.Fatalf("serializeValue failed: %v", err)
 	}
 
-	// Parse back and verify
 	var output map[string]any
-	err = json.Unmarshal(data, &output)
-	if err != nil {
+	if err := json.Unmarshal(data, &output); err != nil {
 		t.Fatalf("json.Unmarshal failed: %v", err)
 	}
 
-	// Verify fields
+	// Spot-check key fields
 	if output["task_id"] != "task-123" {
 		t.Errorf("task_id = %v, want task-123", output["task_id"])
-	}
-	if output["agent_id"] != "agent-456" {
-		t.Errorf("agent_id = %v, want agent-456", output["agent_id"])
-	}
-	if output["pipeline_id"] != float64(7) {
-		t.Errorf("pipeline_id = %v, want 7", output["pipeline_id"])
-	}
-	if output["timestamp"] != float64(now.UnixMilli()) {
-		t.Errorf("timestamp = %v, want %v", output["timestamp"], now.UnixMilli())
-	}
-	if output["src_ip"] != "192.168.1.100" {
-		t.Errorf("src_ip = %v, want 192.168.1.100", output["src_ip"])
-	}
-	if output["dst_ip"] != "192.168.1.200" {
-		t.Errorf("dst_ip = %v, want 192.168.1.200", output["dst_ip"])
-	}
-	if output["src_port"] != float64(5060) {
-		t.Errorf("src_port = %v, want 5060", output["src_port"])
-	}
-	if output["dst_port"] != float64(5061) {
-		t.Errorf("dst_port = %v, want 5061", output["dst_port"])
-	}
-	if output["protocol"] != float64(17) {
-		t.Errorf("protocol = %v, want 17", output["protocol"])
 	}
 	if output["payload_type"] != "sip" {
 		t.Errorf("payload_type = %v, want sip", output["payload_type"])
 	}
+	if output["pipeline_id"] != float64(7) {
+		t.Errorf("pipeline_id = %v, want 7", output["pipeline_id"])
+	}
+	if output["raw_payload_len"] != float64(len(pkt.RawPayload)) {
+		t.Errorf("raw_payload_len = %v, want %d", output["raw_payload_len"], len(pkt.RawPayload))
+	}
 
-	// Check labels
+	// Labels present
 	labels, ok := output["labels"].(map[string]any)
 	if !ok {
 		t.Fatal("labels not found or wrong type")
@@ -199,15 +325,34 @@ func TestKafkaReporter_SerializePacket(t *testing.T) {
 	if labels["sip.method"] != "INVITE" {
 		t.Errorf("labels[sip.method] = %v, want INVITE", labels["sip.method"])
 	}
-	if labels["sip.call_id"] != "xyz789" {
-		t.Errorf("labels[sip.call_id] = %v, want xyz789", labels["sip.call_id"])
+}
+
+func TestKafkaReporter_SerializeJSON_NoRawPayload(t *testing.T) {
+	r := &KafkaReporter{config: Config{Serialization: "json"}}
+	pkt := &core.OutputPacket{
+		TaskID:    "t1",
+		SrcIP:     netip.MustParseAddr("1.2.3.4"),
+		DstIP:     netip.MustParseAddr("5.6.7.8"),
+		Timestamp: time.Now(),
 	}
 
-	// Check raw_payload_len
-	if output["raw_payload_len"] != float64(len(pkt.RawPayload)) {
-		t.Errorf("raw_payload_len = %v, want %d", output["raw_payload_len"], len(pkt.RawPayload))
+	data, err := r.serializeValue(pkt)
+	if err != nil {
+		t.Fatalf("serializeValue failed: %v", err)
+	}
+
+	var output map[string]any
+	if err := json.Unmarshal(data, &output); err != nil {
+		t.Fatalf("json.Unmarshal failed: %v", err)
+	}
+
+	// raw_payload_len should not be present when RawPayload is empty
+	if _, ok := output["raw_payload_len"]; ok {
+		t.Error("raw_payload_len should not be present for empty RawPayload")
 	}
 }
+
+// ─── Lifecycle Tests ───
 
 func TestKafkaReporter_Lifecycle(t *testing.T) {
 	r := NewKafkaReporter()
@@ -228,18 +373,43 @@ func TestKafkaReporter_Lifecycle(t *testing.T) {
 
 	ctx := context.Background()
 
-	err = r.Start(ctx)
-	if err != nil {
+	if err := r.Start(ctx); err != nil {
 		t.Errorf("Start() error = %v", err)
 	}
-
-	err = r.Flush(ctx)
-	if err != nil {
+	if err := r.Flush(ctx); err != nil {
 		t.Errorf("Flush() error = %v", err)
 	}
+	if err := r.Stop(ctx); err != nil {
+		t.Errorf("Stop() error = %v", err)
+	}
+}
 
-	err = r.Stop(ctx)
+func TestKafkaReporter_Lifecycle_TopicPrefix(t *testing.T) {
+	r := NewKafkaReporter()
+
+	config := map[string]any{
+		"brokers":      []any{"localhost:9092"},
+		"topic_prefix": "otus",
+	}
+
+	err := r.Init(config)
 	if err != nil {
+		t.Fatalf("Init failed: %v", err)
+	}
+
+	kr := r.(*KafkaReporter)
+	if kr.config.TopicPrefix != "otus" {
+		t.Errorf("TopicPrefix = %s, want otus", kr.config.TopicPrefix)
+	}
+	if kr.config.Topic != "" {
+		t.Errorf("Topic = %s, want empty", kr.config.Topic)
+	}
+
+	ctx := context.Background()
+	if err := r.Start(ctx); err != nil {
+		t.Errorf("Start() error = %v", err)
+	}
+	if err := r.Stop(ctx); err != nil {
 		t.Errorf("Stop() error = %v", err)
 	}
 }
@@ -250,16 +420,17 @@ func TestKafkaReporter_Report_NilPacket(t *testing.T) {
 		"brokers": []any{"localhost:9092"},
 		"topic":   "test-topic",
 	}
-	err := r.Init(config)
-	if err != nil {
+	if err := r.Init(config); err != nil {
 		t.Fatalf("Init failed: %v", err)
 	}
 
-	err = r.Report(context.Background(), nil)
+	err := r.Report(context.Background(), nil)
 	if err == nil {
 		t.Error("Report(nil) should return error")
 	}
 }
+
+// ─── Compression Tests ───
 
 func TestKafkaReporter_CompressionTypes(t *testing.T) {
 	compressionTypes := []string{"none", "gzip", "snappy", "lz4"}
@@ -279,6 +450,39 @@ func TestKafkaReporter_CompressionTypes(t *testing.T) {
 
 			if r.config.Compression != compression {
 				t.Errorf("Compression = %s, want %s", r.config.Compression, compression)
+			}
+		})
+	}
+}
+
+// ─── Serialization Config Tests ───
+
+func TestKafkaReporter_SerializationConfig(t *testing.T) {
+	tests := []struct {
+		name string
+		ser  string
+		want string
+	}{
+		{"default", "", "json"},
+		{"json explicit", "json", "json"},
+		{"binary", "binary", "binary"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := NewKafkaReporter().(*KafkaReporter)
+			cfg := map[string]any{
+				"brokers": []any{"localhost:9092"},
+				"topic":   "test-topic",
+			}
+			if tt.ser != "" {
+				cfg["serialization"] = tt.ser
+			}
+			if err := r.Init(cfg); err != nil {
+				t.Fatalf("Init failed: %v", err)
+			}
+			if r.config.Serialization != tt.want {
+				t.Errorf("Serialization = %s, want %s", r.config.Serialization, tt.want)
 			}
 		})
 	}

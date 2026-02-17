@@ -4,51 +4,55 @@ package config
 import (
 	"encoding/json"
 	"fmt"
+	"path/filepath"
+	"strings"
+
+	"gopkg.in/yaml.v3"
 )
 
 // TaskConfig represents dynamic per-task configuration.
 type TaskConfig struct {
-	ID         string            `json:"id"`
-	Workers    int               `json:"workers"` // Pipeline parallelism (0 = auto)
-	Capture    CaptureConfig     `json:"capture"`
-	Decoder    DecoderConfig     `json:"decoder"`
-	Parsers    []ParserConfig    `json:"parsers"`
-	Processors []ProcessorConfig `json:"processors"`
-	Reporters  []ReporterConfig  `json:"reporters"`
+	ID         string            `json:"id" yaml:"id"`
+	Workers    int               `json:"workers" yaml:"workers"`
+	Capture    CaptureConfig     `json:"capture" yaml:"capture"`
+	Decoder    DecoderConfig     `json:"decoder" yaml:"decoder"`
+	Parsers    []ParserConfig    `json:"parsers" yaml:"parsers"`
+	Processors []ProcessorConfig `json:"processors" yaml:"processors"`
+	Reporters  []ReporterConfig  `json:"reporters" yaml:"reporters"`
 }
 
 // CaptureConfig contains capture plugin configuration.
 type CaptureConfig struct {
-	Name         string         `json:"name"`          // af_packet_v3 / pcap / xdp
-	DispatchMode string         `json:"dispatch_mode"` // "binding" | "dispatch"
-	Interface    string         `json:"interface"`     // eth0 / eth1
-	BPFFilter    string         `json:"bpf_filter"`    // "udp port 5060"
-	SnapLen      int            `json:"snap_len"`      // Snapshot length (default 65535)
-	Config       map[string]any `json:"config"`        // Plugin-specific config (fanout_group, fanout_mode, etc.)
+	Name         string         `json:"name" yaml:"name"`
+	DispatchMode string         `json:"dispatch_mode" yaml:"dispatch_mode"`
+	Interface    string         `json:"interface" yaml:"interface"`
+	BPFFilter    string         `json:"bpf_filter" yaml:"bpf_filter"`
+	SnapLen      int            `json:"snap_len" yaml:"snap_len"`
+	Config       map[string]any `json:"config" yaml:"config"`
 }
 
 // DecoderConfig contains decoder configuration.
 type DecoderConfig struct {
-	Tunnels      []string `json:"tunnels"`       // ["vxlan", "gre"] - tunnel types to decapsulate
-	IPReassembly bool     `json:"ip_reassembly"` // Enable IP fragment reassembly
+	Tunnels      []string `json:"tunnels" yaml:"tunnels"`
+	IPReassembly bool     `json:"ip_reassembly" yaml:"ip_reassembly"`
 }
 
 // ParserConfig contains parser plugin configuration.
 type ParserConfig struct {
-	Name   string         `json:"name"`
-	Config map[string]any `json:"config"`
+	Name   string         `json:"name" yaml:"name"`
+	Config map[string]any `json:"config" yaml:"config"`
 }
 
 // ProcessorConfig contains processor plugin configuration.
 type ProcessorConfig struct {
-	Name   string         `json:"name"`
-	Config map[string]any `json:"config"`
+	Name   string         `json:"name" yaml:"name"`
+	Config map[string]any `json:"config" yaml:"config"`
 }
 
 // ReporterConfig contains reporter plugin configuration.
 type ReporterConfig struct {
-	Name   string         `json:"name"`
-	Config map[string]any `json:"config"`
+	Name   string         `json:"name" yaml:"name"`
+	Config map[string]any `json:"config" yaml:"config"`
 }
 
 // Validate validates task configuration.
@@ -111,6 +115,37 @@ func ParseTaskConfig(data []byte) (*TaskConfig, error) {
 	var tc TaskConfig
 	if err := json.Unmarshal(data, &tc); err != nil {
 		return nil, fmt.Errorf("failed to parse task config: %w", err)
+	}
+
+	if err := tc.Validate(); err != nil {
+		return nil, err
+	}
+
+	return &tc, nil
+}
+
+// ParseTaskConfigAuto detects format (JSON/YAML) based on file extension
+// and parses the task configuration accordingly.
+func ParseTaskConfigAuto(data []byte, filename string) (*TaskConfig, error) {
+	var tc TaskConfig
+
+	ext := strings.ToLower(filepath.Ext(filename))
+	switch ext {
+	case ".yaml", ".yml":
+		if err := yaml.Unmarshal(data, &tc); err != nil {
+			return nil, fmt.Errorf("failed to parse YAML task config: %w", err)
+		}
+	case ".json", "":
+		if err := json.Unmarshal(data, &tc); err != nil {
+			return nil, fmt.Errorf("failed to parse JSON task config: %w", err)
+		}
+	default:
+		// Try JSON first, fall back to YAML
+		if err := json.Unmarshal(data, &tc); err != nil {
+			if err2 := yaml.Unmarshal(data, &tc); err2 != nil {
+				return nil, fmt.Errorf("failed to parse task config (tried JSON and YAML): JSON: %v; YAML: %v", err, err2)
+			}
+		}
 	}
 
 	if err := tc.Validate(); err != nil {

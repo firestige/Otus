@@ -31,21 +31,12 @@ Subcommands:
 var taskCreateCmd = &cobra.Command{
 	Use:   "create",
 	Short: "Create a new capture task",
-	Long: `Create a new packet capture task from a JSON configuration file.
+	Long: `Create a new packet capture task from a JSON or YAML configuration file.
+File format is auto-detected from extension (.json, .yaml, .yml).
 
-Example configuration:
-  {
-    "id": "sip-capture-1",
-    "workers": 2,
-    "capture": {
-      "name": "afpacket",
-      "interface": "eth0",
-      "bpf_filter": "udp port 5060",
-      "dispatch_mode": "binding"
-    },
-    "parsers": [{"name": "sip"}],
-    "reporters": [{"name": "kafka", "config": {...}}]
-  }`,
+Examples:
+  otus task create -f task.json
+  otus task create -f task.yaml`,
 	Run: func(cmd *cobra.Command, args []string) {
 		runTaskCreate(cmd)
 	},
@@ -103,7 +94,7 @@ func init() {
 
 	// Flags for task create
 	taskCreateCmd.Flags().StringVarP(&taskConfigFile, "file", "f", "",
-		"task configuration file (JSON) (required)")
+		"task configuration file (JSON or YAML) (required)")
 	taskCreateCmd.MarkFlagRequired("file")
 }
 
@@ -114,9 +105,9 @@ func runTaskCreate(cmd *cobra.Command) {
 		exitWithError(fmt.Sprintf("failed to read config file %s", taskConfigFile), err)
 	}
 
-	// Parse task config
-	var taskConfig config.TaskConfig
-	if err := json.Unmarshal(data, &taskConfig); err != nil {
+	// Parse task config — auto-detect JSON/YAML from file extension
+	taskConfig, err := config.ParseTaskConfigAuto(data, taskConfigFile)
+	if err != nil {
 		exitWithError("failed to parse task config", err)
 	}
 
@@ -126,7 +117,7 @@ func runTaskCreate(cmd *cobra.Command) {
 
 	// Send create command
 	fmt.Printf("Creating task %s...\n", taskConfig.ID)
-	params := command.TaskCreateParams{Config: taskConfig}
+	params := command.TaskCreateParams{Config: *taskConfig}
 	resp, err := client.TaskCreate(ctx, params)
 	if err != nil {
 		exitWithError("failed to send create command", err)

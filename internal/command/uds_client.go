@@ -128,6 +128,21 @@ func (c *UDSClient) ConfigReload(ctx context.Context) (*Response, error) {
 	return c.Call(ctx, "config_reload", nil)
 }
 
+// DaemonShutdown is a convenience method for daemon_shutdown command.
+func (c *UDSClient) DaemonShutdown(ctx context.Context) (*Response, error) {
+	return c.Call(ctx, "daemon_shutdown", nil)
+}
+
+// DaemonStatus is a convenience method for daemon_status command.
+func (c *UDSClient) DaemonStatus(ctx context.Context) (*Response, error) {
+	return c.Call(ctx, "daemon_status", nil)
+}
+
+// DaemonStats is a convenience method for daemon_stats command.
+func (c *UDSClient) DaemonStats(ctx context.Context) (*Response, error) {
+	return c.Call(ctx, "daemon_stats", nil)
+}
+
 // Ping sends a simple ping command to check if daemon is alive.
 // This is a convenience wrapper around task.list.
 func (c *UDSClient) Ping(ctx context.Context) error {

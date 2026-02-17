@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"firestige.xyz/otus/internal/config"
 	"firestige.xyz/otus/internal/task"
@@ -15,6 +16,8 @@ import (
 type CommandHandler struct {
 	taskManager    *task.TaskManager
 	configReloader ConfigReloader
+	shutdownFunc   func() // Called by daemon_shutdown to trigger graceful stop
+	startTime      int64  // Unix timestamp of daemon start for uptime calc
 }
 
 // ConfigReloader is the interface for reloading global configuration.
@@ -27,7 +30,13 @@ func NewCommandHandler(tm *task.TaskManager, reloader ConfigReloader) *CommandHa
 	return &CommandHandler{
 		taskManager:    tm,
 		configReloader: reloader,
+		startTime:      time.Now().Unix(),
 	}
+}
+
+// SetShutdownFunc sets the callback invoked by the daemon_shutdown command.
+func (h *CommandHandler) SetShutdownFunc(fn func()) {
+	h.shutdownFunc = fn
 }
 
 // Command represents a control plane command.
@@ -74,6 +83,12 @@ func (h *CommandHandler) Handle(ctx context.Context, cmd Command) Response {
 		return h.handleTaskStatus(ctx, cmd)
 	case "config_reload":
 		return h.handleConfigReload(ctx, cmd)
+	case "daemon_shutdown":
+		return h.handleDaemonShutdown(ctx, cmd)
+	case "daemon_status":
+		return h.handleDaemonStatus(ctx, cmd)
+	case "daemon_stats":
+		return h.handleDaemonStats(ctx, cmd)
 	default:
 		return Response{
 			ID: cmd.ID,
@@ -259,6 +274,63 @@ func (h *CommandHandler) handleConfigReload(ctx context.Context, cmd Command) Re
 		ID: cmd.ID,
 		Result: map[string]interface{}{
 			"status": "reloaded",
+		},
+	}
+}
+
+// handleDaemonShutdown triggers graceful daemon shutdown via the registered callback.
+func (h *CommandHandler) handleDaemonShutdown(_ context.Context, cmd Command) Response {
+	if h.shutdownFunc == nil {
+		return Response{
+			ID: cmd.ID,
+			Error: &ErrorInfo{
+				Code:    ErrCodeInternalError,
+				Message: "shutdown handler not registered",
+			},
+		}
+	}
+
+	slog.Info("daemon_shutdown command received, initiating graceful shutdown")
+	go h.shutdownFunc() // Non-blocking: let the response be sent first
+
+	return Response{
+		ID: cmd.ID,
+		Result: map[string]interface{}{
+			"status": "shutting_down",
+		},
+	}
+}
+
+// handleDaemonStatus returns daemon status information.
+func (h *CommandHandler) handleDaemonStatus(_ context.Context, cmd Command) Response {
+	taskIDs := h.taskManager.List()
+	uptimeSeconds := time.Now().Unix() - h.startTime
+
+	return Response{
+		ID: cmd.ID,
+		Result: map[string]interface{}{
+			"version":    "0.1.0",
+			"uptime_sec": uptimeSeconds,
+			"tasks":      taskIDs,
+			"task_count": len(taskIDs),
+		},
+	}
+}
+
+// handleDaemonStats returns runtime statistics from the task manager.
+func (h *CommandHandler) handleDaemonStats(_ context.Context, cmd Command) Response {
+	statusMap := h.taskManager.Status()
+	taskStats := make(map[string]interface{})
+	for id, status := range statusMap {
+		taskStats[id] = map[string]interface{}{
+			"state": status.State,
+		}
+	}
+
+	return Response{
+		ID: cmd.ID,
+		Result: map[string]interface{}{
+			"tasks": taskStats,
 		},
 	}
 }

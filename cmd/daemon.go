@@ -62,8 +62,8 @@ func runDaemon() {
 		// If config file doesn't exist, use defaults
 		slog.Warn("failed to load config, using defaults", "error", err)
 		globalConfig = &config.GlobalConfig{
-			Agent: config.AgentConfig{
-				ID: "otus-agent-001",
+			Node: config.NodeConfig{
+				Hostname: "otus-agent-001",
 			},
 		}
 	}
@@ -76,12 +76,12 @@ func runDaemon() {
 
 	slog.Info("otus daemon starting",
 		"version", "0.1.0",
-		"agent_id", globalConfig.Agent.ID,
+		"hostname", globalConfig.Node.Hostname,
 		"config", configFile,
 	)
 
 	// Create task manager
-	taskManager := task.NewTaskManager(globalConfig.Agent.ID)
+	taskManager := task.NewTaskManager(globalConfig.Node.Hostname)
 
 	// Create command handler
 	// ConfigReloader will be properly implemented in Step 15
@@ -137,7 +137,7 @@ func runDaemon() {
 			if err != nil {
 				slog.Error("failed to reload config", "error", err)
 			} else {
-				slog.Info("configuration reloaded", "agent_id", newConfig.Agent.ID)
+				slog.Info("configuration reloaded", "hostname", newConfig.Node.Hostname)
 				// Note: Actual reload logic will be in Step 15
 			}
 		}

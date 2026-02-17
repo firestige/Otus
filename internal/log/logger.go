@@ -21,21 +21,25 @@ func Init(cfg config.LogConfig) error {
 		return fmt.Errorf("invalid log level: %w", err)
 	}
 
-	// Collect all output writers
-	var writers []io.Writer
-	for i, output := range cfg.Outputs {
-		writer, err := createWriter(output)
+	// Collect all output writers — stdout is always included.
+	writers := []io.Writer{os.Stdout}
+
+	// File output
+	if cfg.Outputs.File.Enabled {
+		w, err := createFileWriter(cfg.Outputs.File)
 		if err != nil {
-			return fmt.Errorf("failed to create output[%d] (%s): %w", i, output.Type, err)
+			return fmt.Errorf("failed to create file output: %w", err)
 		}
-		if writer != nil {
-			writers = append(writers, writer)
-		}
+		writers = append(writers, w)
 	}
 
-	// Default to stdout if no outputs configured
-	if len(writers) == 0 {
-		writers = append(writers, os.Stdout)
+	// Loki output
+	if cfg.Outputs.Loki.Enabled {
+		w, err := createLokiWriter(cfg.Outputs.Loki)
+		if err != nil {
+			return fmt.Errorf("failed to create loki output: %w", err)
+		}
+		writers = append(writers, w)
 	}
 
 	// Create multi-writer
@@ -79,45 +83,29 @@ func parseLevel(levelStr string) (slog.Level, error) {
 	}
 }
 
-// createWriter creates an io.Writer for the given output config.
-func createWriter(output config.OutputConfig) (io.Writer, error) {
-	switch strings.ToLower(output.Type) {
-	case "console", "stdout":
-		return os.Stdout, nil
-
-	case "file":
-		if output.Path == "" {
-			return nil, fmt.Errorf("file output requires 'path' field")
-		}
-
-		// Use lumberjack for log rotation
-		return &lumberjack.Logger{
-			Filename:   output.Path,
-			MaxSize:    output.MaxSizeMB,  // megabytes
-			MaxBackups: output.MaxBackups, // number of old files to keep
-			MaxAge:     output.MaxAgeDays, // days
-			Compress:   output.Compress,   // compress old files
-		}, nil
-
-	case "loki":
-		if output.Endpoint == "" {
-			return nil, fmt.Errorf("loki output requires 'endpoint' field")
-		}
-
-		// Create Loki writer
-		lokiWriter, err := NewLokiWriter(LokiConfig{
-			Endpoint:      output.Endpoint,
-			Labels:        output.Labels,
-			BatchSize:     output.BatchSize,
-			FlushInterval: output.FlushInterval,
-		})
-		if err != nil {
-			return nil, fmt.Errorf("failed to create loki writer: %w", err)
-		}
-
-		return lokiWriter, nil
-
-	default:
-		return nil, fmt.Errorf("unsupported output type: %s", output.Type)
+// createFileWriter creates a lumberjack file writer for log rotation.
+func createFileWriter(fc config.FileOutputConfig) (io.Writer, error) {
+	if fc.Path == "" {
+		return nil, fmt.Errorf("file output requires 'path' field")
 	}
+	return &lumberjack.Logger{
+		Filename:   fc.Path,
+		MaxSize:    fc.Rotation.MaxSizeMB,
+		MaxBackups: fc.Rotation.MaxBackups,
+		MaxAge:     fc.Rotation.MaxAgeDays,
+		Compress:   fc.Rotation.Compress,
+	}, nil
+}
+
+// createLokiWriter creates a Loki writer.
+func createLokiWriter(lc config.LokiOutputConfig) (io.Writer, error) {
+	if lc.Endpoint == "" {
+		return nil, fmt.Errorf("loki output requires 'endpoint' field")
+	}
+	return NewLokiWriter(LokiConfig{
+		Endpoint:      lc.Endpoint,
+		Labels:        lc.Labels,
+		BatchSize:     lc.BatchSize,
+		FlushInterval: lc.BatchTimeout,
+	})
 }

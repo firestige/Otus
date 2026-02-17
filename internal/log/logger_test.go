@@ -53,13 +53,11 @@ func TestParseLevelInvalid(t *testing.T) {
 	}
 }
 
-func TestInitWithConsoleOutput(t *testing.T) {
+func TestInitStdoutOnly(t *testing.T) {
 	cfg := config.LogConfig{
 		Level:  "info",
 		Format: "json",
-		Outputs: []config.OutputConfig{
-			{Type: "console"},
-		},
+		// No file or loki enabled → stdout only
 	}
 
 	err := Init(cfg)
@@ -67,7 +65,6 @@ func TestInitWithConsoleOutput(t *testing.T) {
 		t.Fatalf("Init failed: %v", err)
 	}
 
-	// Verify logger is set
 	logger := slog.Default()
 	if logger == nil {
 		t.Fatal("Expected logger to be set, got nil")
@@ -81,14 +78,16 @@ func TestInitWithFileOutput(t *testing.T) {
 	cfg := config.LogConfig{
 		Level:  "debug",
 		Format: "text",
-		Outputs: []config.OutputConfig{
-			{
-				Type:       "file",
-				Path:       logPath,
-				MaxSizeMB:  10,
-				MaxBackups: 3,
-				MaxAgeDays: 7,
-				Compress:   true,
+		Outputs: config.LogOutputsConfig{
+			File: config.FileOutputConfig{
+				Enabled: true,
+				Path:    logPath,
+				Rotation: config.RotationConfig{
+					MaxSizeMB:  10,
+					MaxBackups: 3,
+					MaxAgeDays: 7,
+					Compress:   true,
+				},
 			},
 		},
 	}
@@ -111,9 +110,6 @@ func TestInitWithInvalidLevel(t *testing.T) {
 	cfg := config.LogConfig{
 		Level:  "invalid",
 		Format: "json",
-		Outputs: []config.OutputConfig{
-			{Type: "console"},
-		},
 	}
 
 	err := Init(cfg)
@@ -129,9 +125,6 @@ func TestInitWithInvalidFormat(t *testing.T) {
 	cfg := config.LogConfig{
 		Level:  "info",
 		Format: "xml",
-		Outputs: []config.OutputConfig{
-			{Type: "console"},
-		},
 	}
 
 	err := Init(cfg)
@@ -147,8 +140,11 @@ func TestInitWithMissingFilePath(t *testing.T) {
 	cfg := config.LogConfig{
 		Level:  "info",
 		Format: "json",
-		Outputs: []config.OutputConfig{
-			{Type: "file"}, // Missing Path field
+		Outputs: config.LogOutputsConfig{
+			File: config.FileOutputConfig{
+				Enabled: true,
+				// Missing Path
+			},
 		},
 	}
 
@@ -161,61 +157,22 @@ func TestInitWithMissingFilePath(t *testing.T) {
 	}
 }
 
-func TestInitDefaultsToStdout(t *testing.T) {
-	cfg := config.LogConfig{
-		Level:   "info",
-		Format:  "json",
-		Outputs: []config.OutputConfig{}, // No outputs
-	}
-
-	err := Init(cfg)
-	if err != nil {
-		t.Fatalf("Init failed: %v", err)
-	}
-
-	// Should default to stdout (no error)
-	logger := slog.Default()
-	if logger == nil {
-		t.Fatal("Expected logger to be set, got nil")
-	}
-}
-
-func TestCreateWriterConsole(t *testing.T) {
-	output := config.OutputConfig{Type: "console"}
-	writer, err := createWriter(output)
-	if err != nil {
-		t.Fatalf("createWriter failed: %v", err)
-	}
-	if writer != os.Stdout {
-		t.Error("Expected stdout, got different writer")
-	}
-}
-
-func TestCreateWriterStdout(t *testing.T) {
-	output := config.OutputConfig{Type: "stdout"}
-	writer, err := createWriter(output)
-	if err != nil {
-		t.Fatalf("createWriter failed: %v", err)
-	}
-	if writer != os.Stdout {
-		t.Error("Expected stdout, got different writer")
-	}
-}
-
-func TestCreateWriterFile(t *testing.T) {
+func TestCreateFileWriter(t *testing.T) {
 	tmpDir := t.TempDir()
-	output := config.OutputConfig{
-		Type:       "file",
-		Path:       filepath.Join(tmpDir, "test.log"),
-		MaxSizeMB:  10,
-		MaxBackups: 3,
-		MaxAgeDays: 7,
-		Compress:   true,
+	fc := config.FileOutputConfig{
+		Enabled: true,
+		Path:    filepath.Join(tmpDir, "test.log"),
+		Rotation: config.RotationConfig{
+			MaxSizeMB:  10,
+			MaxBackups: 3,
+			MaxAgeDays: 7,
+			Compress:   true,
+		},
 	}
 
-	writer, err := createWriter(output)
+	writer, err := createFileWriter(fc)
 	if err != nil {
-		t.Fatalf("createWriter failed: %v", err)
+		t.Fatalf("createFileWriter failed: %v", err)
 	}
 	if writer == nil {
 		t.Fatal("Expected writer, got nil")
@@ -228,17 +185,6 @@ func TestCreateWriterFile(t *testing.T) {
 	}
 	if n != 4 {
 		t.Errorf("Expected 4 bytes written, got %d", n)
-	}
-}
-
-func TestCreateWriterUnsupportedType(t *testing.T) {
-	output := config.OutputConfig{Type: "unsupported"}
-	_, err := createWriter(output)
-	if err == nil {
-		t.Error("Expected error for unsupported output type, got nil")
-	}
-	if !strings.Contains(err.Error(), "unsupported output type") {
-		t.Errorf("Expected error about unsupported output type, got: %v", err)
 	}
 }
 

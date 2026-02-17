@@ -49,6 +49,9 @@ func init() {
 	rootCmd.AddCommand(taskCmd)
 	rootCmd.AddCommand(stopCmd)
 	rootCmd.AddCommand(reloadCmd)
+	rootCmd.AddCommand(statusCmd)
+	rootCmd.AddCommand(statsCmd)
+	rootCmd.AddCommand(validateCmd)
 }
 
 // exitWithError prints error message and exits with code 1
