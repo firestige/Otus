@@ -731,18 +731,37 @@ agent:
 
 ### Step 11: Kafka Reporter 插件
 **前置**: Step 3  
-**目标**: 实现 Kafka Producer Reporter
+**目标**: 实现 Kafka Producer Reporter  
+**状态**: ✅ 已完成
 
 **任务清单**:
-1. `plugins/reporter/kafka/kafka.go`
-   - segmentio/kafka-go Writer（批量 + 异步）
-   - OutputPacket → JSON/Protobuf 序列化
-   - 失败重试策略
-   - Flush() 实现
-2. `plugins/reporter/console/console.go` — 控制台调试输出
-3. 单元测试：序列化格式、mock Writer
+1. ✅ `plugins/reporter/kafka/kafka.go` (257 行)
+   - segmentio/kafka-go Writer（批量配置：BatchSize=100, BatchTimeout=100ms）
+   - OutputPacket → JSON 序列化（timestamp as UnixMilli, 5-tuple as key）
+   - Labels → Kafka Headers 映射
+   - 失败重试策略（MaxAttempts=3）
+   - 压缩支持（none/gzip/snappy/lz4，默认 snappy）
+   - Flush() 实现（依赖 Writer 自动批量刷新）
+2. ✅ `plugins/reporter/console/console.go` (150 行)
+   - 两种输出格式：JSON（结构化）和 Text（人类可读）
+   - 统计计数器（reportedCount）
+   - Stdout 自动刷新，Flush() 为空操作
+3. ✅ 单元测试：
+   - `console_test.go`: 配置解析、格式验证、生命周期测试
+   - `kafka_test.go`: 配置解析、序列化格式验证、压缩类型测试
 
-**交付物**: Reporter 可将数据发送到 Kafka
+**实现细节**:
+- **Kafka Reporter**:
+  - 使用 kafka.Hash Balancer 实现一致性分区路由
+  - Message Key = 五元组字符串（SrcIP:SrcPort-DstIP:DstPort）
+  - 同步写入模式（Async=false）以正确处理错误
+  - CompressionCodec 通过 compress.Compression.Codec() 方法获取
+- **Console Reporter**:
+  - JSON 格式：完整 OutputPacket 字段（timestamp 为 RFC3339）
+  - Text 格式：[HH:MM:SS.mmm] SrcIP:Port → DstIP:Port proto=N type=X
+  - 配置验证：format 只允许 "json" 或 "text"
+
+**交付物**: Reporter 可将数据发送到 Kafka 或控制台调试输出
 
 ---
 
