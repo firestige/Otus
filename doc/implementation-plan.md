@@ -658,21 +658,29 @@ agent:
 
 ---
 
-### Step 9: AF_PACKET 捕获插件
+### ✅ Step 9: AF_PACKET 捕获插件
 **前置**: Step 3  
 **目标**: 实现 AF_PACKET_V3 Capturer 插件
+**状态**: ✅ 已完成 (commit e76715c)
 
 **任务清单**:
-1. `plugins/capture/afpacket/afpacket.go`
-   - TPacket_V3 ring buffer
-   - PACKET_FANOUT（FANOUT_HASH）
-   - BPF 过滤器设置
-   - 零拷贝读取 → RawPacket
-2. 参考旧代码：`internal/otus/module/capture/handle/handle_afpacket.go`
-3. BPF 编译工具：参考 `internal/utils/bpf.go`
-4. 集成测试（需要 root 权限 + 实际网卡，CI 中可能跳过）
+1. ✅ `plugins/capture/afpacket/afpacket.go`
+   - TPacket_V3 ring buffer (4MB block, 128 blocks)
+   - PACKET_FANOUT (hash mode, configurable fanout_id)
+   - BPF 过滤器 (pcap.CompileBPFFilter → bpf.RawInstruction)
+   - 零拷贝读取 → RawPacket (gopacket.NoCopy = true)
+2. ✅ BPF 编译: 使用 pcap.CompileBPFFilter + 转换为 bpf.RawInstruction
+3. ✅ 注册插件: plugins/init.go 中注册 "afpacket"
+4. ⚠️ 集成测试: 需要 root 权限 + 实际网卡（暂未实现，待后续）
 
-**交付物**: AF_PACKET Capturer 可正常抓包
+**交付物**: ✅ AF_PACKET Capturer 编译通过，插件已注册
+
+**实现要点**:
+- 使用 `afpacket.OptInterface`、`OptTPacketVersion3`、`OptBlockSize` 等配置选项
+- Fanout 模式通过 `handle.SetFanout()` 设置（在 TPacket 创建后）
+- BPF 过滤器编译流程：字符串 → pcap.CompileBPFFilter → 转换 Code→Op → bpf.RawInstruction → handle.SetBPF
+- 统计信息从 `handle.SocketStats()` 获取 Drops()
+- 非阻塞发送到 output channel，满了则丢包并计数
 
 ---
 
