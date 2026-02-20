@@ -11,7 +11,7 @@
 - ✅ **高性能捕获**: 基于 AF_PACKET v3，单核 200K+ pps
 - ✅ **协议解析**: 零正则 SIP 解析器，L2-L4 完整解码
 - ✅ **IP 分片重组**: 生产级 IPv4 fragment reassembly
-- ✅ **灵活上报**: Kafka + Loki 双通道日志
+- ✅ **灵活上报**: Kafka Reporter + Console Reporter；Loki 作为日志输出
 - ✅ **动态管理**: 支持 UDS/Kafka 远程命令
 - ✅ **可观测性**: Prometheus 指标 + 结构化日志
 - ✅ **跨平台**: 静态链接二进制，支持 x86_64 + ARM64
@@ -76,25 +76,31 @@ sudo systemctl enable otus
 编辑 `/etc/otus/config.yml`：
 
 ```yaml
-global:
-  log_level: info
+otus:
+  control:
+    socket: /var/run/otus.sock
 
-daemon:
-  unix_socket: /tmp/otus.sock
   metrics:
     enabled: true
-    listen: :9091
+    listen: ":9091"
 
-log:
-  appenders:
-    - type: kafka
-      brokers: ["kafka:9092"]
-      topic: otus-logs
+  log:
+    level: info
+    format: json
+    outputs:
+      loki:
+        enabled: false
+        endpoint: "http://loki:3100/loki/api/v1/push"
 
-command:
-  channel: kafka
-  brokers: ["kafka:9092"]
-  consumer_topic: otus-commands
+  kafka:
+    brokers:
+      - "kafka:9092"
+
+  command_channel:
+    enabled: true
+    type: kafka
+    kafka:
+      topic: otus-commands
 ```
 
 ### 4. 启动
@@ -113,17 +119,26 @@ sudo journalctl -u otus -f
 ### 5. 创建抓包任务
 
 ```bash
-# 通过 UDS 创建任务
-otus task create --name sip-capture \
-  --interface eth0 \
-  --protocol sip \
-  --bpf-filter "udp port 5060"
+# 准备任务配置文件（JSON 或 YAML）
+cat > sip-capture.yaml <<EOF
+id: sip-capture
+interface: eth0
+parsers:
+  - sip
+bpf_filter: "udp port 5060"
+EOF
 
-# 查看任务
+# 通过 UDS 创建任务
+otus task create -f sip-capture.yaml
+
+# 查看任务列表
 otus task list
 
-# 停止任务
-otus task stop sip-capture
+# 查看任务状态
+otus task status sip-capture
+
+# 删除任务
+otus task delete sip-capture
 ```
 
 ---
@@ -132,7 +147,7 @@ otus task stop sip-capture
 
 ### 裸金属/物理服务器
 
-参见[部署文档](docs/DEPLOYMENT.md#裸金属物理服务器部署)
+参见[部署文档](doc/DEPLOYMENT.md#裸金属物理服务器部署)
 
 ### Kubernetes
 
@@ -144,7 +159,7 @@ kubectl apply -f docs/kubernetes/daemonset.yaml
 kubectl get pods -n monitoring -l app=otus
 ```
 
-详见[K8s 部署指南](docs/DEPLOYMENT.md#kubernetes-部署)
+详见[K8s 部署指南](doc/DEPLOYMENT.md#kubernetes-部署)
 
 ### 虚拟机 (VMware/KVM/ECS)
 
@@ -164,13 +179,13 @@ kubectl get pods -n monitoring -l app=otus
 │  │   ├── Decoder (L2-L4 + IP Reassembly)           │
 │  │   ├── Pipeline                                   │
 │  │   │   ├── Parser (SIP)                          │
-│  │   │   ├── Processor (Business Logic)            │
-│  │   │   └── Reporter (Kafka)                      │
+│  │   │   ├── Processor (Filter/Label)              │
+│  │   │   └── Reporter (Kafka / Console)            │
 │  │   └── Metrics Collector                         │
 │  └── Task 2 (...)                                   │
 ├─────────────────────────────────────────────────────┤
 │  Command Handler                                    │
-│  ├── UDS Server (/tmp/otus.sock)                   │
+│  ├── UDS Server (/var/run/otus.sock)               │
 │  └── Kafka Consumer (otus-commands)                │
 ├─────────────────────────────────────────────────────┤
 │  Metrics Server (:9091/metrics)                     │
@@ -185,42 +200,49 @@ kubectl get pods -n monitoring -l app=otus
 
 ```
 otus/
-├── api/v1/                   # gRPC/Protobuf 定义
 ├── cmd/                      # CLI 命令实现
+│   ├── root.go              # root command + 全局 flags
 │   ├── daemon.go            # daemon 命令
-│   ├── start.go             # start 命令（已废弃，用 daemon）
+│   ├── task.go              # task 子命令（create/delete/list/status）
 │   ├── stop.go              # stop 命令
-│   └── execute.go           # task 子命令
+│   ├── reload.go            # reload 命令
+│   ├── status.go            # daemon status 命令
+│   ├── stats.go             # daemon stats 命令
+│   └── validate.go          # validate 命令
 ├── configs/                  # 配置文件
 │   ├── config.yml           # 默认配置
 │   └── otus.service         # systemd unit file
 ├── internal/                 # 内部实现
 │   ├── core/                # 核心解码器
 │   │   ├── decoder/         # L2-L4 解码 + IP 重组
-│   │   └── types.go         # 数据结构
+│   │   ├── packet.go        # RawPacket / DecodedPacket
+│   │   ├── types.go         # EthernetHeader / IPHeader / TransportHeader
+│   │   ├── labels.go        # Labels 类型
+│   │   └── errors.go        # sentinel errors
 │   ├── daemon/              # Daemon 进程管理
 │   ├── pipeline/            # Pipeline 引擎
 │   ├── task/                # Task 管理器
-│   ├── command/             # 命令处理器
+│   ├── command/             # 命令处理器（UDS + Kafka）
 │   ├── metrics/             # Prometheus 指标
-│   ├── log/                 # 日志子系统
+│   ├── log/                 # 日志子系统（含 Loki 输出）
 │   └── config/              # 配置加载
 ├── pkg/                      # 公开接口（插件 API）
 │   ├── plugin/              # 插件基础接口
-│   ├── processor/           # Processor 接口
 │   └── models/              # 数据模型
 ├── plugins/                  # 插件实现
 │   ├── capture/afpacket/    # AF_PACKET v3 捕获器
 │   ├── parser/sip/          # SIP 解析器
-│   ├── processor/api/       # Processor 基础接口
-│   ├── reporter/            # 上报插件
-│   │   ├── consolelog/      # 控制台输出
-│   │   └── skywalkingtracing/ # SkyWalking 上报
-│   ├── handler/skywalking/  # SkyWalking 协议处理
-│   └── fallbacker/none/     # 降级处理器
+│   ├── processor/filter/    # 过滤 / 标注 Processor
+│   └── reporter/            # 上报插件
+│       ├── kafka/           # Kafka Producer
+│       └── console/         # 控制台调试输出
 ├── scripts/                  # 构建脚本
 │   └── build.sh             # 交叉编译脚本
-├── docs/                     # 文档
+├── doc/                      # 文档
+│   ├── architecture.md      # 架构设计
+│   ├── config-design.md     # 配置设计
+│   ├── decisions.md         # ADR 决策记录
+│   ├── implementation-plan.md # 实施计划
 │   └── DEPLOYMENT.md        # 部署指南
 ├── Dockerfile               # 静态构建镜像
 ├── Makefile                 # 构建任务
@@ -235,12 +257,8 @@ otus/
 ### 环境准备
 
 ```bash
-# 安装依赖
-go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
-go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
-
-# 生成 protobuf 代码
-make proto
+# 安装依赖（AF_PACKET 抓包需要 libpcap）
+sudo apt-get install -y libpcap-dev  # Debian/Ubuntu
 
 # 运行测试
 make test
@@ -321,7 +339,7 @@ telnet kafka-broker 9092
 sudo journalctl -u otus -e | grep -i kafka
 ```
 
-更多问题参见[故障排查](docs/DEPLOYMENT.md#故障排查)
+更多问题参见[故障排查](doc/DEPLOYMENT.md#故障排查)
 
 ---
 
@@ -350,7 +368,7 @@ sudo journalctl -u otus -e | grep -i kafka
 ## 联系方式
 
 - **Issues**: [GitHub Issues](https://github.com/firestige/otus/issues)
-- **Docs**: [docs/](docs/)
+- **Docs**: [doc/](doc/)
 - **Architecture**: [doc/architecture.md](doc/architecture.md)
 
 ---
