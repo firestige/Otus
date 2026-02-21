@@ -157,8 +157,9 @@ func (r *KafkaReporter) Init(config map[string]any) error {
 	r.config = cfg
 
 	// Create Kafka writer.
-	// When using dynamic topic routing (topic_prefix), Topic is left empty on the
-	// writer and set per-message in Report(). kafka-go supports this natively.
+	// Topic is always set per-message in Report()/ReportBatch() via resolveTopic() (ADR-027).
+	// Setting a topic on the writer AND on the message simultaneously is rejected by kafka-go,
+	// so we never set writer-level Topic — resolveTopic() handles both fixed and prefix modes.
 	writerConfig := kafka.WriterConfig{
 		Brokers:      cfg.Brokers,
 		Balancer:     &kafka.Hash{},
@@ -166,10 +167,6 @@ func (r *KafkaReporter) Init(config map[string]any) error {
 		BatchTimeout: cfg.BatchTimeout,
 		MaxAttempts:  cfg.MaxAttempts,
 		Async:        false,
-	}
-	// Fixed topic mode: set on writer. Dynamic mode: leave empty.
-	if cfg.TopicPrefix == "" {
-		writerConfig.Topic = cfg.Topic
 	}
 
 	// Compression codec
