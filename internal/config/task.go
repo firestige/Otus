@@ -40,6 +40,32 @@ type CaptureConfig struct {
 	Config           map[string]any `json:"config" yaml:"config"`
 }
 
+// ToPluginConfig returns the map that should be passed to plugin.Capturer.Init().
+//
+// Plugin Init() methods receive a map[string]any decoded from JSON, so numeric
+// values that came through JSON appear as float64.  The promoted fields
+// (Interface, BPFFilter, SnapLen) are first-class struct fields and are merged
+// here so callers never have to repeat the promoted-field → map translation.
+// Keys in Config take lower precedence and are overridden by the promoted fields.
+func (c *CaptureConfig) ToPluginConfig() map[string]any {
+	merged := make(map[string]any, len(c.Config)+4)
+	for k, v := range c.Config {
+		merged[k] = v
+	}
+	if c.Interface != "" {
+		merged["interface"] = c.Interface
+	}
+	if c.BPFFilter != "" {
+		merged["bpf_filter"] = c.BPFFilter
+	}
+	if c.SnapLen > 0 {
+		// Use float64 to match how JSON numbers are stored when map[string]any
+		// is populated via json.Unmarshal — keeps plugin Init() type assertions uniform.
+		merged["snap_len"] = float64(c.SnapLen)
+	}
+	return merged
+}
+
 // DecoderConfig contains decoder configuration.
 type DecoderConfig struct {
 	Tunnels      []string `json:"tunnels" yaml:"tunnels"`

@@ -151,7 +151,7 @@ func (m *TaskManager) Create(cfg config.TaskConfig) error {
 
 	// Init Capturers
 	for _, cap := range task.Capturers {
-		if err := cap.Init(cfg.Capture.Config); err != nil {
+		if err := cap.Init(cfg.Capture.ToPluginConfig()); err != nil {
 			return fmt.Errorf("capturer init failed: %w", err)
 		}
 	}

@@ -4,5 +4,11 @@
         "dockerfile": "Dockerfile"
     },
     "features": {},
-    "remoteUser": "vscode"
+    "remoteUser": "vscode",
+    "containerEnv": {
+        "HTTP_PROXY": "http://host.docker.internal:7897",
+        "HTTPS_PROXY": "http://host.docker.internal:7897",
+        "ALL_PROXY": "http://host.docker.internal:7897",
+        "NO_PROXY": "localhost,127.0.0.1,host.docker.internal"
+    }
 }

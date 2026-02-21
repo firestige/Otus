@@ -363,3 +363,84 @@ func TestTaskConfigMarshalUnmarshal(t *testing.T) {
 		t.Errorf("Expected workers %d, got %d", tc.Workers, tc2.Workers)
 	}
 }
+
+// ── CaptureConfig.ToPluginConfig tests ──
+// These tests guard against the bug where promoted fields (Interface, BPFFilter,
+// SnapLen) were not forwarded to plugin.Init() because manager.go passed only
+// CaptureConfig.Config (the nested extension map), not the struct fields.
+
+func TestCaptureConfig_ToPluginConfig_PromotedFieldsPresent(t *testing.T) {
+	cc := CaptureConfig{
+		Name:      "afpacket",
+		Interface: "eth0",
+		BPFFilter: "udp port 5060",
+		SnapLen:   65535,
+		Config:    nil, // no extra config
+	}
+
+	m := cc.ToPluginConfig()
+
+	if v, ok := m["interface"]; !ok || v != "eth0" {
+		t.Errorf("interface = %v, want eth0", v)
+	}
+	if v, ok := m["bpf_filter"]; !ok || v != "udp port 5060" {
+		t.Errorf("bpf_filter = %v, want 'udp port 5060'", v)
+	}
+	if v, ok := m["snap_len"]; !ok || v != float64(65535) {
+		t.Errorf("snap_len = %v (type %T), want float64(65535)", v, v)
+	}
+}
+
+func TestCaptureConfig_ToPluginConfig_ExtensionMapMerged(t *testing.T) {
+	cc := CaptureConfig{
+		Name:      "afpacket",
+		Interface: "eth1",
+		Config: map[string]any{
+			"fanout_id":   float64(99),
+			"promiscuous": true,
+		},
+	}
+
+	m := cc.ToPluginConfig()
+
+	// Promoted field wins
+	if v := m["interface"]; v != "eth1" {
+		t.Errorf("interface = %v, want eth1", v)
+	}
+	// Extra extension keys are preserved
+	if v, ok := m["fanout_id"]; !ok || v != float64(99) {
+		t.Errorf("fanout_id = %v, want 99", v)
+	}
+	if v, ok := m["promiscuous"]; !ok || v != true {
+		t.Errorf("promiscuous = %v, want true", v)
+	}
+}
+
+func TestCaptureConfig_ToPluginConfig_PromotedOverridesExtension(t *testing.T) {
+	// If somehow both the struct field and the extension map have 'interface',
+	// the promoted struct field must win.
+	cc := CaptureConfig{
+		Name:      "afpacket",
+		Interface: "eth0",           // promoted
+		Config:    map[string]any{"interface": "wrong-iface"}, // should be overridden
+	}
+
+	m := cc.ToPluginConfig()
+
+	if v := m["interface"]; v != "eth0" {
+		t.Errorf("interface = %v, want eth0 (promoted field should override Config map)", v)
+	}
+}
+
+func TestCaptureConfig_ToPluginConfig_EmptyInterfaceOmitted(t *testing.T) {
+	cc := CaptureConfig{
+		Name:      "afpacket",
+		Interface: "", // empty → not inserted (plugin will report missing)
+	}
+
+	m := cc.ToPluginConfig()
+
+	if _, ok := m["interface"]; ok {
+		t.Error("expected 'interface' key to be absent when Interface is empty")
+	}
+}
