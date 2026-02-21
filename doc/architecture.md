@@ -61,7 +61,7 @@ Otus 是一个高性能、低资源占用的边缘网络数据包捕获和观测
 #### 2.2.3 管理和控制能力
 - 系统服务集成（systemd）
 - 本地 CLI 控制（daemon 管理 + task 管理，通过 Unix Domain Socket）
-- 远程控制：订阅 Kafka 命令 topic，拉模式接收任务指令（零额外端口）
+- 远程控制：订阅 Kafka 命令 topic (`otus-commands`) 拉模式接收任务指令，向 `otus-responses` topic 写回执行结果（零额外端口，闭环交互，见 ADR-029）
 - 全局配置热加载（SIGHUP / CLI reload）
 - 健康检查和 Prometheus 指标暴露
 
@@ -152,8 +152,9 @@ Otus 是一个高性能、低资源占用的边缘网络数据包捕获和观测
 - 通过 Unix Domain Socket 与 Daemon 通信
 
 **Kafka 命令通道** - `internal/command/`
-- 订阅 Kafka 命令 topic，拉模式接收远程指令
-- 按 `target` 字段路由消息到本节点
+- 订阅 `otus-commands` topic，拉模式接收远程指令
+- 按 `target` 字段路由消息到本节点，执行命令
+- 向 `otus-responses` topic 写回执行结果，以 `hostname` 作为 message key（ADR-029）
 - 零入站端口，复用已有 Kafka 基础设施
 
 #### 3.2.2 核心引擎 (Core Engine)
@@ -935,13 +936,14 @@ otus:
     tls:
       enabled: false
 
-  # 远程命令通道（订阅 Kafka topic 接收任务指令）
+  # 远程命令通道（订阅 Kafka topic 接收任务指令，见 ADR-029）
   command_channel:
     enabled: true
     type: kafka                    # Phase 1 仅 kafka
     kafka:
       # brokers/sasl/tls 继承自 otus.kafka，如需覆盖可在此显式设置
-      topic: otus-commands         # 命令 topic
+      topic: otus-commands         # 命令 topic（近端订阅）
+      response_topic: otus-responses  # 响应 topic（近端写入），空字符串禁用
       group_id: "otus-${node.hostname}"  # 按节点隔离消费
       auto_offset_reset: latest    # 只处理启动后的新命令
 
@@ -1920,34 +1922,44 @@ otus validate --config /etc/otus/config.yml
 otus validate --task task-voip.yml
 ```
 
-### 6.3 远程控制通道（Kafka 拉模式）
+### 6.3 远程控制通道（Kafka 请求-响应模式）
 
-**设计原则**：Agent 不监听任何入站端口。远程控制复用已有的 Kafka 基础设施，Agent 主动订阅命令 topic 拉取指令。
+**设计原则**：Agent 不监听任何入站端口。远程控制复用已有的 Kafka 基础设施，
+形成完整的命令请求-响应闭环（见 ADR-029）。
+
+#### 6.3.1 双 Topic 架构
 
 ```
-┌─────────────────┐     Kafka 命令 topic      ┌──────────────┐
-│  Control Plane  │ ──── produce ────────────→ │ otus-commands│
-│  / 运维平台     │                            └──────┬───────┘
-└─────────────────┘                                   │
-                                              subscribe (pull)
-                                                      │
-                          ┌───────────────────────────┘
-                          ▼
-                ┌───────────────────┐
-                │  Otus Agent       │
-                │  consumer group:  │
-                │  otus-edge-bj-01  │  ← group_id 按节点隔离
-                └───────────────────┘
+                    Kafka Topics（固定 2 个，不随节点数增长）
+                   ┌─────────────────────────────────────────┐
+                   │  otus-commands   │  otus-responses       │
+                   │  (命令 → 近端)   │  (结果 → 远端)        │
+                   └─────────────────────────────────────────┘
+
+┌──────────────────┐   produce(key=target)    ┌──────────────────┐
+│  Control Plane   │ ──────────────────────→  │  otus-commands   │
+│  / Web CLI       │                          └────────┬─────────┘
+│                  │                                   │ subscribe(pull)
+│  group_id:       │                                   │ filter by target
+│  webcli-POD_NAME │                          ┌────────▼─────────┐
+│  (per instance)  │                          │   Otus Agent     │
+│                  │                          │   group_id:      │
+│  subscribe all   │                          │   otus-{hostname}│
+│  filter by       │   produce(key=hostname)  └────────┬─────────┘
+│  request_id      │ ←────────────────────────────────┘
+│                  │          ┌──────────────────┐
+└──────────────────┘          │  otus-responses  │
+                              └──────────────────┘
 ```
 
-**命令消息格式**（JSON）：
+#### 6.3.2 命令请求格式（`KafkaCommand`）
 
 ```json
 {
-  "version": "v1",
-  "target": "edge-beijing-01",
-  "command": "task_create",
-  "timestamp": "2026-02-13T10:30:00Z",
+  "version":    "v1",
+  "target":     "edge-beijing-01",
+  "command":    "task_create",
+  "timestamp":  "2026-02-13T10:30:00Z",
   "request_id": "req-abc-123",
   "payload": {
     "task_id": "voip-monitor-01",
@@ -1982,29 +1994,69 @@ otus validate --task task-voip.yml
 }
 ```
 
-**支持的命令**：
+**发送端要求**：必须以 `target` 字段值作为 Kafka message key，保证同一节点的命令
+落到同一 partition（顺序保障，见 ADR-026）。
 
-| command | 说明 | payload |
-|---------|------|---------|
-| `task_create` | 创建观测任务 | 完整 Task 配置 |
-| `task_delete` | 删除（停止）观测任务 | `{ "task_id": "..." }` |
-| `task_list` | 列出所有观测任务 | 无 |
-| `task_status` | 查询任务状态 | `{ "task_id": "..." }`（可选，为空返回全部） |
-| `config_reload` | 重新加载全局配置 | 无 |
+#### 6.3.3 命令响应格式（`KafkaResponse`）
 
-**消息路由**：
+```json
+{
+  "version":    "v1",
+  "source":     "edge-beijing-01",
+  "command":    "task_list",
+  "request_id": "req-abc-123",
+  "timestamp":  "2026-02-13T10:30:00Z",
+  "result":     { "tasks": ["voip-monitor-01"], "count": 1 },
+  "error":      null
+}
+```
+
+Agent 以自身 `hostname` 作为 Kafka message key 写入响应，Kafka 一致性哈希保证
+同一节点的所有响应落到固定 partition，便于按节点追踪完整的请求-响应链路。
+
+#### 6.3.4 支持的命令
+
+| command | 说明 | payload | 响应 result |
+|---------|------|---------|-------------|
+| `task_create` | 创建观测任务 | 完整 Task 配置 | `{"task_id":"...","status":"created"}` |
+| `task_delete` | 删除（停止）观测任务 | `{"task_id":"..."}` | `{"task_id":"...","status":"deleted"}` |
+| `task_list` | 列出所有观测任务 | 无 | `{"tasks":[...],"count":N}` |
+| `task_status` | 查询任务状态 | `{"task_id":"..."}`（可选，为空返回全部） | `{"tasks":{...}}` |
+| `config_reload` | 重新加载全局配置 | 无 | `{"status":"reloaded"}` |
+| `daemon_status` | 查询 daemon 状态 | 无 | `{"version":"...","uptime_sec":N,"tasks":[...]}` |
+| `daemon_stats` | 查询运行时统计 | 无 | `{"tasks":{...}}` |
+| `daemon_shutdown` | 触发优雅关闭 | 无 | `{"status":"shutting_down"}` |
+
+#### 6.3.5 消息路由规则
+
 - `target` 字段匹配全局配置中的 `node.hostname`，不匹配的消息直接跳过
-- `target: "*"` 表示广播到所有节点
+- `target: "*"` 表示广播到所有节点（每个节点均执行并各自写响应）
 - `request_id` 用于日志链路追踪（Phase 1）和精确去重（Phase 2 LRU 缓存）
+- `request_id` 为空时不写响应（兼容旧客户端 fire-and-forget 场景）
 
-**可靠性保障**（见 ADR-026）：
-- **发送端要求**：必须使用 `target` 作为 Kafka message key，保证同一目标节点的命令落到同一 partition 保持有序
-- **过期检查**：Agent 收到命令后检查 `timestamp`，超过 `command_ttl`（默认 5m）的命令跳过并记 WARN
-- **乱序容忍**：`task_create` 做冲突检查，`task_delete` 做存在性检查，天然容忍乱序
+#### 6.3.6 可靠性与超时
 
-**状态上报**（Phase 2）：
-- Agent 向独立的 `otus-status` topic 发布心跳和 Task 状态
-- Control Plane 订阅该 topic 获取节点状态，形成完整闭环
+**Agent 侧（近端）**：
+- 命令执行完成后写响应，at-most-once 语义（与命令执行保持一致）
+- 响应写入失败仅记录 ERROR 日志，不影响命令已执行的结果
+- 过期检查：`timestamp` 超过 `command_ttl`（默认 5m）的命令跳过，不写响应（见 ADR-026）
+
+**调用方侧（远端）**：
+- 每个 Web CLI **实例**（进程/Pod）使用唯一 `group_id`（格式：`webcli-{instance-id}`），独立消费全量响应；实例内多 session 共享同一 consumer，以 `request_id` 区分
+- `instance-id` 从运行环境注入：Kubernetes 使用 `$POD_NAME`（Downward API），裸机/VM 使用 `$HOSTNAME`，**不得硬编码在配置中**
+- **多个实例严禁共享 group_id**：共享会导致 partition rebalance 后响应被其他实例抢读，双方均无法匹配
+- 发送命令前先记录 `otus-responses` 的当前 partition offset，避免读到历史旧响应
+- 建议超时设置 30s，超时视为节点无响应
+
+**状态上报**（Phase 2，与命令响应通道独立）：
+- Agent 向独立的 `otus-status` topic 定时发布心跳和 Task 状态快照
+- Control Plane 订阅该 topic 获取节点状态
+
+| topic | 方向 | 触发 | 用途 |
+|---|---|---|---|
+| `otus-commands` | 远端→近端 | 调用方主动 | 命令请求 |
+| `otus-responses` | 近端→远端 | 命令执行后 | 命令结果（本 ADR） |
+| `otus-status` (Phase 2) | 近端→远端 | 定时/事件 | 节点心跳、Task 状态 |
 
 ### 6.4 Task 生命周期
 

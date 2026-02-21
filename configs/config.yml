@@ -37,6 +37,7 @@ otus:
     kafka:
       # brokers/sasl/tls inherited from otus.kafka; override here if needed
       topic: "otus-commands"
+      response_topic: "otus-responses"  # Write command results here (ADR-029); empty = disabled
       group_id: ""                    # Empty = "otus-${hostname}"
       auto_offset_reset: "latest"
     command_ttl: "5m"                 # Reject commands older than this (ADR-026)

@@ -289,3 +289,185 @@ func TestKafkaCommand_Serialization(t *testing.T) {
 		t.Errorf("RequestID = %q", decoded.RequestID)
 	}
 }
+
+// ── Step 12.5: ADR-029 response channel tests ──
+
+// mockWriter records messages written to it and returns configurable errors.
+type mockWriter struct {
+	messages []kafka.Message
+	writeErr error
+	closeErr error
+	closed   bool
+}
+
+func (m *mockWriter) WriteMessages(ctx context.Context, msgs ...kafka.Message) error {
+	m.messages = append(m.messages, msgs...)
+	return m.writeErr
+}
+
+func (m *mockWriter) Close() error {
+	m.closed = true
+	return m.closeErr
+}
+
+// newTestConsumerWithMockWriter builds a consumer with an injected mock writer.
+func newTestConsumerWithMockWriter(t *testing.T, hostname string, mw *mockWriter) *KafkaCommandConsumer {
+	t.Helper()
+	c := newTestConsumer(t, hostname)
+	t.Cleanup(func() { _ = c.Stop() })
+	c.writer = mw
+	return c
+}
+
+// ccConfigWithResponseTopic returns a valid config with response_topic set.
+func ccConfigWithResponseTopic() config.CommandChannelConfig {
+	cfg := validCCConfig()
+	cfg.Kafka.ResponseTopic = "otus-responses"
+	return cfg
+}
+
+func TestNewKafkaCommandConsumer_WriterCreatedWhenResponseTopicSet(t *testing.T) {
+	tm := task.NewTaskManager("test-agent")
+	handler := NewCommandHandler(tm, nil)
+
+	consumer, err := NewKafkaCommandConsumer(ccConfigWithResponseTopic(), "node-01", handler)
+	if err != nil {
+		t.Fatalf("NewKafkaCommandConsumer: %v", err)
+	}
+	defer consumer.Stop()
+
+	if consumer.writer == nil {
+		t.Error("expected writer to be non-nil when response_topic is set")
+	}
+}
+
+func TestNewKafkaCommandConsumer_WriterNilWhenResponseTopicEmpty(t *testing.T) {
+	tm := task.NewTaskManager("test-agent")
+	handler := NewCommandHandler(tm, nil)
+
+	consumer, err := NewKafkaCommandConsumer(validCCConfig(), "node-01", handler)
+	if err != nil {
+		t.Fatalf("NewKafkaCommandConsumer: %v", err)
+	}
+	defer consumer.Stop()
+
+	if consumer.writer != nil {
+		t.Error("expected writer to be nil when response_topic is empty")
+	}
+}
+
+func TestProcessMessage_ResponseSkippedWhenRequestIDEmpty(t *testing.T) {
+	mw := &mockWriter{}
+	c := newTestConsumerWithMockWriter(t, "node-01", mw)
+
+	err := c.processMessage(context.Background(), makeMsg(KafkaCommand{
+		Version:   "v1",
+		Target:    "node-01",
+		Command:   "task_list",
+		Timestamp: time.Now(),
+		RequestID: "", // empty → no response should be written
+	}))
+	if err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+	if len(mw.messages) != 0 {
+		t.Errorf("expected 0 messages written, got %d", len(mw.messages))
+	}
+}
+
+func TestWriteResponse_MarshalAndKey(t *testing.T) {
+	mw := &mockWriter{}
+	// Build a minimal consumer with mock writer
+	tm := task.NewTaskManager("test-agent")
+	handler := NewCommandHandler(tm, nil)
+	consumer := &KafkaCommandConsumer{
+		ccConfig: validCCConfig(),
+		hostname: "edge-beijing-01",
+		writer:   mw,
+		handler:  handler,
+		ttl:      5 * time.Minute,
+	}
+
+	resp := Response{
+		ID:     "req-001",
+		Result: map[string]any{"count": 0, "tasks": []string{}},
+	}
+	err := consumer.writeResponse(context.Background(), "task_list", resp)
+	if err != nil {
+		t.Fatalf("writeResponse: %v", err)
+	}
+	if len(mw.messages) != 1 {
+		t.Fatalf("expected 1 message, got %d", len(mw.messages))
+	}
+
+	msg := mw.messages[0]
+
+	// Key must equal the hostname
+	if string(msg.Key) != "edge-beijing-01" {
+		t.Errorf("message key = %q, want %q", string(msg.Key), "edge-beijing-01")
+	}
+
+	// Payload must be valid JSON with required fields
+	var kr KafkaResponse
+	if err := json.Unmarshal(msg.Value, &kr); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if kr.Version != "v1" {
+		t.Errorf("Version = %q, want v1", kr.Version)
+	}
+	if kr.Source != "edge-beijing-01" {
+		t.Errorf("Source = %q, want edge-beijing-01", kr.Source)
+	}
+	if kr.Command != "task_list" {
+		t.Errorf("Command = %q, want task_list", kr.Command)
+	}
+	if kr.RequestID != "req-001" {
+		t.Errorf("RequestID = %q, want req-001", kr.RequestID)
+	}
+	if kr.Timestamp.IsZero() {
+		t.Error("Timestamp should not be zero")
+	}
+}
+
+func TestProcessMessage_ResponseWrittenOnSuccess(t *testing.T) {
+	mw := &mockWriter{}
+	c := newTestConsumerWithMockWriter(t, "node-01", mw)
+
+	err := c.processMessage(context.Background(), makeMsg(KafkaCommand{
+		Version:   "v1",
+		Target:    "node-01",
+		Command:   "task_list",
+		Timestamp: time.Now(),
+		RequestID: "req-777",
+	}))
+	if err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+	if len(mw.messages) != 1 {
+		t.Errorf("expected 1 response message, got %d", len(mw.messages))
+	}
+}
+
+func TestStop_ClosesWriter(t *testing.T) {
+	mw := &mockWriter{}
+	tm := task.NewTaskManager("test-agent")
+	handler := NewCommandHandler(tm, nil)
+	consumer := &KafkaCommandConsumer{
+		ccConfig: validCCConfig(),
+		hostname: "node-01",
+		writer:   mw,
+		handler:  handler,
+		ttl:      5 * time.Minute,
+		// reader intentionally nil — Stop() must tolerate nil reader
+	}
+
+	if err := consumer.Stop(); err != nil {
+		t.Errorf("Stop() returned error: %v", err)
+	}
+	if !mw.closed {
+		t.Error("expected mockWriter.Close() to have been called")
+	}
+	if consumer.writer != nil {
+		t.Error("writer field should be nil after Stop()")
+	}
+}

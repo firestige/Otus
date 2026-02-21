@@ -369,6 +369,7 @@ otus:
     kafka:
       # brokers/sasl/tls 继承自 otus.kafka
       topic: otus-commands
+      response_topic: otus-responses   # ADR-029: 响应回写 topic，空字符串禁用
       group_id: "otus-${node.hostname}"
       auto_offset_reset: latest
 
@@ -869,6 +870,171 @@ otus:
 
 ---
 
+### Step 12.5: Kafka 命令响应通道 (ADR-029)
+**前置**: Step 12  
+**目标**: 实现命令执行结果回写，打通近端→远端响应链路  
+**状态**: ✅ 已完成
+
+#### 背景
+
+`processMessage()` 调用 `handler.Handle()` 后得到 `Response` 对象，当前该对象被直接丢弃。
+所有需要返回数据的命令（`task_list`, `task_status`, `daemon_status`, `daemon_stats`）
+均无法将结果送达远端调用方。本步骤在 `KafkaCommandConsumer` 中新增 Kafka Producer，
+在命令执行后将响应写入 `otus-responses` topic（见 [ADR-029](decisions.md#adr-029-kafka-命令响应通道)）。
+
+#### 任务清单
+
+**A. 新增 `KafkaResponse` 线格式**  
+在 `internal/command/kafka.go` 中定义：
+
+```go
+// KafkaResponse is the wire format for command responses written to the response topic (ADR-029).
+type KafkaResponse struct {
+    Version   string      `json:"version"`    // "v1"
+    Source    string      `json:"source"`     // agent hostname
+    Command   string      `json:"command"`    // echoed from KafkaCommand
+    RequestID string      `json:"request_id"` // correlation ID
+    Timestamp time.Time   `json:"timestamp"`  // when the response was produced
+    Result    interface{} `json:"result,omitempty"`
+    Error     *ErrorInfo  `json:"error,omitempty"`
+}
+```
+
+**B. `KafkaCommandConsumer` 新增 writer 字段**
+
+```go
+type KafkaCommandConsumer struct {
+    ccConfig config.CommandChannelConfig
+    hostname string
+    reader   *kafka.Reader
+    writer   *kafka.Writer   // nil when response_topic is empty
+    handler  *CommandHandler
+    ttl      time.Duration
+}
+```
+
+**C. 更新 `NewKafkaCommandConsumer`**
+- 当 `ccConfig.Kafka.ResponseTopic != ""` 时创建 `kafka.Writer`：
+  ```go
+  writer = &kafka.Writer{
+      Addr:         kafka.TCP(kc.Brokers...),
+      Topic:        kc.ResponseTopic,
+      Balancer:     &kafka.Hash{},       // hostname 做 key → 固定 partition
+      RequiredAcks: kafka.RequireOne,
+      Async:        false,               // 同步写入，失败可 log
+  }
+  ```
+- `ResponseTopic` 为空时 `writer` 保持 `nil`，跳过写回逻辑（向后兼容）
+
+**D. 更新 `processMessage`**
+
+在步骤 5（`handler.Handle()`）之后新增步骤 6：
+
+```go
+// 6. Write response back to Kafka if response channel is configured (ADR-029)
+if c.writer != nil && cmd.ID != "" {
+    if err := c.writeResponse(ctx, kCmd.Command, response); err != nil {
+        slog.Error("failed to write kafka response",
+            "request_id", cmd.ID,
+            "error", err,
+        )
+        // intentionally not returned: command already executed
+    }
+}
+```
+
+```go
+func (c *KafkaCommandConsumer) writeResponse(ctx context.Context, command string, resp Response) error {
+    kr := KafkaResponse{
+        Version:   "v1",
+        Source:    c.hostname,
+        Command:   command,
+        RequestID: resp.ID,
+        Timestamp: time.Now().UTC(),
+        Result:    resp.Result,
+        Error:     resp.Error,
+    }
+    data, err := json.Marshal(kr)
+    if err != nil {
+        return fmt.Errorf("marshal response: %w", err)
+    }
+    return c.writer.WriteMessages(ctx, kafka.Message{
+        Key:   []byte(c.hostname), // consistent partition routing
+        Value: data,
+    })
+}
+```
+
+**E. 更新 `Stop()`**
+
+关闭时显式 flush + 关闭 writer：
+
+```go
+func (c *KafkaCommandConsumer) Stop() error {
+    var errs []error
+    if c.writer != nil {
+        writer := c.writer
+        c.writer = nil
+        if err := writer.Close(); err != nil {
+            errs = append(errs, fmt.Errorf("close writer: %w", err))
+        }
+    }
+    if c.reader != nil {
+        reader := c.reader
+        c.reader = nil
+        if err := reader.Close(); err != nil {
+            errs = append(errs, fmt.Errorf("close reader: %w", err))
+        }
+    }
+    return errors.Join(errs...)
+}
+```
+
+**F. 单元测试** — `kafka_test.go` 新增用例：
+
+| 测试名 | 验证点 |
+|--------|--------|
+| `TestKafkaResponse_WrittenWhenResponseTopicSet` | `response_topic` 非空时构造函数创建 writer |
+| `TestKafkaResponse_SkippedWhenResponseTopicEmpty` | `response_topic` 为空时 writer 为 nil，不写回 |
+| `TestKafkaResponse_SkippedWhenRequestIDEmpty` | `request_id` 为空时不写回 |
+| `TestWriteResponse_MarshalAndKey` | 响应 JSON 包含正确字段，message key = hostname |
+| `TestStop_ClosesWriter` | Stop() 关闭 writer 不 panic |
+
+由于测试不连真实 Kafka，测试 writer 实例化和序列化逻辑使用接口注入或
+`newTestConsumerWithMockWriter()` helper 覆盖 writer 字段。
+
+#### 边界条件
+
+| 场景 | 处理 |
+|------|------|
+| `response_topic` 为空 | `writer = nil`，直接跳过写回，完全向后兼容 |
+| `request_id` 为空 | 跳过写回（无 correlation ID 无意义）|
+| Kafka broker 不可达 | 写回失败记 ERROR 日志；命令已执行，**不回滚**，不影响 consumer 循环 |
+| 命令执行失败 | `response.Error` 非 nil，仍写回（让调用方知道失败原因）|
+| 广播命令 (`target: "*"`) | 每个节点各自写回，调用方按 `source` + `request_id` 聚合 |
+
+#### 交付物验证
+
+```bash
+# 近端 consumer 日志应出现：
+# "kafka response written" request_id=req-001 source=edge-beijing-01
+
+# 远端可从 otus-responses 消费到：
+{
+  "version": "v1",
+  "source": "edge-beijing-01",
+  "command": "task_list",
+  "request_id": "req-001",
+  "timestamp": "2026-02-21T...",
+  "result": {"tasks": ["voip-monitor-01"], "count": 1}
+}
+```
+
+**交付物**: `task_list`/`task_status`/`daemon_status`/`daemon_stats` 的执行结果可从
+`otus-responses` topic 消费；所有现有测试继续通过
+
+---
+
 ### Step 13: 控制面 — UDS 本地通信
 **前置**: Step 8  
 **目标**: 实现 CLI ↔ daemon 本地控制  
@@ -1063,6 +1229,7 @@ otus:
 - [ ] `otus task create -f task.json` 可以通过 UDS 创建 SIP 抓包任务
 - [ ] AF_PACKET 捕获 → L2-L4 解码 → SIP 解析 → Kafka 上报 全链路跑通
 - [ ] Kafka 命令 topic 可以远程创建/删除 Task
+- [ ] 交互式命令（`task_list`, `task_status`, `daemon_status`, `daemon_stats`）执行结果可从 `otus-responses` topic 消费（ADR-029）
 - [ ] IP 分片重组正常工作，有硬上限保护
 - [ ] 日志输出到文件（lumberjack 滚动）和 Loki
 - [ ] Prometheus `/metrics` 端点返回各层指标
@@ -1073,6 +1240,6 @@ otus:
 
 ---
 
-**文档版本**: v0.2.0  
-**更新日期**: 2026-02-17  
+**文档版本**: v0.3.0  
+**更新日期**: 2026-02-21  
 **作者**: Otus Team

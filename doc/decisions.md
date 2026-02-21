@@ -957,6 +957,161 @@ Kafka `message.value` 是 `[]byte`，支持任意格式。需要确定 Envelope�
 
 ---
 
+### ADR-029: Kafka 命令响应通道
+
+**状态**: 已决定  
+**日期**: 2026-02-21  
+**关联文档**: architecture.md §6.3
+
+### 背景
+
+现有 Kafka 命令通道为单向拉模式：远端写入 `otus-commands`，近端（Otus Agent）消费并执行，
+但命令执行结果无回写路径。`CommandHandler` 对每条命令都构造了 `Response`，结果被丢弃。
+这使得所有需要返回数据的交互式命令（`task_list`、`task_status`、`daemon_status`、
+`daemon_stats`）在 Web CLI 场景下完全无法工作——命令发出后调用方永远收不到响应。
+
+### 问题根源
+
+```
+远端 ──► [otus-commands] ──► Agent.Handle() ──► Response{ result } ──► ✗ 丢弃
+```
+
+### 决定
+
+新增固定 `otus-responses` topic 作为命令响应通道，形成完整的请求-响应闭环。
+
+#### 响应消息格式（`KafkaResponse`）
+
+```json
+{
+  "version":    "v1",
+  "source":     "edge-beijing-01",
+  "command":    "task_list",
+  "request_id": "req-abc-123",
+  "timestamp":  "2026-02-21T10:30:00Z",
+  "result":     { ... },
+  "error":      { "code": -32603, "message": "..." }
+}
+```
+
+`result` 与 `error` 互斥，与现有 `handler.Response` 结构直接对应。
+
+#### 消息路由：hostname 作为 Kafka message key
+
+Agent 写响应时以自身 `hostname` 为 Kafka message key。Kafka 一致性哈希保证同一节点
+的所有响应落到同一 partition，天然按节点聚合。
+
+```
+node-01 的响应 ──► key="edge-beijing-01" ──► partition-P1 ─┐
+node-02 的响应 ──► key="edge-shanghai-02" ──► partition-P2  ├─ otus-responses
+node-03 的响应 ──► key="edge-guangzhou-03" ──► partition-P3 ┘
+```
+
+#### 消费端：per-instance 唯一 consumer group
+
+Web CLI（或任何调用方）每个**实例**（进程/Pod）使用唯一 `group_id`（推荐格式：`webcli-{instance-id}`），
+独立消费 `otus-responses` 全量消息，以 `request_id` 过滤属于本实例本请求的响应。
+同一实例内的多个并发 session 共享同一 consumer，无需各自建立独立 consumer group。
+
+`instance-id` 必须**从运行环境注入，不得写死**在配置文件中：
+
+```yaml
+# Kubernetes：通过 Downward API 将 Pod 名称注入环境变量
+env:
+  - name: WEBCLI_INSTANCE_ID
+    valueFrom:
+      fieldRef:
+        fieldPath: metadata.name
+```
+
+```bash
+# 虚拟机 / 裸机：使用 HOSTNAME
+WEBCLI_INSTANCE_ID=$HOSTNAME
+```
+
+```
+instance-A (group_id="webcli-pod-abc12") → 消费全量，多 session 共享，按 request_id 过滤
+instance-B (group_id="webcli-pod-xyz99") → 消费全量，多 session 共享，按 request_id 过滤
+```
+
+**关键约束**：多个实例绝不能共享同一 `group_id`。
+若共享，Kafka partition rebalance 会将 partition 重新分配给 group 内不同实例，
+实例 A 发出请求的响应可能被实例 B 消费，实例 A 永远收不到匹配响应。
+
+#### 完整交互流程
+
+```
+远端 (Web CLI session)              Kafka                    Otus (近端)
+        │                                                         │
+        │  1. 记录当前 offset                                     │
+        │  fetch_offset(otus-responses)                           │
+        │                                                         │
+        │  2. 发送命令                                            │
+        │──► KafkaCommand ────────► [otus-commands] ────────────► │
+        │    request_id: "req-001"                                │  3. 执行命令
+        │    target: "edge-beijing-01"                            │     task_list()
+        │                                                         │
+        │                        [otus-responses]                 │  4. 写响应
+        │◄── KafkaResponse ◄──── partition-P1 ◄── key=hostname ◄──│
+        │    request_id: "req-001"                                │
+        │    source: "edge-beijing-01"                            │
+        │    result: { "tasks": [...] }                           │
+        │                                                         │
+        │  5. 匹配 request_id，展示结果或超时报错                  │
+```
+
+#### 响应时机与可靠性
+
+- Agent 在命令执行完成后（无论成功或失败）写响应，at-most-once 语义
+- 调用方负责设置超时（推荐 30s），超时视为节点无响应
+- Agent 写响应失败（如 Kafka 不可达）只记录 ERROR 日志，不影响命令已执行的结果
+- Fire-and-forget 命令（`task_create`、`task_delete`、`config_reload`、
+  `daemon_shutdown`）同样写响应，确认执行已触发
+
+#### 不写响应的情况
+
+- `request_id` 为空字符串（来自不支持 request_id 的旧客户端）
+- `response_topic` 配置为空（显式禁用响应通道）
+
+#### 配置变更
+
+`command_channel.kafka` 新增 `response_topic` 字段：
+
+```yaml
+command_channel:
+  kafka:
+    topic: otus-commands
+    response_topic: otus-responses   # 新增，空字符串表示禁用响应
+    group_id: "otus-${node.hostname}"
+```
+
+#### 与 otus-status 的关系
+
+`otus-status`（Phase 2）是节点主动发布的心跳和 Task 状态快照，属于事件驱动的
+状态上报，与本 ADR 的命令响应通道**用途不同、topic 不同、不可混用**。
+
+| topic | 方向 | 触发 | 内容 |
+|---|---|---|---|
+| `otus-commands` | 远端→近端 | 调用方主动 | 命令请求 |
+| `otus-responses` | 近端→远端 | 命令执行后 | 命令结果 |
+| `otus-status` (Phase 2) | 近端→远端 | 定时/事件 | 节点心跳、Task 状态 |
+
+### 理由
+
+- **固定 2 个 topic 不随节点数增长**：per-node topic 方案在边缘大规模部署时 topic
+  数量线性增长，运维成本不可接受；固定 topic + message key 路由复用 Kafka 已有
+  partition 机制，扩容只需保证 partition 数量 ≥ 节点数
+- **per-instance group_id 而非共享 group**：共享 consumer group 在多副本部署时，
+  Kafka partition rebalance 会将 partition 分配给 group 内不同实例，导致某实例的响应
+  被另一实例抢读；per-instance group（group_id 从 `$POD_NAME`/`$HOSTNAME` 注入）
+  让每个实例独立消费全量，实例内多 session 共享 consumer 并以 `request_id` 区分，无争用
+- **hostname 作为 message key**：与 ADR-026 中 `target` 作为命令 message key 的
+  规范对称，方便按节点追踪完整的请求-响应链路
+- **at-most-once 响应**：命令本身是 at-most-once 语义（ADR-026），响应保持一致，
+  不引入额外复杂度
+
+---
+
 ## 决策优先级总览
 
 | ADR | 决策点 | 结论 | 实施阶段 |
@@ -997,9 +1152,10 @@ Kafka `message.value` 是 `[]byte`，支持任意格式。需要确定 Envelope�
 | 026 | Kafka 命令可靠性 | 去重 Phase2(LRU)、排序(target 做 key)、TTL 过期检查 | Phase 1 |
 | 027 | Kafka Reporter 动态 Topic | `topic_prefix` 优先动态路由，与 `topic` 互斥 | Phase 1 |
 | 028 | Kafka 数据序列化 | Headers 承载 envelope，Value 承载 binary/json payload | Phase 1 |
+| 029 | Kafka 命令响应通道 | 固定 `otus-responses` topic，per-instance group_id（环境变量注入），hostname 作 key | Phase 1 |
 
 ---
 
-**文档版本**: v0.3.0
-**更新日期**: 2026-02-17
+**文档版本**: v0.4.0
+**更新日期**: 2026-02-21
 **作者**: Otus Team

@@ -4,6 +4,7 @@ package command
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -34,11 +35,40 @@ type KafkaCommand struct {
 	Payload   json.RawMessage `json:"payload"`    // Command-specific parameters
 }
 
+// messageWriter abstracts kafka.Writer for testability.
+type messageWriter interface {
+	WriteMessages(ctx context.Context, msgs ...kafka.Message) error
+	Close() error
+}
+
+// KafkaResponse is the wire format for command responses written to the response topic (ADR-029).
+//
+// Example JSON:
+//
+//	{
+//	  "version":    "v1",
+//	  "source":     "edge-beijing-01",
+//	  "command":    "task_list",
+//	  "request_id": "req-abc-123",
+//	  "timestamp":  "2026-02-21T10:30:00Z",
+//	  "result":     { ... }
+//	}
+type KafkaResponse struct {
+	Version   string      `json:"version"`              // Protocol version ("v1")
+	Source    string      `json:"source"`               // Agent hostname (the responder)
+	Command   string      `json:"command"`              // Echoed from KafkaCommand
+	RequestID string      `json:"request_id"`           // Correlation ID (echoed from KafkaCommand)
+	Timestamp time.Time   `json:"timestamp"`            // When the response was produced
+	Result    interface{} `json:"result,omitempty"`     // Command result, nil on error
+	Error     *ErrorInfo  `json:"error,omitempty"`      // Non-nil when command failed
+}
+
 // KafkaCommandConsumer consumes commands from Kafka and dispatches to handler.
 type KafkaCommandConsumer struct {
 	ccConfig config.CommandChannelConfig
-	hostname string // local node hostname for target matching
+	hostname string        // local node hostname for target matching
 	reader   *kafka.Reader
+	writer   messageWriter // nil when response_topic is empty (ADR-029)
 	handler  *CommandHandler
 	ttl      time.Duration // command TTL for stale-command rejection
 }
@@ -87,10 +117,23 @@ func NewKafkaCommandConsumer(ccConfig config.CommandChannelConfig, hostname stri
 		MaxWait:        1 * time.Second,
 	})
 
+	// Create Kafka writer (producer) for response channel — only when response_topic is set (ADR-029)
+	var writer messageWriter
+	if kc.ResponseTopic != "" {
+		writer = &kafka.Writer{
+			Addr:         kafka.TCP(kc.Brokers...),
+			Topic:        kc.ResponseTopic,
+			Balancer:     &kafka.Hash{},       // hostname as key → consistent partition routing
+			RequiredAcks: kafka.RequireOne,
+			Async:        false,               // synchronous write so failures are observable
+		}
+	}
+
 	return &KafkaCommandConsumer{
 		ccConfig: ccConfig,
 		hostname: hostname,
 		reader:   reader,
+		writer:   writer,
 		handler:  handler,
 		ttl:      ttl,
 	}, nil
@@ -194,6 +237,23 @@ func (c *KafkaCommandConsumer) processMessage(ctx context.Context, msg kafka.Mes
 	// 5. Handle the command
 	response := c.handler.Handle(ctx, cmd)
 
+	// 6. Write response back to Kafka if response channel is configured (ADR-029).
+	// We write even when the command failed so the caller learns the failure reason.
+	if c.writer != nil && cmd.ID != "" {
+		if err := c.writeResponse(ctx, kCmd.Command, response); err != nil {
+			slog.Error("failed to write kafka response",
+				"request_id", cmd.ID,
+				"error", err,
+			)
+			// intentionally not returned: command already executed
+		} else {
+			slog.Debug("kafka response written",
+				"request_id", cmd.ID,
+				"source", c.hostname,
+			)
+		}
+	}
+
 	if response.Error != nil {
 		slog.Error("command execution failed",
 			"method", cmd.Method,
@@ -212,17 +272,49 @@ func (c *KafkaCommandConsumer) processMessage(ctx context.Context, msg kafka.Mes
 	return nil
 }
 
+// writeResponse serialises response as KafkaResponse and publishes it to the response topic.
+func (c *KafkaCommandConsumer) writeResponse(ctx context.Context, command string, resp Response) error {
+	kr := KafkaResponse{
+		Version:   "v1",
+		Source:    c.hostname,
+		Command:   command,
+		RequestID: resp.ID,
+		Timestamp: time.Now().UTC(),
+		Result:    resp.Result,
+		Error:     resp.Error,
+	}
+	data, err := json.Marshal(kr)
+	if err != nil {
+		return fmt.Errorf("marshal response: %w", err)
+	}
+	return c.writer.WriteMessages(ctx, kafka.Message{
+		Key:   []byte(c.hostname), // consistent partition routing (hostname as key)
+		Value: data,
+	})
+}
+
 // Stop stops the Kafka consumer and closes the connection.
-// Always nils the reader to prevent double-close, even if Close() returns an error.
+// Always nils the reader and writer to prevent double-close.
 func (c *KafkaCommandConsumer) Stop() error {
-	if c.reader == nil {
-		return nil
+	var errs []error
+
+	if c.writer != nil {
+		slog.Info("closing kafka response writer")
+		writer := c.writer
+		c.writer = nil
+		if err := writer.Close(); err != nil {
+			errs = append(errs, fmt.Errorf("close response writer: %w", err))
+		}
 	}
-	reader := c.reader
-	c.reader = nil // prevent double-close regardless of outcome
-	slog.Info("closing kafka command consumer")
-	if err := reader.Close(); err != nil {
-		return fmt.Errorf("failed to close kafka reader: %w", err)
+
+	if c.reader != nil {
+		slog.Info("closing kafka command consumer")
+		reader := c.reader
+		c.reader = nil
+		if err := reader.Close(); err != nil {
+			errs = append(errs, fmt.Errorf("close command reader: %w", err))
+		}
 	}
-	return nil
+
+	return errors.Join(errs...)
 }

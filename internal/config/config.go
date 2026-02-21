@@ -84,6 +84,7 @@ type CommandChannelConfig struct {
 type CommandKafkaConfig struct {
 	Brokers         []string   `mapstructure:"brokers"`
 	Topic           string     `mapstructure:"topic"`
+	ResponseTopic   string     `mapstructure:"response_topic"` // ADR-029: write responses here; empty = disabled
 	GroupID         string     `mapstructure:"group_id"`
 	AutoOffsetReset string     `mapstructure:"auto_offset_reset"`
 	SASL            SASLConfig `mapstructure:"sasl"`
