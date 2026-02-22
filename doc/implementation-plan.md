@@ -1221,9 +1221,10 @@ func (c *KafkaCommandConsumer) Stop() error {
 
 ---
 
-### Step 16: Daemon 组装 + Graceful Shutdown
+### ✅ Step 16: Daemon 组装 + Graceful Shutdown
 **前置**: Step 5, 7, 8, 12, 13  
-**目标**: 组装完整 daemon
+**目标**: 组装完整 daemon  
+**状态**: ✅ 已完成
 
 **任务清单**:
 1. `internal/daemon/daemon.go` — daemon 主逻辑
@@ -1240,9 +1241,10 @@ func (c *KafkaCommandConsumer) Stop() error {
 
 ---
 
-### Step 17: Prometheus 指标
+### ✅ Step 17: Prometheus 指标
 **前置**: Step 16  
-**目标**: 暴露 Prometheus 指标端点
+**目标**: 暴露 Prometheus 指标端点  
+**状态**: ✅ 已完成
 
 **任务清单**:
 1. `internal/metrics/metrics.go` — 全局指标注册
@@ -1259,9 +1261,10 @@ func (c *KafkaCommandConsumer) Stop() error {
 
 ---
 
-### Step 18: systemd 集成 + 部署
+### ✅ Step 18: systemd 集成 + 部署
 **前置**: Step 16  
-**目标**: 生产就绪的部署配置
+**目标**: 生产就绪的部署配置  
+**状态**: ✅ 已完成（`configs/otus.service` + `Makefile` + `scripts/build.sh` + `doc/DEPLOYMENT.md`；README 待补充）
 
 **任务清单**:
 1. 更新 `configs/otus.service` — systemd unit file
@@ -1293,21 +1296,21 @@ func (c *KafkaCommandConsumer) Stop() error {
 
 ## 10. 验收标准（Phase 1 完成时）
 
-- [ ] `otus daemon` 可以前台启动，加载配置，监听 UDS
-- [ ] `otus task create -f task.json` 可以通过 UDS 创建 SIP 抓包任务
-- [ ] AF_PACKET 捕获 → L2-L4 解码 → SIP 解析 → Kafka 上报 全链路跑通
-- [ ] Kafka 命令 topic 可以远程创建/删除 Task
-- [ ] 交互式命令（`task_list`, `task_status`, `daemon_status`, `daemon_stats`）执行结果可从 `otus-responses` topic 消费（ADR-029）
-- [ ] IP 分片重组正常工作，有硬上限保护
-- [ ] 日志输出到文件（lumberjack 滚动）和 Loki
-- [ ] Prometheus `/metrics` 端点返回各层指标
-- [ ] `otus stop` 可以 graceful shutdown
-- [ ] 性能：单核 ≥200K pps (SIP 完整解析)
-- [ ] 静态编译二进制，支持 amd64 / arm64
-- [ ] systemd service 可正常运行
+- [x] `otus daemon` 可以前台启动，加载配置，监听 UDS
+- [x] `otus task create -f task.json` 可以通过 UDS 创建 SIP 抓包任务
+- [x] AF_PACKET 捕获 → L2-L4 解码 → SIP 解析 → Kafka 上报 全链路跑通
+- [x] Kafka 命令 topic 可以远程创建/删除 Task
+- [x] 交互式命令（`task_list`, `task_status`, `daemon_status`, `daemon_stats`）执行结果可从 `otus-responses` topic 消费（ADR-029）
+- [x] IP 分片重组正常工作，有硬上限保护
+- [x] 日志输出到文件（lumberjack 滚动）和 Loki
+- [x] Prometheus `/metrics` 端点返回各层指标
+- [x] `otus stop` 可以 graceful shutdown
+- [ ] 性能：单核 ≥200K pps (SIP 完整解析)（待集成测试验证）
+- [x] 静态编译二进制，支持 amd64 / arm64
+- [x] systemd service 可正常运行
 
 ---
 
-**文档版本**: v0.3.0  
-**更新日期**: 2026-02-21  
+**文档版本**: v0.4.0  
+**更新日期**: 2026-02-22  
 **作者**: Otus Team

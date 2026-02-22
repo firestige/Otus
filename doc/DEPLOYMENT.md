@@ -135,17 +135,40 @@ curl http://localhost:9091/metrics
 ### 6. 创建抓包任务
 
 ```bash
+# 准备任务配置文件（JSON 格式）
+cat > sip-capture.json <<'EOF'
+{
+  "id": "sip-capture-01",
+  "workers": 1,
+  "capture": {
+    "name": "afpacket",
+    "interface": "eth0",
+    "bpf_filter": "udp port 5060 or udp port 5061",
+    "snap_len": 65536
+  },
+  "parsers": [{"name": "sip", "config": {}}],
+  "processors": [],
+  "reporters": [{
+    "name": "kafka",
+    "config": {
+      "brokers": ["kafka:9092"],
+      "topic": "otus-sip-data"
+    }
+  }]
+}
+EOF
+
 # 通过 UDS 创建任务
-otus task create --name sip-capture --interface eth0 --protocol sip
+otus task create -f sip-capture.json
 
 # 查看任务列表
 otus task list
 
 # 查看任务状态
-otus task status sip-capture
+otus task status sip-capture-01
 
 # 停止任务
-otus task stop sip-capture
+otus task stop sip-capture-01
 ```
 
 ---
@@ -350,29 +373,41 @@ metadata:
   namespace: monitoring
 data:
   config.yml: |
-    global:
-      log_level: info
-    
-    daemon:
-      unix_socket: /tmp/otus.sock
-      pid_file: /tmp/otus.pid
+    otus:
+      node:
+        hostname: ""  # 空 = 自动探测
+        tags:
+          env: production
+      control:
+        socket: /var/run/otus.sock
+        pid_file: /var/run/otus.pid
+      kafka:
+        brokers:
+          - kafka.kafka.svc.cluster.local:9092
+      command_channel:
+        enabled: true
+        type: kafka
+        kafka:
+          topic: otus-commands
+          response_topic: otus-responses
+          group_id: otus-$(NODE_NAME)
+          auto_offset_reset: latest
       metrics:
         enabled: true
         listen: :9091
-    
-    log:
-      appenders:
-        - type: kafka
-          brokers:
-            - kafka.kafka.svc.cluster.local:9092
-          topic: otus-logs
-    
-    command:
-      channel: kafka
-      brokers:
-        - kafka.kafka.svc.cluster.local:9092
-      consumer_topic: otus-commands
-      consumer_group_id: otus-consumer
+        path: /metrics
+      log:
+        level: info
+        format: json
+        outputs:
+          file:
+            enabled: true
+            path: /var/log/otus/otus.log
+            rotation:
+              max_size_mb: 100
+              max_age_days: 7
+              max_backups: 5
+              compress: true
 ```
 
 ### 部署步骤
@@ -570,8 +605,8 @@ capture:
    - 监控异常抓包行为
 
 4. **加密传输**:
-   - 配置 Kafka TLS/SASL 认证
-   - 使用 mTLS 保护 gRPC 接口
+   - 配置 Kafka TLS/SASL 认证（`otus.kafka.sasl` + `otus.kafka.tls`）
+   - 使用 NetworkPolicy 限制 Otus Pod 的入站流量
 
 ---
 
@@ -599,11 +634,10 @@ capture:
 ### C. 相关文档
 
 - [配置参考](../configs/config.yml)
-- [API 文档](../api/v1/daemon.proto)
 - [架构设计](architecture.md)
 - [开发指南](implementation-plan.md)
 
 ---
 
-**更新时间**: 2026-02-17  
+**更新时间**: 2026-02-22  
 **维护者**: Otus 开发团队
