@@ -4,6 +4,7 @@ package plugins
 import (
 	"firestige.xyz/otus/pkg/plugin"
 	"firestige.xyz/otus/plugins/capture/afpacket"
+	"firestige.xyz/otus/plugins/parser/rtp"
 	"firestige.xyz/otus/plugins/parser/sip"
 	"firestige.xyz/otus/plugins/reporter/console"
 	"firestige.xyz/otus/plugins/reporter/kafka"
@@ -15,6 +16,7 @@ func init() {
 
 	// Register parser plugins
 	plugin.RegisterParser("sip", sip.NewSIPParser)
+	plugin.RegisterParser("rtp", rtp.NewRTPParser)
 
 	// Register reporter plugins
 	plugin.RegisterReporter("console", console.NewConsoleReporter)
