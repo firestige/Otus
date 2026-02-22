@@ -1153,7 +1153,75 @@ func (c *KafkaCommandConsumer) Stop() error {
 
 ---
 
-### Step 15: Daemon 组装 + Graceful Shutdown
+### Step 15: Task 持久化与历史清理
+**前置**: Step 8（TaskManager）, Step 4（GlobalConfig）  
+**目标**: 守护进程重启后自动恢复运行中的抓包任务；防止任务历史文件无界增长  
+**设计依据**: [ADR-030](decisions.md#adr-030-task-持久化每任务独立状态文件), [ADR-031](decisions.md#adr-031-task-历史清理委托-systemd-tmpfilesd)
+
+**任务清单**:
+
+#### A. 全局配置扩展
+1. `internal/config/config.go` — 新增 `DataDir` 和 `TaskPersistence` 字段
+   ```yaml
+   otus:
+     data_dir: /var/lib/otus
+     task_persistence:
+       enabled: true
+       auto_restart: true
+       gc_interval: 1h
+       max_task_history: 100
+   ```
+2. 单元测试：默认值、`enabled=false` 禁用路径
+
+#### B. FileTaskStore
+3. `internal/task/store.go` — `TaskStore` 接口 + `FileTaskStore` 实现
+   - 接口：`Save(task PersistedTask)`, `Load(id string)`, `Delete(id string)`, `List()`
+   - `PersistedTask` 结构体（version, config, state, timestamps, restart_count）
+   - temp-file + atomic rename 写入（`{id}.json.tmp` → `{id}.json`）
+   - JSON 序列化/反序列化
+4. `internal/task/store_test.go` — 单元测试
+   - Save/Load/Delete 基本操作
+   - 并发 Save（多 goroutine 同时写）
+   - 损坏文件被跳过（不影响其他任务加载）
+   - 原子写入（模拟写入中断）
+
+#### C. TaskManager 集成
+5. `internal/task/manager.go` — 集成 `TaskStore`
+   - `NewTaskManager(agentID string, store TaskStore)` 接受可选 store（nil = 禁用持久化）
+   - `Create()` 成功后调用 `store.Save()`
+   - `Delete()` 完成后更新 store（state=stopped）
+   - Task 进入 Failed 状态时更新 store
+   - Graceful shutdown 时更新所有 running task 的 state=stopped
+6. `internal/task/manager.go` — 新增 `Restore()` 方法
+   - 扫描 store.List()，按 ADR-030 恢复策略分类处理：
+     - running/starting/stopping → 调用 Create()，成功则 restart_count++
+     - stopped/failed/created  → 加载为只读历史（不占用 Phase 1 slot）
+   - 恢复失败单个任务记 ERROR，不中断整体恢复
+7. 更新 `internal/task/manager_test.go` — 适配新构造函数，mock store
+
+#### D. Daemon 集成
+8. `internal/daemon/daemon.go` — Start() 步骤 4.5
+   - 当 `task_persistence.enabled=true` 时创建 `FileTaskStore(data_dir/tasks/)`
+   - 调用 `manager.Restore()` 后再启动 UDS Server 和 Kafka Consumer
+   - 启动后台 GC goroutine（`task_persistence.gc_interval`，`max_task_history`）
+
+#### E. systemd-tmpfiles.d 集成
+9. `configs/tmpfiles.d/otus.conf` — 新增文件
+   ```
+   D /var/lib/otus             0750 root root -
+   d /var/lib/otus/tasks       0750 root root -
+   e /var/lib/otus/tasks       -    -    -    7d
+   ```
+10. 更新 `configs/otus.service` — 新增 `ExecStartPre`
+    ```ini
+    ExecStartPre=systemd-tmpfiles --create /etc/tmpfiles.d/otus.conf
+    ```
+
+**交付物**: 守护进程重启后自动恢复 running 任务；任务历史文件由 systemd-tmpfiles.d + 程序内 GC 双重保障清理；`task_list` / `task_status` 可查询历史记录
+
+---
+
+### Step 16: Daemon 组装 + Graceful Shutdown
 **前置**: Step 5, 7, 8, 12, 13  
 **目标**: 组装完整 daemon
 
@@ -1172,8 +1240,8 @@ func (c *KafkaCommandConsumer) Stop() error {
 
 ---
 
-### Step 16: Prometheus 指标
-**前置**: Step 15  
+### Step 17: Prometheus 指标
+**前置**: Step 16  
 **目标**: 暴露 Prometheus 指标端点
 
 **任务清单**:
@@ -1191,8 +1259,8 @@ func (c *KafkaCommandConsumer) Stop() error {
 
 ---
 
-### Step 17: systemd 集成 + 部署
-**前置**: Step 15  
+### Step 18: systemd 集成 + 部署
+**前置**: Step 16  
 **目标**: 生产就绪的部署配置
 
 **任务清单**:

@@ -1112,6 +1112,228 @@ command_channel:
 
 ---
 
+### ADR-030: Task 持久化——每任务独立状态文件
+
+**状态**: 已决定  
+**日期**: 2026-02-22  
+**关联文档**: implementation-plan.md Step 15（待补充）
+
+### 背景
+
+`TaskManager` 的 `tasks` map 是纯内存结构。守护进程重启（主动升级、系统崩溃、OS 重启）后，
+所有运行中的抓包任务丢失，必须由运维人员手动重新下发命令才能恢复。在边缘节点无人值守的
+生产环境中，这会导致长时间的抓包服务中断。
+
+### 核心约束
+
+- 边缘节点 AF_PACKET 抓包必须以 root 身份运行
+- 数据目录不得放在用户 HOME（root 的 `/root` 或普通用户 `~`）
+- 磁盘占满时必须能在程序未运行的情况下由外部机制清理（避免"程序不启动就无法清理"死锁）
+
+### 决定
+
+#### 存储结构
+
+```
+/var/lib/otus/            ← data_dir（全局配置，符合 FHS 标准）
+  tasks/
+    sip-capture-01.json   ← 每任务一个文件，文件名 = task_id.json
+    voip-monitor-02.json
+```
+
+#### 持久化格式（`PersistedTask` v1）
+
+```json
+{
+  "version":        "v1",
+  "config":         { ...TaskConfig 原文... },
+  "state":          "running",
+  "created_at":     "2026-02-21T10:00:00Z",
+  "started_at":     "2026-02-21T10:00:01Z",
+  "stopped_at":     null,
+  "failure_reason": "",
+  "restart_count":  0
+}
+```
+
+#### 写入时机（状态机钩子）
+
+| 事件 | 写入内容 |
+|------|---------|
+| `task_create` 成功 | 完整 PersistedTask，state=running |
+| `task_delete` 完成 | state=stopped，stopped_at=now |
+| Task 进入 Failed 状态 | state=failed，failure_reason=err.Error() |
+| Graceful shutdown | state=stopped，stopped_at=now |
+| 进程崩溃 | 保留上次写入状态（重启时以此触发恢复路径） |
+
+写入使用 **temp-file + rename** 原子操作：
+```
+写 /var/lib/otus/tasks/.{id}.json.tmp
+→ os.Rename → /var/lib/otus/tasks/{id}.json
+```
+
+#### 重启恢复策略
+
+`Daemon.Start()` 步骤 4.5（TaskManager 创建后，UDS/Kafka 启动前）执行：
+
+```
+扫描 /var/lib/otus/tasks/*.json
+  ↓
+state == running / starting / stopping  →  auto-restart（下面详述）
+state == stopped / failed              →  加载为只读历史记录，不启动
+state == created（进程在 Starting 前崩溃）→ 视为 failed，写文件，不启动
+```
+
+**auto-restart 流程**：
+1. 反序列化 `PersistedTask.config` → `TaskConfig`
+2. 调用 `TaskManager.Create(cfg)`（走完整 7-phase 装配流程）
+3. 成功 → `restart_count++` 写文件，记录 `INFO` 日志
+4. 失败 → state=failed，failure_reason=err，写文件，记录 `ERROR` **但不阻断守护进程启动**
+
+**单任务恢复失败不阻断其他任务的恢复，也不阻断守护进程启动。**
+
+#### 与 Phase 1 单任务限制的交互
+
+Phase 1 的"最多 1 个 Task"限制仅针对**活跃任务（非终止态）**：
+- running/starting/stopping → 占用 1 个 slot，触发 auto-restart
+- stopped/failed → 加载为只读历史，不占用 slot，不受 1 个任务限制
+
+重启后如果有 1 个 running 任务文件 + N 个 stopped/failed 文件，可以正常恢复——running 的
+任务被重启（占 1 slot），N 个历史记录作为元数据加载到 manager 供 `task_status` 查询。
+
+#### 全局配置新增字段
+
+```yaml
+otus:
+  data_dir: /var/lib/otus     # FHS 标准路径，需要目录已存在或 systemd 创建
+
+  task_persistence:
+    enabled: true              # false = 禁用（开发/测试用），重启后不恢复
+    auto_restart: true         # 默认 true：重启后自动恢复 running 任务
+```
+
+### 备选方案
+
+| 方案 | 否决原因 |
+|------|---------|
+| 单个 `tasks.json` 全量文件 | 并发写需全量锁；单文件损坏影响所有任务 |
+| BoltDB / BadgerDB | 引入新依赖；功能远超需要 |
+| 外部存储（Redis/etcd） | 违反单节点零运行时外部依赖原则 |
+| 崩溃后恢复所有状态（含 stopping）| Stopping 状态下崩溃说明任务正在主动关闭，不应重启 |
+
+### 理由
+
+- **每任务独立文件**：原子 rename 写单个文件，无争用；文件名即 ID，删除 = `os.Remove`
+- **`/var/lib/otus`**：FHS 标准持久数据目录，与 root 运行的系统服务一致，避免用户 HOME
+- **temp + rename**：系统崩溃时绝对不会写出损坏的半成品 JSON
+- **重启后 auto-restart 默认 true**：边缘无人值守场景下，运维期望"重启自愈"而非"重启后人工重下发命令"
+
+---
+
+### ADR-031: Task 历史清理——委托 systemd-tmpfiles.d
+
+**状态**: 已决定  
+**日期**: 2026-02-22  
+**关联文档**: ADR-030
+
+### 背景
+
+ADR-030 持久化方案在磁盘上累积终止态任务文件（stopped/failed）。长时间运行的节点
+如果状态频繁变化（任务反复创建/删除），加上程序内的 GC 逻辑只在进程运行时触发，
+存在"磁盘写满 → 守护进程无法启动 → 无法触发程序内 GC → 磁盘继续满"的死锁。
+
+### 核心目标
+
+**文件清理能力必须独立于 otus 进程存活，在 otus 未运行时也能被系统清理。**
+
+### 决定
+
+#### 主清理机制：systemd-tmpfiles.d
+
+提供 `configs/tmpfiles.d/otus.conf`（随包安装到 `/etc/tmpfiles.d/otus.conf`）：
+
+```
+# systemd-tmpfiles(5) 配置：清理 otus 任务历史文件
+#  类型  路径                          模式    UID   GID   期限
+   D     /var/lib/otus                  0750    root  root  -       # 确保目录存在
+   d     /var/lib/otus/tasks            0750    root  root  -
+   e     /var/lib/otus/tasks            -       -     -     7d      # 超过 7 天的文件由 systemd 删除
+```
+
+- `D` 指令：创建目录（如不存在），由 `systemd-tmpfiles --create` 在服务启动前执行
+- `e` 指令：age-based 清理，由 `systemd-tmpfiles --clean`（系统每日定时任务）执行
+
+**结果**：即使 otus 进程从未启动，系统的 `systemd-tmpfiles-clean.timer`（默认每日运行）
+也会自动清理超过 TTL 的任务历史文件。
+
+#### 辅助清理机制：程序内 GC（守护进程运行期间）
+
+程序内 GC 作为额外保障层，处理"文件数量膨胀但单文件不超龄"的场景：
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `gc_interval` | `1h` | GC goroutine 周期 |
+| `max_task_history` | `100` | 终止态历史记录上限 |
+
+GC 触发条件（满足任一即删除对应文件）：
+- 终止态（stopped/failed）且最后活跃时间超过 `task_ttl`（由 tmpfiles.d 的期限决定，默认 7d）
+- 终止态历史总数超过 `max_task_history`，按 `stopped_at` 升序删除最旧的（超出 100 的部分）
+
+永不清理：
+- 任何非终止态（running/starting/stopping/paused）
+- 可以通过 将 `max_task_history: 0` 设置为 0 完全禁用程序内 GC（完全依赖 tmpfiles.d）
+
+```yaml
+otus:
+  task_persistence:
+    enabled: true
+    auto_restart: true
+    gc_interval: 1h
+    max_task_history: 100    # 0 = 禁用程序内 GC，仅依靠 systemd-tmpfiles.d
+```
+
+#### 部署集成
+
+```
+安装时：
+  systemd-tmpfiles --create /etc/tmpfiles.d/otus.conf  # 创建 /var/lib/otus/tasks/
+
+运行时（系统自动）：
+  systemd-tmpfiles-clean.timer → systemd-tmpfiles --clean → 删除 >7d 的 .json 文件
+```
+
+与 `otus.service` 的集成（写入 systemd unit 文件）：
+```ini
+[Service]
+ExecStartPre=systemd-tmpfiles --create /etc/tmpfiles.d/otus.conf
+```
+确保目录在服务启动前一定存在，即便 tmpfiles.d 尚未被手动执行过。
+
+### 两层清理机制对比
+
+| 层次 | 触发 | 解决的问题 |
+|------|------|-----------|
+| systemd-tmpfiles.d（外部） | 系统每日定时 / 服务启动前 | 进程未运行时的磁盘清理、磁盘满死锁 |
+| 程序内 GC goroutine | 每 `gc_interval` | 数量膨胀（文件未超龄但总数爆炸）、即时清理 |
+
+### 备选方案
+
+| 方案 | 否决原因 |
+|------|---------|
+| 仅依赖程序内 GC | 进程不运行时无法清理，存在死锁风险 |
+| cron + shell 脚本 | 引入外部运维依赖，systemd-tmpfiles.d 是更标准的 Linux 机制 |
+| logrotate | 设计用于日志文件轮转，语义不匹配 |
+| inotify 监控 + 触发清理 | 过度设计，tmpfiles.d 完全覆盖需求 |
+
+### 理由
+
+- **委托 systemd-tmpfiles.d 是解决"程序未运行时清理"的标准 Linux 方案**，无需额外依赖
+- 两层清理互补：外部清理保证安全底线，程序内 GC 提供即时和数量控制
+- `max_task_history: 0` 提供退出门——在 systemd-tmpfiles.d 已覆盖所有场景的环境中
+  可完全禁用程序内 GC，减少代码复杂度
+
+---
+
 ## 决策优先级总览
 
 | ADR | 决策点 | 结论 | 实施阶段 |
@@ -1153,9 +1375,11 @@ command_channel:
 | 027 | Kafka Reporter 动态 Topic | `topic_prefix` 优先动态路由，与 `topic` 互斥 | Phase 1 |
 | 028 | Kafka 数据序列化 | Headers 承载 envelope，Value 承载 binary/json payload | Phase 1 |
 | 029 | Kafka 命令响应通道 | 固定 `otus-responses` topic，per-instance group_id（环境变量注入），hostname 作 key | Phase 1 |
+| 030 | Task 持久化 | 每任务独立 JSON 文件（`/var/lib/otus/tasks/`），temp+rename 原子写，重启 auto-restart 默认 true | Phase 1 |
+| 031 | Task 历史清理 | 主清理委托 systemd-tmpfiles.d（解决进程未运行时死锁），程序内 GC 作辅助（数量上限 + 周期 1h） | Phase 1 |
 
 ---
 
-**文档版本**: v0.4.0
-**更新日期**: 2026-02-21
+**文档版本**: v0.5.0
+**更新日期**: 2026-02-22
 **作者**: Otus Team
