@@ -514,7 +514,29 @@ otus:
           app: "otus"
         batch_size: 100
         batch_timeout: "1s"
+
+  # ── Task 持久化（ADR-030, ADR-031）──
+  data_dir: "/var/lib/otus"   # 顶级数据目录；task 记录存储于 {data_dir}/tasks/
+  task_persistence:
+    enabled: true             # false = 禁用持久化（开发 / 单测场景）
+    auto_restart: true        # 重启后自动恢复 running/starting/stopping 状态的 task
+    gc_interval: "1h"         # 进程内 GC 触发间隔（清理超出 max_task_history 的终态记录）
+    max_task_history: 100     # 终态（stopped/failed）记录最大保留数；0 = 不触发进程内 GC
 ```
+
+### 字段说明
+
+| 字段 | 类型 | 默认 | 说明 |
+|---|---|---|---|
+| `data_dir` | `string` | `/var/lib/otus` | 顶级数据目录，task 状态文件存放于 `{data_dir}/tasks/` |
+| `task_persistence.enabled` | `bool` | `true` | `false` 时所有持久化操作降级为 no-op |
+| `task_persistence.auto_restart` | `bool` | `true` | Daemon 启动时是否自动重建上次处于 running/starting/stopping 状态的 task |
+| `task_persistence.gc_interval` | `string` | `1h` | 进程内 GC goroutine 的触发间隔（Go duration 格式） |
+| `task_persistence.max_task_history` | `int` | `100` | 终态（stopped / failed）task 记录的保留上限；超出则按 created_at 升序删除旧记录；`0` = 禁用 |
+
+> **目录初始化**：由 `ExecStartPre=systemd-tmpfiles --create /etc/tmpfiles.d/otus.conf` 负责创建目录并设置权限（ADR-031）。不需要手动 `mkdir`。
+
+---
 
 ### 配置继承规则（ADR-024）
 
@@ -572,9 +594,28 @@ otus.kafka.tls   →  同上
     "sip.to_uri":    "sip:bob@example.com",
     "sip.status_code": ""
   },
-  "raw_payload_len": 512
+  "raw_payload_len": 512,
+  "raw_payload":     "SEVMTE8gV09STEQ=",
+  "payload":         { /* 解析后的协议结构体，payload_type=raw 时为 null */ }
 }
 ```
+
+**Kafka message Value 字段说明**：
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `task_id` | `string` | 所属 Task ID |
+| `agent_id` | `string` | Agent hostname |
+| `pipeline_id` | `int` | 产生该包的 Pipeline 编号 |
+| `timestamp` | `int64` | Unix 毫秒时间戳 |
+| `src_ip` / `dst_ip` | `string` | 源/目标 IP |
+| `src_port` / `dst_port` | `int` | 源/目标端口 |
+| `protocol` | `int` | IP 协议号（6=TCP, 17=UDP） |
+| `payload_type` | `string` | 协议类型：`sip` \| `rtp` \| `raw` |
+| `labels` | `object` | 解析器/处理器提取的 Labels 键值对 |
+| `raw_payload_len` | `int` | 原始载荷字节数，便于统计和告警 |
+| `raw_payload` | `string` | 原始载荷的 base64 编码；`payload_type=raw` 时包含完整数据 |
+| `payload` | `object\|null` | 解析后的协议结构体（如 SIP 字段树）；`payload_type=raw` 或解析失败时为 `null` |
 
 ### 9.2 动态 Topic 路由（ADR-027）
 
@@ -607,6 +648,14 @@ Processor 插件可添加任意 `{protocol}.{field}` 格式的 Labels，遵循�
 
 ---
 
-**文档版本**: v1.0.0  
-**更新日期**: 2026-02-21  
-**对应代码**: `internal/command/`, `internal/config/`, `plugins/reporter/kafka/`
+**文档版本**: v1.2.0  
+**更新日期**: 2026-02-22  
+**对应代码**: `internal/command/`, `internal/config/`, `internal/task/`, `plugins/reporter/kafka/`
+
+**变更历史**
+
+| 版本 | 日期 | 说明 |
+|---|---|---|
+| v1.2.0 | 2026-02-22 | 新增 §8 `data_dir` + `task_persistence` 字段说明（ADR-030/031）；§9.1 补充 `raw_payload` / `payload` 字段 |
+| v1.1.0 | 2026-02-21 | §9.1 Kafka 消息格式 Bug 修复：`raw_payload_len` 先前仅记录长度，现已修复为同时输出字节内容（base64） |
+| v1.0.0 | 2026-02-21 | 初始版本 |
