@@ -22,7 +22,7 @@ func (m *mockConfigReloader) Reload() error {
 }
 
 func TestCommandHandler_HandleTaskCreate(t *testing.T) {
-	tm := task.NewTaskManager("test-agent")
+	tm := task.NewTaskManager("test-agent", nil)
 	handler := NewCommandHandler(tm, nil)
 
 	// Create a valid task config
@@ -66,7 +66,7 @@ func TestCommandHandler_HandleTaskCreate(t *testing.T) {
 }
 
 func TestCommandHandler_HandleTaskList(t *testing.T) {
-	tm := task.NewTaskManager("test-agent")
+	tm := task.NewTaskManager("test-agent", nil)
 	handler := NewCommandHandler(tm, nil)
 
 	cmd := Command{
@@ -101,7 +101,7 @@ func TestCommandHandler_HandleTaskList(t *testing.T) {
 }
 
 func TestCommandHandler_HandleTaskStatus(t *testing.T) {
-	tm := task.NewTaskManager("test-agent")
+	tm := task.NewTaskManager("test-agent", nil)
 	handler := NewCommandHandler(tm, nil)
 
 	// Test getting all task status (empty)
@@ -123,7 +123,7 @@ func TestCommandHandler_HandleTaskStatus(t *testing.T) {
 }
 
 func TestCommandHandler_HandleTaskDelete(t *testing.T) {
-	tm := task.NewTaskManager("test-agent")
+	tm := task.NewTaskManager("test-agent", nil)
 	handler := NewCommandHandler(tm, nil)
 
 	params, _ := json.Marshal(TaskDeleteParams{TaskID: "non-existent"})
@@ -146,7 +146,7 @@ func TestCommandHandler_HandleTaskDelete(t *testing.T) {
 }
 
 func TestCommandHandler_HandleConfigReload(t *testing.T) {
-	tm := task.NewTaskManager("test-agent")
+	tm := task.NewTaskManager("test-agent", nil)
 
 	reloadCalled := false
 	reloader := &mockConfigReloader{
@@ -180,7 +180,7 @@ func TestCommandHandler_HandleConfigReload(t *testing.T) {
 }
 
 func TestCommandHandler_HandleUnknownMethod(t *testing.T) {
-	tm := task.NewTaskManager("test-agent")
+	tm := task.NewTaskManager("test-agent", nil)
 	handler := NewCommandHandler(tm, nil)
 
 	cmd := Command{
@@ -205,7 +205,7 @@ func TestCommandHandler_HandleUnknownMethod(t *testing.T) {
 }
 
 func TestCommandHandler_InvalidParams(t *testing.T) {
-	tm := task.NewTaskManager("test-agent")
+	tm := task.NewTaskManager("test-agent", nil)
 	handler := NewCommandHandler(tm, nil)
 
 	// Invalid JSON params

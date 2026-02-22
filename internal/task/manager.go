@@ -4,6 +4,7 @@ package task
 import (
 	"fmt"
 	"log/slog"
+	"sort"
 	"sync"
 	"time"
 
@@ -20,13 +21,21 @@ type TaskManager struct {
 
 	// Global configuration
 	agentID string
+
+	// store is the persistence backend (noopStore when disabled).
+	store TaskStore
 }
 
 // NewTaskManager creates a new task manager.
-func NewTaskManager(agentID string) *TaskManager {
+// store is the persistence backend; pass nil to disable persistence.
+func NewTaskManager(agentID string, store TaskStore) *TaskManager {
+	if store == nil {
+		store = noopStore{}
+	}
 	return &TaskManager{
 		tasks:   make(map[string]*Task),
 		agentID: agentID,
+		store:   store,
 	}
 }
 
@@ -256,8 +265,9 @@ func (m *TaskManager) Create(cfg config.TaskConfig) error {
 		return fmt.Errorf("task start failed: %w", err)
 	}
 
-	// Register task in manager
+	// Register task in manager and persist initial running state.
 	m.tasks[cfg.ID] = task
+	m.saveTask(task)
 
 	slog.Info("task created successfully",
 		"task_id", cfg.ID,
@@ -286,6 +296,12 @@ func (m *TaskManager) Delete(taskID string) error {
 	if err := task.Stop(); err != nil {
 		slog.Warn("error stopping task", "task_id", taskID, "error", err)
 		// Continue with deletion even if stop failed
+	}
+
+	// Persist the final stopped state, then remove the on-disk record.
+	m.saveTask(task)
+	if err := m.store.Delete(taskID); err != nil {
+		slog.Warn("failed to delete persisted task record", "task_id", taskID, "error", err)
 	}
 
 	// Remove from manager
@@ -357,6 +373,11 @@ func (m *TaskManager) StopAll() error {
 		}
 	}
 
+	// Persist stopped state for all tasks before clearing.
+	for _, t := range m.tasks {
+		m.saveTask(t)
+	}
+
 	// Clear all tasks
 	m.tasks = make(map[string]*Task)
 
@@ -374,4 +395,107 @@ func (m *TaskManager) UpdateMetricsInterval(d time.Duration) {
 	}
 
 	slog.Info("metrics interval updated for all tasks", "interval", d, "task_count", len(m.tasks))
+}
+
+// saveTask persists the current state of a task to the configured store.
+// It is safe to call without holding m.mu; it acquires only the task's own read lock.
+func (m *TaskManager) saveTask(t *Task) {
+	status := t.GetStatus()
+	pt := PersistedTask{
+		Version:       persistenceVersion,
+		Config:        t.Config,
+		State:         status.State,
+		CreatedAt:     status.CreatedAt,
+		FailureReason: status.FailureReason,
+		RestartCount:  0, // incremented on auto-restart (future enhancement)
+	}
+	if !status.StartedAt.IsZero() {
+		pt.StartedAt = &status.StartedAt
+	}
+	if !status.StoppedAt.IsZero() {
+		pt.StoppedAt = &status.StoppedAt
+	}
+	if err := m.store.Save(pt); err != nil {
+		slog.Warn("failed to persist task state", "task_id", t.Config.ID, "error", err)
+	}
+}
+
+// Restore reads persisted tasks from the store and re-creates those that were
+// active at the time of the last shutdown. Tasks in a terminal state are left
+// as on-disk history only and do not consume an active task slot.
+//
+// autoRestart controls whether tasks in running/starting/stopping state are
+// automatically re-created.
+func (m *TaskManager) Restore(autoRestart bool) {
+	persisted, err := m.store.List()
+	if err != nil {
+		slog.Error("task restore: failed to list persisted tasks", "error", err)
+		return
+	}
+
+	for _, pt := range persisted {
+		switch pt.State {
+		case StateRunning, StateStarting, StateStopping:
+			if !autoRestart {
+				slog.Info("task restore: skipping active task (auto_restart=false)",
+					"task_id", pt.Config.ID, "state", pt.State)
+				continue
+			}
+			slog.Info("task restore: restarting previously active task",
+				"task_id", pt.Config.ID, "last_state", pt.State)
+			if err := m.Create(pt.Config); err != nil {
+				slog.Error("task restore: failed to restart task",
+					"task_id", pt.Config.ID, "error", err)
+			}
+
+		default:
+			// Terminal states (stopped, failed, created) are on-disk history only;
+			// they do not consume an active task slot.
+			slog.Debug("task restore: skipping terminal task (history)",
+				"task_id", pt.Config.ID, "state", pt.State)
+		}
+	}
+}
+
+// GCOldTasks removes persisted terminal-state task records that exceed the
+// maxHistory limit. The oldest records (by CreatedAt) are pruned first.
+func (m *TaskManager) GCOldTasks(maxHistory int) {
+	persisted, err := m.store.List()
+	if err != nil {
+		slog.Warn("task GC: failed to list persisted tasks", "error", err)
+		return
+	}
+
+	// Collect terminal tasks that are not currently active.
+	m.mu.RLock()
+	var terminal []PersistedTask
+	for _, pt := range persisted {
+		if _, active := m.tasks[pt.Config.ID]; active {
+			continue
+		}
+		switch pt.State {
+		case StateStopped, StateFailed, StateCreated:
+			terminal = append(terminal, pt)
+		}
+	}
+	m.mu.RUnlock()
+
+	if len(terminal) <= maxHistory {
+		return
+	}
+
+	// Sort oldest first and remove the excess.
+	sort.Slice(terminal, func(i, j int) bool {
+		return terminal[i].CreatedAt.Before(terminal[j].CreatedAt)
+	})
+
+	excess := len(terminal) - maxHistory
+	for i := 0; i < excess; i++ {
+		id := terminal[i].Config.ID
+		if err := m.store.Delete(id); err != nil {
+			slog.Warn("task GC: failed to delete old record", "task_id", id, "error", err)
+		} else {
+			slog.Info("task GC: removed old task record", "task_id", id)
+		}
+	}
 }

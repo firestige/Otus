@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"syscall"
 	"time"
@@ -87,8 +88,46 @@ func (d *Daemon) Start() error {
 		return fmt.Errorf("failed to start metrics server: %w", err)
 	}
 
-	// 4. Create task manager
-	d.taskManager = task.NewTaskManager(d.config.Node.Hostname)
+	// 4. Create task manager with optional persistence store.
+	var taskStore task.TaskStore
+	if d.config.TaskPersistence.Enabled {
+		storeDir := filepath.Join(d.config.DataDir, "tasks")
+		store, storeErr := task.NewFileTaskStore(storeDir)
+		if storeErr != nil {
+			slog.Warn("failed to initialise task store, persistence disabled",
+				"dir", storeDir, "error", storeErr)
+		} else {
+			taskStore = store
+		}
+	}
+	d.taskManager = task.NewTaskManager(d.config.Node.Hostname, taskStore)
+
+	// Restore previously active tasks from the persistent store.
+	if d.config.TaskPersistence.Enabled && taskStore != nil {
+		d.taskManager.Restore(d.config.TaskPersistence.AutoRestart)
+	}
+
+	// Start in-process GC goroutine to prune stale task history records.
+	if d.config.TaskPersistence.Enabled && taskStore != nil {
+		gcInterval, err := time.ParseDuration(d.config.TaskPersistence.GCInterval)
+		if err != nil {
+			slog.Warn("invalid task_persistence.gc_interval, defaulting to 1h",
+				"value", d.config.TaskPersistence.GCInterval, "error", err)
+			gcInterval = time.Hour
+		}
+		go func() {
+			ticker := time.NewTicker(gcInterval)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ticker.C:
+					d.taskManager.GCOldTasks(d.config.TaskPersistence.MaxTaskHistory)
+				case <-d.ctx.Done():
+					return
+				}
+			}
+		}()
+	}
 
 	// 5. Create command handler
 	d.cmdHandler = command.NewCommandHandler(d.taskManager, d)

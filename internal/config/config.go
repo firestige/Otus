@@ -13,16 +13,18 @@ import (
 // GlobalConfig represents the top-level global static configuration.
 // Maps to the `otus:` root key in YAML (see config-design.md §2).
 type GlobalConfig struct {
-	Node           NodeConfig           `mapstructure:"node"`
-	Control        ControlConfig        `mapstructure:"control"`
-	Kafka          GlobalKafkaConfig    `mapstructure:"kafka"`
-	CommandChannel CommandChannelConfig `mapstructure:"command_channel"`
-	Reporters      ReportersConfig      `mapstructure:"reporters"`
-	Resources      ResourcesConfig      `mapstructure:"resources"`
-	Backpressure   BackpressureConfig   `mapstructure:"backpressure"`
-	Core           CoreConfig           `mapstructure:"core"`
-	Metrics        MetricsConfig        `mapstructure:"metrics"`
-	Log            LogConfig            `mapstructure:"log"`
+	Node             NodeConfig             `mapstructure:"node"`
+	Control          ControlConfig          `mapstructure:"control"`
+	Kafka            GlobalKafkaConfig      `mapstructure:"kafka"`
+	CommandChannel   CommandChannelConfig   `mapstructure:"command_channel"`
+	Reporters        ReportersConfig        `mapstructure:"reporters"`
+	Resources        ResourcesConfig        `mapstructure:"resources"`
+	Backpressure     BackpressureConfig     `mapstructure:"backpressure"`
+	Core             CoreConfig             `mapstructure:"core"`
+	Metrics          MetricsConfig          `mapstructure:"metrics"`
+	Log              LogConfig              `mapstructure:"log"`
+	DataDir          string                 `mapstructure:"data_dir"`           // ADR-030: /var/lib/otus
+	TaskPersistence  TaskPersistenceConfig  `mapstructure:"task_persistence"`   // ADR-030/031
 }
 
 // ─── Node Identity ───
@@ -218,6 +220,16 @@ type LokiOutputConfig struct {
 	BatchTimeout string            `mapstructure:"batch_timeout"`
 }
 
+// ─── Task Persistence (ADR-030, ADR-031) ───
+
+// TaskPersistenceConfig controls task state persistence and history GC.
+type TaskPersistenceConfig struct {
+	Enabled          bool   `mapstructure:"enabled"`           // false = disable (dev/test)
+	AutoRestart      bool   `mapstructure:"auto_restart"`      // true = auto-restart running tasks on startup
+	GCInterval       string `mapstructure:"gc_interval"`       // default "1h"
+	MaxTaskHistory   int    `mapstructure:"max_task_history"`  // 0 = disable in-process GC
+}
+
 // ─── Loading ───
 
 // configRoot is the top-level wrapper matching the YAML structure `otus: ...`.
@@ -304,6 +316,13 @@ func setDefaults(v *viper.Viper) {
 	// Core decoder defaults
 	v.SetDefault("otus.core.decoder.ip_reassembly.timeout", "30s")
 	v.SetDefault("otus.core.decoder.ip_reassembly.max_fragments", 10000)
+
+	// Task persistence defaults (ADR-030, ADR-031)
+	v.SetDefault("otus.data_dir", "/var/lib/otus")
+	v.SetDefault("otus.task_persistence.enabled", true)
+	v.SetDefault("otus.task_persistence.auto_restart", true)
+	v.SetDefault("otus.task_persistence.gc_interval", "1h")
+	v.SetDefault("otus.task_persistence.max_task_history", 100)
 
 	// Reporter defaults
 	v.SetDefault("otus.reporters.kafka.compression", "snappy")

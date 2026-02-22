@@ -28,7 +28,7 @@ func validCCConfig() config.CommandChannelConfig {
 }
 
 func TestNewKafkaCommandConsumer(t *testing.T) {
-	tm := task.NewTaskManager("test-agent")
+	tm := task.NewTaskManager("test-agent", nil)
 	handler := NewCommandHandler(tm, nil)
 
 	tests := []struct {
@@ -91,7 +91,7 @@ func TestNewKafkaCommandConsumer(t *testing.T) {
 }
 
 func TestKafkaCommandConsumer_TTLParsing(t *testing.T) {
-	tm := task.NewTaskManager("test-agent")
+	tm := task.NewTaskManager("test-agent", nil)
 	handler := NewCommandHandler(tm, nil)
 
 	cc := validCCConfig()
@@ -109,7 +109,7 @@ func TestKafkaCommandConsumer_TTLParsing(t *testing.T) {
 }
 
 func TestKafkaCommandConsumer_InvalidTTL(t *testing.T) {
-	tm := task.NewTaskManager("test-agent")
+	tm := task.NewTaskManager("test-agent", nil)
 	handler := NewCommandHandler(tm, nil)
 
 	cc := validCCConfig()
@@ -122,7 +122,7 @@ func TestKafkaCommandConsumer_InvalidTTL(t *testing.T) {
 }
 
 func TestKafkaCommandConsumer_StartStop(t *testing.T) {
-	tm := task.NewTaskManager("test-agent")
+	tm := task.NewTaskManager("test-agent", nil)
 	handler := NewCommandHandler(tm, nil)
 
 	consumer, err := NewKafkaCommandConsumer(validCCConfig(), "test-node", handler)
@@ -156,7 +156,7 @@ func TestKafkaCommandConsumer_StartStop(t *testing.T) {
 
 func newTestConsumer(t *testing.T, hostname string) *KafkaCommandConsumer {
 	t.Helper()
-	tm := task.NewTaskManager("test-agent")
+	tm := task.NewTaskManager("test-agent", nil)
 	handler := NewCommandHandler(tm, nil)
 	consumer, err := NewKafkaCommandConsumer(validCCConfig(), hostname, handler)
 	if err != nil {
@@ -327,7 +327,7 @@ func ccConfigWithResponseTopic() config.CommandChannelConfig {
 }
 
 func TestNewKafkaCommandConsumer_WriterCreatedWhenResponseTopicSet(t *testing.T) {
-	tm := task.NewTaskManager("test-agent")
+	tm := task.NewTaskManager("test-agent", nil)
 	handler := NewCommandHandler(tm, nil)
 
 	consumer, err := NewKafkaCommandConsumer(ccConfigWithResponseTopic(), "node-01", handler)
@@ -342,7 +342,7 @@ func TestNewKafkaCommandConsumer_WriterCreatedWhenResponseTopicSet(t *testing.T)
 }
 
 func TestNewKafkaCommandConsumer_WriterNilWhenResponseTopicEmpty(t *testing.T) {
-	tm := task.NewTaskManager("test-agent")
+	tm := task.NewTaskManager("test-agent", nil)
 	handler := NewCommandHandler(tm, nil)
 
 	consumer, err := NewKafkaCommandConsumer(validCCConfig(), "node-01", handler)
@@ -378,7 +378,7 @@ func TestProcessMessage_ResponseSkippedWhenRequestIDEmpty(t *testing.T) {
 func TestWriteResponse_MarshalAndKey(t *testing.T) {
 	mw := &mockWriter{}
 	// Build a minimal consumer with mock writer
-	tm := task.NewTaskManager("test-agent")
+	tm := task.NewTaskManager("test-agent", nil)
 	handler := NewCommandHandler(tm, nil)
 	consumer := &KafkaCommandConsumer{
 		ccConfig: validCCConfig(),
@@ -450,7 +450,7 @@ func TestProcessMessage_ResponseWrittenOnSuccess(t *testing.T) {
 
 func TestStop_ClosesWriter(t *testing.T) {
 	mw := &mockWriter{}
-	tm := task.NewTaskManager("test-agent")
+	tm := task.NewTaskManager("test-agent", nil)
 	handler := NewCommandHandler(tm, nil)
 	consumer := &KafkaCommandConsumer{
 		ccConfig: validCCConfig(),

@@ -6,7 +6,7 @@ import (
 
 func TestNewTaskManager(t *testing.T) {
 	agentID := "test-agent-1"
-	manager := NewTaskManager(agentID)
+	manager := NewTaskManager(agentID, nil)
 
 	if manager == nil {
 		t.Fatal("Expected NewTaskManager to return non-nil")
@@ -22,7 +22,7 @@ func TestNewTaskManager(t *testing.T) {
 }
 
 func TestTaskManagerList(t *testing.T) {
-	manager := NewTaskManager("test-agent")
+	manager := NewTaskManager("test-agent", nil)
 
 	// Empty manager
 	list := manager.List()
@@ -32,7 +32,7 @@ func TestTaskManagerList(t *testing.T) {
 }
 
 func TestTaskManagerCount(t *testing.T) {
-	manager := NewTaskManager("test-agent")
+	manager := NewTaskManager("test-agent", nil)
 
 	// Empty manager
 	if manager.Count() != 0 {
@@ -41,7 +41,7 @@ func TestTaskManagerCount(t *testing.T) {
 }
 
 func TestTaskManagerStatus(t *testing.T) {
-	manager := NewTaskManager("test-agent")
+	manager := NewTaskManager("test-agent", nil)
 
 	// Empty manager
 	status := manager.Status()
@@ -51,7 +51,7 @@ func TestTaskManagerStatus(t *testing.T) {
 }
 
 func TestTaskManagerGet(t *testing.T) {
-	manager := NewTaskManager("test-agent")
+	manager := NewTaskManager("test-agent", nil)
 
 	// Get non-existent task
 	_, err := manager.Get("nonexistent")
@@ -61,7 +61,7 @@ func TestTaskManagerGet(t *testing.T) {
 }
 
 func TestTaskManagerDelete(t *testing.T) {
-	manager := NewTaskManager("test-agent")
+	manager := NewTaskManager("test-agent", nil)
 
 	// Delete non-existent task
 	err := manager.Delete("nonexistent")
@@ -71,7 +71,7 @@ func TestTaskManagerDelete(t *testing.T) {
 }
 
 func TestTaskManagerStopAll(t *testing.T) {
-	manager := NewTaskManager("test-agent")
+	manager := NewTaskManager("test-agent", nil)
 
 	// StopAll on empty manager should not error
 	err := manager.StopAll()

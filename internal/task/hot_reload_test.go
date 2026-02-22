@@ -42,7 +42,7 @@ func TestTask_UpdateMetricsInterval(t *testing.T) {
 }
 
 func TestTaskManager_UpdateMetricsInterval(t *testing.T) {
-	m := NewTaskManager("test-agent")
+	m := NewTaskManager("test-agent", nil)
 
 	// Create mock tasks directly in the manager
 	task1 := &Task{}
@@ -68,7 +68,7 @@ func TestTaskManager_UpdateMetricsInterval(t *testing.T) {
 }
 
 func TestTaskManager_UpdateMetricsInterval_NoTasks(t *testing.T) {
-	m := NewTaskManager("test-agent")
+	m := NewTaskManager("test-agent", nil)
 
 	// Should not panic with no tasks
 	m.UpdateMetricsInterval(10 * time.Second)

@@ -16,7 +16,7 @@ func TestUDSServerClient_Integration(t *testing.T) {
 	socketPath := filepath.Join(tmpDir, "test.sock")
 
 	// Create handler
-	tm := task.NewTaskManager("test-agent")
+	tm := task.NewTaskManager("test-agent", nil)
 	handler := NewCommandHandler(tm, nil)
 
 	// Create server
@@ -128,7 +128,7 @@ func TestUDSClient_Timeout(t *testing.T) {
 	socketPath := filepath.Join(tmpDir, "test-timeout.sock")
 
 	// Create handler
-	tm := task.NewTaskManager("test-agent")
+	tm := task.NewTaskManager("test-agent", nil)
 	handler := NewCommandHandler(tm, nil)
 
 	// Create server
@@ -159,7 +159,7 @@ func TestUDSServer_MultipleConnections(t *testing.T) {
 	socketPath := filepath.Join(tmpDir, "test-multi.sock")
 
 	// Create handler
-	tm := task.NewTaskManager("test-agent")
+	tm := task.NewTaskManager("test-agent", nil)
 	handler := NewCommandHandler(tm, nil)
 
 	// Create server
@@ -204,7 +204,7 @@ func TestUDSClient_ConvenienceMethods(t *testing.T) {
 	socketPath := filepath.Join(tmpDir, "test-convenience.sock")
 
 	// Create handler
-	tm := task.NewTaskManager("test-agent")
+	tm := task.NewTaskManager("test-agent", nil)
 	handler := NewCommandHandler(tm, nil)
 
 	// Create server
