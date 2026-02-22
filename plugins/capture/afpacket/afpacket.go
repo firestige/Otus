@@ -8,7 +8,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/google/gopacket"
 	"github.com/google/gopacket/afpacket"
 	"github.com/google/gopacket/layers"
 	"github.com/google/gopacket/pcap"
@@ -131,17 +130,18 @@ func (c *AFPacketCapturer) Start(ctx context.Context) error {
 	return nil
 }
 
-// Stop stops the capturer.
+// Stop stops the capturer by cancelling the context.
+//
+// NOTE: handle.Close() is intentionally NOT called here.
+// The TPacket handle is owned exclusively by Capture(), which closes it
+// via defer once the read loop detects context cancellation and returns.
+// Calling Close() here would race with ZeroCopyReadPacketData() inside
+// the Capture loop, causing a Use-After-Free SIGSEGV against the
+// TPACKET_V3 mmap ring buffer.
 func (c *AFPacketCapturer) Stop(ctx context.Context) error {
 	if c.cancel != nil {
 		c.cancel()
 	}
-
-	if c.handle != nil {
-		c.handle.Close()
-		c.handle = nil
-	}
-
 	return nil
 }
 
@@ -163,7 +163,10 @@ func (c *AFPacketCapturer) Capture(ctx context.Context, output chan<- core.RawPa
 		return fmt.Errorf("failed to create TPacket handle: %w", err)
 	}
 	c.handle = handle
-	defer c.handle.Close()
+	defer func() {
+		c.handle.Close()
+		c.handle = nil
+	}()
 
 	// Set fanout mode if specified
 	if c.config.FanoutType != "" {
@@ -190,57 +193,71 @@ func (c *AFPacketCapturer) Capture(ctx context.Context, output chan<- core.RawPa
 		slog.Debug("BPF filter applied", "filter", c.config.BPFFilter)
 	}
 
-	// Packet source
-	packetSource := gopacket.NewPacketSource(c.handle, layers.LinkTypeEthernet)
-	packetSource.NoCopy = true // Zero-copy mode
-
 	// Initialize socket stats
 	if err := c.handle.InitSocketStats(); err != nil {
 		slog.Warn("failed to init socket stats", "error", err)
 	}
 
-	// Capture loop
+	// Direct read loop — bypasses gopacket.PacketSource.Packets() which spawns a
+	// hidden goroutine that continues accessing the TPACKET_V3 mmap ring buffer
+	// after handle.Close() unmaps it, causing a Use-After-Free SIGSEGV.
+	//
+	// By calling ZeroCopyReadPacketData() directly, there are no hidden goroutines
+	// and the handle lifetime is fully controlled by this function's defer above.
 	for {
+		// Check for shutdown before each blocking read so we react promptly
+		// when context is cancelled between poll timeouts.
 		select {
 		case <-ctx.Done():
 			slog.Info("afpacket capture stopped", "interface", c.config.Interface)
 			return nil
+		default:
+		}
 
-		case packet, ok := <-packetSource.Packets():
-			if !ok {
-				// Channel closed
-				return fmt.Errorf("packet source channel closed")
-			}
-
-			// Update statistics
-			c.packetsReceived.Add(1)
-
-			// Update drop counters from socket stats
-			if socketStats, _, statsErr := c.handle.SocketStats(); statsErr == nil {
-				c.packetsDropped.Store(uint64(socketStats.Drops()))
-			}
-
-			// Build RawPacket
-			raw := core.RawPacket{
-				Data:           packet.Data(),
-				Timestamp:      packet.Metadata().Timestamp,
-				CaptureLen:     uint32(packet.Metadata().CaptureLength),
-				OrigLen:        uint32(packet.Metadata().Length),
-				InterfaceIndex: packet.Metadata().InterfaceIndex,
-			}
-
-			// Non-blocking send to output channel
-			select {
-			case output <- raw:
-				// Packet sent successfully
-			case <-ctx.Done():
+		data, ci, err := c.handle.ZeroCopyReadPacketData()
+		if err != nil {
+			// On any read error, check context first (covers poll timeout, EAGAIN, etc.).
+			if ctx.Err() != nil {
+				slog.Info("afpacket capture stopped", "interface", c.config.Interface)
 				return nil
-			default:
-				// Output channel full, drop packet
-				c.packetsDropped.Add(1)
-				slog.Debug("output channel full, dropping packet",
-					"interface", c.config.Interface)
 			}
+			// Transient errors (poll timeout OptPollTimeout=100ms, EINTR, etc.) — retry.
+			continue
+		}
+
+		// Update statistics
+		c.packetsReceived.Add(1)
+
+		// Update drop counters from socket stats
+		if socketStats, _, statsErr := c.handle.SocketStats(); statsErr == nil {
+			c.packetsDropped.Store(uint64(socketStats.Drops()))
+		}
+
+		// Build RawPacket from zero-copy ring-buffer data.
+		// NOTE: data is only valid until the next ZeroCopyReadPacketData call;
+		// the pipeline must consume or copy it before we loop (same contract as
+		// the previous PacketSource NoCopy=true approach).
+		raw := core.RawPacket{
+			Data:           data,
+			Timestamp:      ci.Timestamp,
+			CaptureLen:     uint32(ci.CaptureLength),
+			OrigLen:        uint32(ci.Length),
+			InterfaceIndex: ci.InterfaceIndex,
+		}
+
+		// Non-blocking send: prefer drop over blocking the read loop.
+		// ctx.Done() case guards against the channel being closed before we exit.
+		select {
+		case output <- raw:
+			// Packet sent successfully
+		case <-ctx.Done():
+			slog.Info("afpacket capture stopped", "interface", c.config.Interface)
+			return nil
+		default:
+			// Output channel full, drop packet
+			c.packetsDropped.Add(1)
+			slog.Debug("output channel full, dropping packet",
+				"interface", c.config.Interface)
 		}
 	}
 }

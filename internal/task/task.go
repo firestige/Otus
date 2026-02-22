@@ -65,6 +65,7 @@ type Task struct {
 
 	// Goroutine synchronization
 	pipelineWg sync.WaitGroup // Tracks pipeline goroutines
+	captureWg  sync.WaitGroup // Tracks capturer goroutines (must exit before rawStreams close)
 
 	// State management
 	mu            sync.RWMutex
@@ -237,12 +238,20 @@ func (t *Task) Start() error {
 		// Binding mode: each capturer writes directly to its pipeline's rawStream
 		for i, cap := range t.Capturers {
 			slog.Debug("starting capturer (binding)", "task_id", t.Config.ID, "capturer_id", i, "name", cap.Name())
-			go t.captureLoop(cap, t.rawStreams[i])
+			t.captureWg.Add(1)
+			go func(c plugin.Capturer, stream chan<- core.RawPacket) {
+				defer t.captureWg.Done()
+				t.captureLoop(c, stream)
+			}(cap, t.rawStreams[i])
 		}
 	} else {
 		// Dispatch mode: single capturer → dispatcher → rawStreams
 		slog.Debug("starting capturer (dispatch)", "task_id", t.Config.ID, "name", t.Capturers[0].Name())
-		go t.captureLoop(t.Capturers[0], t.captureCh)
+		t.captureWg.Add(1)
+		go func() {
+			defer t.captureWg.Done()
+			t.captureLoop(t.Capturers[0], t.captureCh)
+		}()
 		go t.dispatchLoop()
 	}
 
@@ -276,7 +285,7 @@ func (t *Task) Stop() error {
 
 	slog.Info("stopping task", "task_id", t.Config.ID)
 
-	// Step 1: Stop all capturers (no more raw packets)
+	// Step 1: Signal all capturers to stop (cancel context).
 	for i, cap := range t.Capturers {
 		slog.Debug("stopping capturer", "task_id", t.Config.ID, "capturer_id", i)
 		if err := cap.Stop(t.ctx); err != nil {
@@ -284,12 +293,17 @@ func (t *Task) Stop() error {
 		}
 	}
 
-	// Step 2: Close input channels so pipelines drain and exit
+	// Step 1b: Wait for capture goroutines to fully exit before closing their
+	// output channels. Closing a rawStream while a captureLoop goroutine is
+	// still running would cause a send-on-closed-channel panic.
+	t.captureWg.Wait()
+
+	// Step 2: Close input channels so pipelines drain and exit.
 	if t.Config.Capture.DispatchMode == "dispatch" {
 		// Close captureCh → dispatchLoop exits → closes all rawStreams
 		close(t.captureCh)
 	} else {
-		// Binding mode: close rawStreams directly (capturers already stopped)
+		// Binding mode: close rawStreams directly (captureWg.Wait guarantees no writers remain)
 		for i, ch := range t.rawStreams {
 			close(ch)
 			slog.Debug("closed raw stream", "task_id", t.Config.ID, "pipeline_id", i)
