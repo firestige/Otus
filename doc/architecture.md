@@ -145,6 +145,9 @@ Otus 是一个高性能、低资源占用的边缘网络数据包捕获和观测
 - 管理捕获任务的生命周期
 - 处理远程和本地控制命令
 - 协调配置更新和热加载
+- 持久化 Task 状态到 `{data_dir}/tasks/{id}.json`（ADR-030）
+- Daemon 重启时自动恢复上次运行中的 Task（`auto_restart`）
+- 后台 GC goroutine 定期清理超出 `max_task_history` 的终态记录（ADR-031）
 
 **CLI Tool** - `cmd/`
 - 提供用户友好的命令行接口
@@ -885,6 +888,10 @@ if dispatchMode == "dispatch" {
 ```
 进程启动
   │
+  ├── FileTaskStore.List() → Restore(autoRestart)
+  │       running/starting/stopping → task_create（auto-restart）
+  │       stopped/failed            → 仅磁盘历史，不占运行 slot
+  │
   │  init() 自动注册
   ▼
 Registry (只读)
@@ -893,11 +900,16 @@ Registry (只读)
   ▼
 Validate → Resolve → Construct → Init → Wire → Assemble → Start
   │                                                          │
-  │                                                     运行中...
+  │  saveTask(state=running)                            运行中...
   │                                                          │
   │  task_delete 命令                                          │
   ▼                                                          ▼
 Stop (Capturers → Pipelines[WaitGroup] → Sender → Reporters.Flush)
+  │
+  └── saveTask(state=stopped) → store.Delete(id)
+
+后台 GC goroutine（间隔 gc_interval）
+  └── GCOldTasks(maxHistory) → 删除最旧的终态记录
 ```
 
 ### 4.5 配置模型
@@ -1017,6 +1029,14 @@ otus:
           env: production
         batch_size: 100
         batch_timeout: 1s
+
+  # 数据目录与 Task 持久化（ADR-030, ADR-031）
+  data_dir: /var/lib/otus        # task 记录存储于 {data_dir}/tasks/
+  task_persistence:
+    enabled: true
+    auto_restart: true           # 重启后自动恢复 running/starting/stopping 状态的 task
+    gc_interval: 1h              # 进程内 GC 间隔
+    max_task_history: 100        # 终态记录上限；超出按 created_at 删除最旧记录
 ```
 
 **关键原则**：
@@ -1026,6 +1046,8 @@ otus:
 - 节点元数据（ip、hostname、tags）全局声明，Label Processor 自动注入
 - 协议栈解码器配置（隧道开关、分片重组参数）属于全局，因为它是核心引擎的固有行为
 - 背压参数属于全局，所有 Task 共享相同的资源保护策略
+- **Task 持久化**（ADR-030）：每个 Task 以原子写（`os.CreateTemp` → `os.Rename`）持久化到 `{data_dir}/tasks/{id}.json`；重启时自动 Restore
+- **历史 GC**（ADR-031）：进程内 GC goroutine（间隔 `gc_interval`）+ systemd-tmpfiles.d `e` 指令（7 天 age-prune）双层清理
 
 #### 4.5.2 任务动态配置
 
@@ -1874,18 +1896,54 @@ processors:
 ```ini
 # configs/otus.service
 [Unit]
-Description=Otus Network Packet Capture Service
-After=network.target
+Description=Otus Network Packet Capture Daemon
+Documentation=https://github.com/firestige/otus
+After=network-online.target
+Wants=network-online.target
 
 [Service]
-Type=notify
+Type=simple
+# Run as root for raw socket access (or use CAP_NET_RAW+CAP_NET_ADMIN)
+User=root
+Group=root
+
+# Ensure data directories exist with correct permissions (ADR-031)
+ExecStartPre=systemd-tmpfiles --create /etc/tmpfiles.d/otus.conf
+# Daemon mode (foreground for systemd)
 ExecStart=/usr/local/bin/otus daemon
 ExecReload=/bin/kill -HUP $MAINPID
+
+# Graceful shutdown (SIGTERM)
+KillMode=mixed
+KillSignal=SIGTERM
+TimeoutStopSec=30
+
+# Auto-restart on failure
 Restart=on-failure
 RestartSec=5s
+
+# Resource limits
 LimitNOFILE=65536
-LimitMEMLOCK=infinity
-CapabilityBoundingSet=CAP_NET_RAW CAP_NET_ADMIN CAP_SYS_RESOURCE
+LimitNPROC=512
+
+# Security hardening (compatible with packet capture)
+NoNewPrivileges=false
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/var/lib/otus /var/log/otus /etc/otus
+
+# Required capabilities for packet capture
+AmbientCapabilities=CAP_NET_RAW CAP_NET_ADMIN
+CapabilityBoundingSet=CAP_NET_RAW CAP_NET_ADMIN CAP_DAC_OVERRIDE
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=otus
+
+# Working directory
+WorkingDirectory=/var/lib/otus
 
 [Install]
 WantedBy=multi-user.target
@@ -2423,6 +2481,16 @@ otus_plugin_health{name="kafka_reporter",status="healthy"} 1
 | 019 | Kafka 客户端 | segmentio/kafka-go，纯 Go 无 CGO | Phase 1 |
 | 020 | 本地控制通道 | JSON-RPC over UDS，不用 gRPC | Phase 1 |
 | 021 | DecodedPacket 类型 | 自定义值类型 struct，隔离 gopacket 到解码器内部 | Phase 1 |
+| 022 | 插件注册机制 | 纯静态链接 + `init()` blank import，编译期确定插件集合 | Phase 1 |
+| 023 | Node IP 解析 | 环境变量 `OTUS_NODE_IP` > 自动探测首个非回环 IPv4 > 启动报错 | Phase 1 |
+| 024 | Kafka 全局默认 | `otus.kafka` 提供 brokers/sasl/tls 共享默认，子节点继承，显式覆盖优先 | Phase 1 |
+| 025 | 日志滚动配置 | 数值格式字段名（`max_size_mb` / `max_age_days`），lumberjack 驱动 | Phase 1 |
+| 026 | 命令 TTL | 超时命令静默丢弃，防止节点重启后重放旧命令 | Phase 1 |
+| 027 | 动态 Topic 路由 | `topic_prefix` + `payload_type` 后缀，与 `topic` 固定配置互斥 | Phase 1 |
+| 028 | Kafka 消息格式 | Headers 承载元数据，Value 承载业务数据（JSON/binary） | Phase 1 |
+| 029 | 双 Topic 响应 | `otus-responses` 写回结果，`request_id` correlation，`hostname` 作 message key | Phase 1 |
+| 030 | Task 持久化 | 每 Task 独立 JSON 文件，原子 `CreateTemp→Rename` 写，重启时自动 Restore | Phase 1 |
+| 031 | 历史 GC 策略 | systemd-tmpfiles.d `e` 指令（7d age-prune）为主，进程内 GC goroutine（`max_task_history`）为辅 | Phase 1 |
 
 ## 12. 路线图
 
@@ -2437,6 +2505,7 @@ otus_plugin_health{name="kafka_reporter",status="healthy"} 1
 - [ ] Kafka 上报插件
 - [ ] 两层配置模型（全局静态 + Task 动态）
 - [ ] Task Manager + 单 Task 生命周期管理
+- [x] Task 状态持久化与重启自动恢复（ADR-030, ADR-031）
 - [ ] Pipeline 引擎与 Task 驱动组装
 - [ ] Kafka 命令 topic 订阅（拉模式远程控制）
 - [ ] CLI + Unix Domain Socket 本地控制
@@ -2482,6 +2551,6 @@ otus_plugin_health{name="kafka_reporter",status="healthy"} 1
 
 ---
 
-**文档版本**: v0.2.0  
-**更新日期**: 2026-02-16  
+**文档版本**: v0.3.0  
+**更新日期**: 2026-02-22  
 **作者**: Otus Team
