@@ -1,0 +1,213 @@
+networks:
+  voip-net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/24
+
+services:
+  # ──────────────────────────────────────────
+  # UAS — User Agent Server (answers calls)
+  # ──────────────────────────────────────────
+  uas:
+    build:
+      context: ./uas
+      dockerfile: Dockerfile
+    image: voip-simulator/uas:latest
+    container_name: sipp-uas
+    networks:
+      voip-net:
+        ipv4_address: 172.20.0.10
+    ports:
+      - "5060:5060/udp"             # SIP signalling
+      # RTP stays internal — no host binding needed for simulator
+    environment:
+      SIP_PORT: "5060"
+      RTP_PORT_START: "10000"
+      MAX_CALLS: "200"
+      CALL_DURATION_MS: "5000"      # how long each call is held (ms)
+      LOG_DIR: "/var/log/sipp"
+    volumes:
+      - uas-logs:/var/log/sipp
+      # Optional: mount a custom scenario at runtime
+      # - ./uas/scenarios:/scenarios:ro
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep sipp || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # ──────────────────────────────────────────
+  # UAC — User Agent Client (originates calls)
+  # ──────────────────────────────────────────
+  uac:
+    build:
+      context: ./uac
+      dockerfile: Dockerfile
+    image: voip-simulator/uac:latest
+    container_name: sipp-uac
+    networks:
+      voip-net:
+        ipv4_address: 172.20.0.20
+    ports:
+      - "5061:5061/udp"               # SIP signalling
+      # RTP stays internal — no host binding needed for simulator
+    environment:
+      UAS_HOST: "172.20.0.10"         # fixed IP of UAS container
+      UAS_PORT: "5060"
+      SIP_PORT: "5061"
+      RTP_PORT_START: "10100"
+      CALL_RATE: "1"                  # calls per second
+      MAX_CALLS: "10"                 # max concurrent calls
+      TOTAL_CALLS: "0"                # 0 = run forever
+      CALL_DURATION_MS: "5000"        # must match UAS value
+      STARTUP_DELAY: "8"              # seconds to wait before dialling
+      LOG_DIR: "/var/log/sipp"
+    volumes:
+      - uac-logs:/var/log/sipp
+      # Optional: mount a custom scenario at runtime
+      # - ./uac/scenarios:/scenarios:ro
+    depends_on:
+      uas:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ──────────────────────────────────────────
+  # Kafka (KRaft, single-node, no Zookeeper)
+  # ──────────────────────────────────────────
+  kafka:
+    image: confluentinc/cp-kafka:7.7.1
+    container_name: kafka
+    networks:
+      voip-net:
+        ipv4_address: 172.20.0.30
+    environment:
+      KAFKA_NODE_ID: "1"
+      KAFKA_PROCESS_ROLES: "broker,controller"
+      KAFKA_CONTROLLER_QUORUM_VOTERS: "1@kafka:9093"
+      KAFKA_LISTENERS: "PLAINTEXT://:9092,CONTROLLER://:9093"
+      KAFKA_ADVERTISED_LISTENERS: "PLAINTEXT://kafka:9092"
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT"
+      KAFKA_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
+      KAFKA_INTER_BROKER_LISTENER_NAME: "PLAINTEXT"
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: "1"
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: "1"
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: "1"
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_LOG_DIRS: "/var/lib/kafka/data"
+      CLUSTER_ID: "MkU3OEVBNTcwNTJENDM2Qk"
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-topics --bootstrap-server localhost:9092 --list || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+
+  # ──────────────────────────────────────────
+  # Otus sidecar for UAS
+  # Shares sipp-uas network namespace to capture its traffic
+  # ──────────────────────────────────────────
+  otus-uas:
+    build:
+      context: ./otus
+      dockerfile: Dockerfile
+    image: voip-simulator/otus:latest
+    container_name: otus-uas
+    # Share network namespace with sipp-uas — required to see its interfaces
+    network_mode: "container:sipp-uas"
+    cap_add:
+      - NET_RAW
+      - NET_ADMIN
+    environment:
+      CONFIG_FILE: /etc/otus/config.yml
+    volumes:
+      - ./otus/configs/uas-config.yml:/etc/otus/config.yml:ro
+      - otus-uas-data:/var/lib/otus
+      - otus-uas-logs:/var/log/otus
+    depends_on:
+      uas:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ──────────────────────────────────────────
+  # Otus sidecar for UAC
+  # Shares sipp-uac network namespace to capture its traffic
+  # ──────────────────────────────────────────
+  otus-uac:
+    build:
+      context: ./otus
+      dockerfile: Dockerfile
+    container_name: otus-uac
+    network_mode: "container:sipp-uac"
+    cap_add:
+      - NET_RAW
+      - NET_ADMIN
+    environment:
+      CONFIG_FILE: /etc/otus/config.yml
+    volumes:
+      - ./otus/configs/uac-config.yml:/etc/otus/config.yml:ro
+      - otus-uac-data:/var/lib/otus
+      - otus-uac-logs:/var/log/otus
+    depends_on:
+      uac:
+        condition: service_started
+      kafka:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ──────────────────────────────────────────
+  # Redpanda Console — Kafka UI
+  # Access: http://localhost:8081
+  # ──────────────────────────────────────────
+  redpanda-console:
+    image: redpandadata/console:latest
+    container_name: redpanda-console
+    networks:
+      voip-net:
+        ipv4_address: 172.20.0.50
+    ports:
+      - "8081:8080"
+    environment:
+      KAFKA_BROKERS: "kafka:9092"
+    depends_on:
+      kafka:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ──────────────────────────────────────────
+  # Web Console
+  # Provides task dispatch UI and live packet viewer
+  # ──────────────────────────────────────────
+  console:
+    build:
+      context: ./console
+      dockerfile: Dockerfile
+    image: voip-simulator/console:latest
+    container_name: voip-console
+    networks:
+      voip-net:
+        ipv4_address: 172.20.0.40
+    ports:
+      - "8080:8080"
+    environment:
+      KAFKA_BROKERS: "kafka:9092"
+    depends_on:
+      kafka:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  uas-logs:
+  uac-logs:
+  kafka-data:
+  otus-uas-data:
+  otus-uas-logs:
+  otus-uac-data:
+  otus-uac-logs:

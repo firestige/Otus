@@ -1,0 +1,485 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Otus Console — VoIP Simulator</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" />
+  <style>
+    body { background: #0d1117; color: #c9d1d9; font-family: 'Segoe UI', system-ui, sans-serif; }
+    .navbar { background: #161b22 !important; border-bottom: 1px solid #30363d; }
+    .card { background: #161b22; border: 1px solid #30363d; }
+    .card-header { background: #21262d; border-bottom: 1px solid #30363d; font-weight: 600; color: #e6edf3; }
+    .form-control, .form-select { background: #0d1117; border-color: #30363d; color: #c9d1d9; }
+    .form-control:focus, .form-select:focus { background: #0d1117; border-color: #58a6ff; color: #c9d1d9; box-shadow: 0 0 0 .2rem rgba(88,166,255,.25); }
+    .form-label { color: #8b949e; font-size: .85rem; margin-bottom: .25rem; }
+    .badge-uas { background: #1f6feb; }
+    .badge-uac { background: #3fb950; }
+    #packet-table tbody tr:nth-child(odd) { background: rgba(255,255,255,.02); }
+    #packet-table { font-size: .78rem; }
+    #packet-table th { color: #8b949e; border-color: #30363d; position: sticky; top: 0; background: #161b22; z-index: 1; }
+    #packet-table td { border-color: #21262d; vertical-align: middle; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .packet-scroll { max-height: 420px; overflow-y: auto; }
+    #log-box { background: #0d1117; border: 1px solid #30363d; border-radius: .375rem; padding: .75rem; height: 140px; overflow-y: auto; font-size: .78rem; font-family: monospace; }
+    .log-ok  { color: #3fb950; }
+    .log-err { color: #f85149; }
+    .log-info{ color: #8b949e; }
+    .status-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 6px; }
+    .dot-green  { background: #3fb950; animation: pulse 2s infinite; }
+    .dot-red    { background: #f85149; }
+    .dot-yellow { background: #d29922; }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+    textarea.form-control { font-family: monospace; font-size: .82rem; resize: vertical; }
+    .nav-pills .nav-link { color: #8b949e; }
+    .nav-pills .nav-link.active { background: #1f6feb; color: #fff; }
+    .form-check-label { color: #c9d1d9; }
+    .count-badge { font-size: .7rem; padding: .2em .5em; }
+    /* Override Bootstrap --bs-secondary-color for dark theme so text-muted is readable */
+    :root { --bs-secondary-color: #8b949e; }
+    /* Timestamp column: high-contrast white-ish so it's always legible */
+    #packet-table td.col-ts { color: #e6edf3; }
+  </style>
+</head>
+<body>
+
+<nav class="navbar navbar-dark px-3 py-2">
+  <span class="navbar-brand fw-bold">
+    <span class="text-info">Otus</span> Console
+    <small class="text-muted ms-2 fw-normal" style="font-size:.75rem">VoIP Simulator</small>
+  </span>
+  <div class="d-flex align-items-center gap-3">
+    <span id="kafka-status" class="text-muted" style="font-size:.8rem">
+      <span class="status-dot dot-yellow" id="kafka-dot"></span>Kafka connecting…
+    </span>
+  </div>
+</nav>
+
+<div class="container-fluid py-3">
+  <div class="row g-3">
+
+    <!-- ── Left: Command Panel ─────────────────── -->
+    <div class="col-lg-4">
+
+      <!-- Command Form -->
+      <div class="card mb-3">
+        <div class="card-header">下发命令</div>
+        <div class="card-body">
+
+          <div class="mb-2">
+            <label class="form-label">Target</label>
+            <select id="sel-target" class="form-select form-select-sm">
+              <option value="uas">UAS (sip-uas)</option>
+              <option value="uac">UAC (sip-uac)</option>
+              <option value="*">* Broadcast</option>
+            </select>
+          </div>
+
+          <div class="mb-2">
+            <label class="form-label">Command</label>
+            <select id="sel-command" class="form-select form-select-sm" onchange="onCommandChange()">
+              <option value="task_create">task_create</option>
+              <option value="task_delete">task_delete</option>
+              <option value="task_list">task_list</option>
+              <option value="task_status">task_status</option>
+              <option value="config_reload">config_reload</option>
+              <optgroup label="Daemon">
+                <option value="daemon_status">daemon_status</option>
+                <option value="daemon_stats">daemon_stats</option>
+                <option value="daemon_shutdown">daemon_shutdown</option>
+              </optgroup>
+            </select>
+          </div>
+
+          <div class="mb-2" id="payload-wrap">
+            <label class="form-label">Payload (JSON)</label>
+            <textarea id="txt-payload" class="form-control form-control-sm" rows="14" spellcheck="false">{}</textarea>
+          </div>
+
+          <div class="d-flex gap-2">
+            <button class="btn btn-sm btn-primary flex-fill" onclick="sendCommand()">发送</button>
+            <button class="btn btn-sm btn-outline-secondary" onclick="loadTemplate()" title="Load default task_create template">Load Template</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Console Log -->
+      <div class="card mb-3">
+        <div class="card-header d-flex justify-content-between align-items-center">
+          操作日志
+          <button class="btn btn-sm btn-outline-secondary py-0 px-2" onclick="clearLog()">清除</button>
+        </div>
+        <div class="card-body p-2">
+          <div id="log-box"></div>
+        </div>
+      </div>
+
+      <!-- Response Result (ADR-029) -->
+      <div class="card" id="resp-card">
+        <div class="card-header d-flex justify-content-between align-items-center">
+          <span>响应结果 <span id="resp-badge" class="badge bg-secondary ms-1" style="font-size:.7rem"></span></span>
+          <button class="btn btn-sm btn-outline-secondary py-0 px-2" onclick="clearResp()">清除</button>
+        </div>
+        <div class="card-body p-2">
+          <pre id="resp-pre" style="font-size:.75rem;color:#c9d1d9;max-height:200px;overflow:auto;margin:0;white-space:pre-wrap;word-break:break-all;">等待响应…</pre>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- ── Right: Packet Viewer ────────────────── -->
+    <div class="col-lg-8">
+      <div class="card">
+        <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+          <span>抓包数据</span>
+          <div class="d-flex align-items-center gap-3">
+            <ul class="nav nav-pills nav-sm" id="channel-tabs">
+              <li class="nav-item">
+                <a class="nav-link active py-1 px-3" href="#" data-ch="uas" onclick="switchChannel('uas',this);return false;">
+                  UAS <span id="uas-count" class="badge bg-secondary count-badge">0</span>
+                </a>
+              </li>
+              <li class="nav-item">
+                <a class="nav-link py-1 px-3" href="#" data-ch="uac" onclick="switchChannel('uac',this);return false;">
+                  UAC <span id="uac-count" class="badge bg-secondary count-badge">0</span>
+                </a>
+              </li>
+            </ul>
+            <div class="form-check form-switch mb-0 d-flex align-items-center gap-1" style="font-size:.8rem">
+              <input class="form-check-input" type="checkbox" id="auto-scroll" checked />
+              <label class="form-check-label" for="auto-scroll">自动滚动</label>
+            </div>
+            <button class="btn btn-sm btn-outline-danger py-0 px-2" onclick="clearPackets()">清除</button>
+          </div>
+        </div>
+        <div class="card-body p-0">
+          <div class="packet-scroll">
+            <table class="table table-sm table-dark mb-0" id="packet-table">
+              <thead>
+                <tr>
+                  <th style="width:130px">时间</th>
+                  <th>来源</th>
+                  <th>SrcIP:Port</th>
+                  <th>DstIP:Port</th>
+                  <th>Proto</th>
+                  <th>Type</th>
+                  <th>Labels</th>
+                </tr>
+              </thead>
+              <tbody id="packet-tbody">
+                <tr id="empty-row">
+                  <td colspan="7" class="text-center text-muted py-4" style="font-size:.85rem">
+                    等待数据…先在左侧下发 <code>task_create</code> 命令启动抓包
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <div class="card-footer d-flex justify-content-between align-items-center" style="background:#21262d;font-size:.78rem;color:#c9d1d9;">
+          <span>共 <span id="total-count">0</span> 条（最多显示 500 条）</span>
+          <span id="stream-status">
+            <span class="status-dot dot-yellow" id="stream-dot"></span>SSE disconnected
+          </span>
+        </div>
+      </div>
+
+      <!-- Selected packet detail -->
+      <div class="card mt-3" id="detail-card" style="display:none">
+        <div class="card-header d-flex justify-content-between">
+          包详情
+          <button class="btn btn-sm btn-outline-secondary py-0 px-2" onclick="closeDetail()">✕</button>
+        </div>
+        <div class="card-body p-2">
+          <pre id="detail-pre" style="font-size:.78rem;color:#c9d1d9;max-height:220px;overflow:auto;margin:0;"></pre>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+// ─── State ──────────────────────────────────────────────────
+let currentChannel = 'uas';
+let packets = { uas: [], uac: [] };
+const MAX_ROWS = 500;
+let eventSources = {};
+
+// ─── Init ────────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', () => {
+  checkKafka();
+  // Load buffered history first, then open SSE for live updates
+  loadHistory('uas').then(() => connectSSE('uas'));
+  loadHistory('uac').then(() => connectSSE('uac'));
+  loadTemplate();
+  setInterval(checkKafka, 30000);
+});
+
+// ─── Load history from ring buffer ───────────────────────────
+async function loadHistory(ch) {
+  try {
+    const r = await fetch(`/api/packets/${ch}`);
+    if (!r.ok) return;
+    const data = await r.json();
+    (data.packets || []).forEach(pkt => onPacket(ch, pkt));
+    if (data.count > 0) {
+      console.log(`[${ch}] loaded ${data.count} buffered packets`);
+    }
+  } catch (e) {
+    console.warn(`loadHistory(${ch}) failed:`, e);
+  }
+}
+
+// ─── Kafka health ─────────────────────────────────────────────
+async function checkKafka() {
+  try {
+    const r = await fetch('/api/health');
+    if (r.ok) {
+      document.getElementById('kafka-status').innerHTML =
+        '<span class="status-dot dot-green"></span>Kafka OK';
+    }
+  } catch {
+    document.getElementById('kafka-status').innerHTML =
+      '<span class="status-dot dot-red"></span>Backend 断线';
+  }
+}
+
+// ─── SSE ──────────────────────────────────────────────────────
+function connectSSE(ch) {
+  if (eventSources[ch]) { eventSources[ch].close(); }
+  const es = new EventSource(`/api/stream/${ch}`);
+  eventSources[ch] = es;
+
+  es.onopen = () => {
+    if (ch === currentChannel) updateStreamStatus(true);
+  };
+  es.onmessage = (e) => {
+    try { onPacket(ch, JSON.parse(e.data)); } catch {}
+  };
+  es.onerror = () => {
+    if (ch === currentChannel) updateStreamStatus(false);
+    // auto-reconnect after 3s
+    setTimeout(() => connectSSE(ch), 3000);
+  };
+}
+
+function updateStreamStatus(ok) {
+  const dot  = document.getElementById('stream-dot');
+  const txt  = document.getElementById('stream-status');
+  dot.className = `status-dot ${ok ? 'dot-green' : 'dot-red'}`;
+  txt.innerHTML = `<span class="${dot.className}" id="stream-dot"></span>${ok ? 'SSE connected' : 'SSE disconnected'}`;
+}
+
+// ─── Timestamp formatting ───────────────────────────────────
+// Accepts: integer ms, integer seconds, numeric string, ISO string.
+// Returns 'YYYY-MM-DD HH:MM:SS.mmm' or '—' on any failure.
+function fmtTs(val) {
+  if (val === null || val === undefined || val === '') return '—';
+  try {
+    let d;
+    if (typeof val === 'number' || (typeof val === 'string' && /^\d+$/.test(val))) {
+      const n = Number(val);
+      // Heuristic: < 1e11 → seconds, else milliseconds
+      d = new Date(n < 1e11 ? n * 1000 : n);
+    } else {
+      d = new Date(val);
+    }
+    if (isNaN(d.getTime())) return '—';
+    return d.toISOString().replace('T', ' ').slice(0, 23);
+  } catch { return '—'; }
+}
+
+// ─── Packet rendering ────────────────────────────────────────
+function onPacket(ch, pkt) {
+  packets[ch].push(pkt);
+  if (packets[ch].length > MAX_ROWS) packets[ch].shift();
+  updateCount(ch);
+  if (ch === currentChannel) { try { appendRow(pkt); } catch(e) { console.warn('appendRow:', e); } }
+}
+
+function appendRow(pkt) {
+  const tbody = document.getElementById('packet-tbody');
+  const empty = document.getElementById('empty-row');
+  if (empty) empty.remove();
+
+  // Use backend-normalised integer ms timestamp; fall back to _received_at.
+  const ts = fmtTs(pkt.timestamp ?? pkt._received_at);
+
+  const source = pkt.agent_id || '—';
+  const srcAddr = pkt.src_ip  ? `${pkt.src_ip}:${pkt.src_port}`  : '—';
+  const dstAddr = pkt.dst_ip  ? `${pkt.dst_ip}:${pkt.dst_port}`  : '—';
+  const proto   = pkt.protocol === 17 ? 'UDP' : (pkt.protocol === 6 ? 'TCP' : (pkt.protocol || '—'));
+  const ptype   = pkt.payload_type || '—';
+  const labels  = pkt.labels  ? Object.entries(pkt.labels).map(([k,v]) => `${k}=${v}`).join(' ') : '';
+
+  const tr = document.createElement('tr');
+  tr.style.cursor = 'pointer';
+  tr.innerHTML = `
+    <td class="col-ts">${ts}</td>
+    <td><span class="badge ${source.includes('uas') ? 'badge-uas' : 'badge-uac'}">${source}</span></td>
+    <td>${srcAddr}</td>
+    <td>${dstAddr}</td>
+    <td>${proto}</td>
+    <td><span class="badge bg-secondary">${ptype}</span></td>
+    <td class="text-muted" style="font-size:.72rem">${labels}</td>
+  `;
+  tr.onclick = () => showDetail(pkt);
+  tbody.appendChild(tr);
+
+  // Trim old rows
+  while (tbody.rows.length > MAX_ROWS) tbody.deleteRow(0);
+
+  // Auto scroll
+  if (document.getElementById('auto-scroll').checked) {
+    const wrap = tbody.closest('.packet-scroll');
+    wrap.scrollTop = wrap.scrollHeight;
+  }
+
+  document.getElementById('total-count').textContent = tbody.rows.length;
+}
+
+function updateCount(ch) {
+  document.getElementById(`${ch}-count`).textContent = packets[ch].length;
+}
+
+function switchChannel(ch, el) {
+  currentChannel = ch;
+  document.querySelectorAll('#channel-tabs .nav-link').forEach(a => a.classList.remove('active'));
+  el.classList.add('active');
+  redrawTable();
+  updateStreamStatus(eventSources[ch]?.readyState === 1);
+}
+
+function redrawTable() {
+  const tbody = document.getElementById('packet-tbody');
+  tbody.innerHTML = '';
+  const list = packets[currentChannel];
+  if (list.length === 0) {
+    tbody.innerHTML = '<tr id="empty-row"><td colspan="7" class="text-center text-muted py-4">无数据</td></tr>';
+  } else {
+    list.forEach(p => { try { appendRow(p); } catch(e) { console.warn('appendRow:', e); } });
+  }
+  document.getElementById('total-count').textContent = tbody.rows.length;
+}
+
+function clearPackets() {
+  packets[currentChannel] = [];
+  redrawTable();
+  updateCount(currentChannel);
+}
+
+// ─── Detail panel ────────────────────────────────────────────
+function showDetail(pkt) {
+  document.getElementById('detail-card').style.display = 'block';
+  document.getElementById('detail-pre').textContent = JSON.stringify(pkt, null, 2);
+}
+function closeDetail() {
+  document.getElementById('detail-card').style.display = 'none';
+}
+
+// ─── Commands ────────────────────────────────────────────────
+async function sendCommand() {
+  const target  = document.getElementById('sel-target').value;
+  const command = document.getElementById('sel-command').value;
+  let payload;
+  try {
+    payload = JSON.parse(document.getElementById('txt-payload').value || '{}');
+  } catch (e) {
+    addLog(`Payload JSON 解析失败: ${e.message}`, 'err');
+    return;
+  }
+
+  addLog(`→ [${target}] ${command}`, 'info');
+  showResp('等待响应…', null);
+  try {
+    const r = await fetch('/api/command', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ target, command, payload }),
+    });
+    const data = await r.json();
+    if (data.ok) {
+      addLog(`✓ request_id=${data.request_id}`, 'ok');
+      if (data.response) {
+        showResp(JSON.stringify(data.response, null, 2), true);
+      } else {
+        showResp('发送成功 (broadcast / fire-and-forget)', true);
+      }
+    } else {
+      const errMsg = data.error || (data.response && data.response.error) || '未知错误';
+      addLog(`✗ ${errMsg}`, 'err');
+      showResp(JSON.stringify(data, null, 2), false);
+    }
+  } catch (e) {
+    addLog(`✗ 网络错误: ${e.message}`, 'err');
+    showResp(`网络错误: ${e.message}`, false);
+  }
+}
+
+function showResp(text, ok) {
+  const pre   = document.getElementById('resp-pre');
+  const badge = document.getElementById('resp-badge');
+  pre.textContent = text;
+  if (ok === null) {
+    badge.textContent = '';
+    badge.className = 'badge bg-secondary ms-1';
+    pre.style.color = '#8b949e';
+  } else if (ok) {
+    badge.textContent = 'OK';
+    badge.className = 'badge bg-success ms-1';
+    pre.style.color = '#3fb950';
+  } else {
+    badge.textContent = 'ERR';
+    badge.className = 'badge bg-danger ms-1';
+    pre.style.color = '#f85149';
+  }
+}
+
+function clearResp() {
+  showResp('等待响应…', null);
+}
+
+async function loadTemplate() {
+  const target = document.getElementById('sel-target').value;
+  const ch = target === '*' ? 'uas' : target;
+  try {
+    const r = await fetch(`/api/task-template/${ch}`);
+    const tmpl = await r.json();
+    document.getElementById('txt-payload').value = JSON.stringify(tmpl, null, 2);
+  } catch {}
+}
+
+function onCommandChange() {
+  const cmd = document.getElementById('sel-command').value;
+  const defaults = {
+    task_list:        '{}',
+    config_reload:    '{}',
+    daemon_status:    '{}',
+    daemon_stats:     '{}',
+    daemon_shutdown:  '{}',
+    task_delete:      '{\n  "task_id": "sip-uas-capture"\n}',
+    task_status:      '{\n  "task_id": ""\n}',
+  };
+  if (cmd in defaults) {
+    document.getElementById('txt-payload').value = defaults[cmd];
+  } else if (cmd === 'task_create') {
+    loadTemplate();
+  }
+}
+
+// ─── Log ─────────────────────────────────────────────────────
+function addLog(msg, type = 'info') {
+  const box = document.getElementById('log-box');
+  const ts  = new Date().toLocaleTimeString();
+  const div = document.createElement('div');
+  div.className = `log-${type}`;
+  div.textContent = `[${ts}] ${msg}`;
+  box.appendChild(div);
+  box.scrollTop = box.scrollHeight;
+}
+function clearLog() {
+  document.getElementById('log-box').innerHTML = '';
+}
+</script>
+</body>
+</html>

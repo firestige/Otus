@@ -244,11 +244,93 @@ otus/
 │   ├── decisions.md         # ADR 决策记录
 │   ├── implementation-plan.md # 实施计划
 │   └── DEPLOYMENT.md        # 部署指南
+├── voip-simulator/           # VoIP 模拟测试环境
+│   ├── docker-compose.yml   # 编排所有服务
+│   ├── uas/                 # SIPp UAS（被叫方）
+│   ├── uac/                 # SIPp UAC（主叫方）
+│   ├── otus/                # Otus sidecar 容器
+│   └── console/             # Web 控制台（任务下发 + 实时查看）
 ├── Dockerfile               # 静态构建镜像
 ├── Makefile                 # 构建任务
 ├── go.mod                   # Go 模块定义
 └── main.go                  # 程序入口
 ```
+
+---
+
+## VoIP Simulator（端到端验证）
+
+`voip-simulator/` 目录提供了一套基于 **SIPp** 的 VoIP 通话模拟环境，用于端到端验证 Otus 的抓包、解析和上报能力。
+
+### 架构概览
+
+```
+┌──────────────┐  SIP/RTP   ┌──────────────┐
+│  UAC (SIPp)  │ ────────── │  UAS (SIPp)  │
+│ 172.20.0.20  │            │ 172.20.0.10  │
+└──────┬───────┘            └──────┬───────┘
+       │ network_mode:container          │ network_mode:container
+┌──────┴───────┐            ┌──────┴───────┐
+│  Otus (UAC)  │            │  Otus (UAS)  │
+│  sidecar     │            │  sidecar     │
+└──────┬───────┘            └──────┬───────┘
+       │                           │
+       └─────────┐   ┌─────────────┘
+                 ▼   ▼
+          ┌──────────────┐
+          │    Kafka      │
+          │ 172.20.0.30   │
+          └──────┬───────┘
+                 │
+       ┌─────────┴──────────┐
+       ▼                    ▼
+┌──────────────┐   ┌───────────────┐
+│ Web Console  │   │ Redpanda      │
+│ :8080        │   │ Console :8081 │
+└──────────────┘   └───────────────┘
+```
+
+### 组件说明
+
+| 服务 | 说明 |
+|------|------|
+| **UAS** | SIPp 被叫方，监听 UDP 5060，接听呼叫并回送 RTP |
+| **UAC** | SIPp 主叫方，按配置速率发起呼叫（默认 1 cps） |
+| **Otus sidecar** | 以 `network_mode: container` 方式挂载到 UAC/UAS，共享网络命名空间进行抓包 |
+| **Kafka** | KRaft 单节点，接收 Otus 上报的 SIP/RTP 解析结果 |
+| **Redpanda Console** | Kafka Web UI，查看 topic 数据（http://localhost:8081） |
+| **Web Console** | 任务下发与实时数据包查看界面（http://localhost:8080） |
+
+### 快速启动
+
+```bash
+cd voip-simulator
+
+# 启动所有服务
+docker compose up -d --build
+
+# 查看服务状态
+docker compose ps
+
+# 查看 Otus 抓包日志
+docker logs -f otus-uas
+
+# 打开 Web Console 查看实时数据
+# http://localhost:8080
+
+# 打开 Redpanda Console 查看 Kafka 消息
+# http://localhost:8081
+
+# 停止所有服务
+docker compose down -v
+```
+
+### 验证流程
+
+1. 启动环境后，UAC 自动向 UAS 发起 SIP 呼叫
+2. Otus sidecar 实时捕获 SIP 信令和 RTP 媒体流
+3. 解析结果通过 Kafka 上报
+4. 在 Web Console 或 Redpanda Console 中查看抓包数据，验证解析正确性
 
 ---
 
@@ -374,4 +456,4 @@ sudo journalctl -u otus -e | grep -i kafka
 ---
 
 **版本**: v0.1.0-dev  
-**更新时间**: 2026-02-17
+**更新时间**: 2026-02-22
