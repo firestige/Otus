@@ -5,6 +5,7 @@ package kafka
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -330,7 +331,15 @@ func (r *KafkaReporter) serializeJSON(pkt *core.OutputPacket) ([]byte, error) {
 		"labels":       pkt.Labels,
 	}
 
+	// Typed payload (e.g. future structured types; SIP parser returns nil — labels carry
+	// the SIP metadata, raw bytes are preserved below).
+	if pkt.Payload != nil {
+		output["payload"] = pkt.Payload
+	}
+
+	// Raw application-layer bytes, base64-encoded for JSON transport.
 	if len(pkt.RawPayload) > 0 {
+		output["raw_payload"] = base64.StdEncoding.EncodeToString(pkt.RawPayload)
 		output["raw_payload_len"] = len(pkt.RawPayload)
 	}
 

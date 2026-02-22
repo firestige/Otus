@@ -123,6 +123,7 @@ func (p *Pipeline) processPacket(raw core.RawPacket) (core.OutputPacket, bool) {
 	var parsedPayload any
 	var parsedLabels core.Labels
 	var payloadType string
+	var parserMatched bool
 
 	for _, parser := range p.parsers {
 		if parser.CanHandle(&decoded) {
@@ -134,10 +135,14 @@ func (p *Pipeline) processPacket(raw core.RawPacket) (core.OutputPacket, bool) {
 				continue
 			}
 
-			// Use first successful parser
+			// Use first successful parser.
+			// Note: parsedPayload may be nil (e.g. SIP parser returns nil — raw bytes are
+			// preserved in OutputPacket.RawPayload). parserMatched tracks whether a parser
+			// succeeded regardless of the payload value.
 			parsedPayload = payload
 			parsedLabels = labels
 			payloadType = parser.Name()
+			parserMatched = true
 			p.metrics.Parsed.Add(1)
 			metrics.PipelinePacketsTotal.WithLabelValues(p.taskID, pipelineID, "parsed").Inc()
 			break
@@ -145,14 +150,15 @@ func (p *Pipeline) processPacket(raw core.RawPacket) (core.OutputPacket, bool) {
 	}
 
 	// Measure parse latency
-	if parsedPayload != nil {
+	if parserMatched {
 		parseLatency := time.Since(parseStart).Seconds()
 		metrics.PipelineLatencySeconds.WithLabelValues(p.taskID, "parse").Observe(parseLatency)
 	}
 
-	// If no parser handled the packet, use raw payload
-	if parsedPayload == nil {
-		parsedPayload = decoded.Payload
+	// If no parser handled the packet, fall back to raw payload type.
+	// This is distinct from a parser that ran but returned a nil typed payload
+	// (e.g. SIP, which stores everything in Labels + OutputPacket.RawPayload).
+	if !parserMatched {
 		payloadType = "raw"
 		parsedLabels = make(core.Labels)
 	}
