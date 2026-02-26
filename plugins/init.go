@@ -7,6 +7,7 @@ import (
 	"firestige.xyz/otus/plugins/parser/rtp"
 	"firestige.xyz/otus/plugins/parser/sip"
 	"firestige.xyz/otus/plugins/reporter/console"
+	"firestige.xyz/otus/plugins/reporter/hep"
 	"firestige.xyz/otus/plugins/reporter/kafka"
 )
 
@@ -20,6 +21,7 @@ func init() {
 
 	// Register reporter plugins
 	plugin.RegisterReporter("console", console.NewConsoleReporter)
+	plugin.RegisterReporter("hep", hep.NewHEPReporter)
 	plugin.RegisterReporter("kafka", kafka.NewKafkaReporter)
 
 	// More plugins will be registered here as they are implemented

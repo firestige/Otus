@@ -49,6 +49,18 @@ otus:
       compression: "snappy"           # none | gzip | snappy | lz4 | zstd
       max_message_bytes: 1048576
 
+    # HEPv3 UDP reporter — forwards packets to Homer/Sipcapture collectors.
+    # Flow-stable routing: same 5-tuple always reaches the same server.
+    # Chunk 48 = "from" identity (SIP From-URI or srcIP:port fallback).
+    # Chunk 49 = "to"   identity (SIP To-URI   or dstIP:port fallback).
+    hep:
+      servers:
+        - "10.0.0.1:9060"
+        - "10.0.0.2:9060"
+      capture_id: 2001                # uint32 placed in HEP chunk 12
+      auth_key: ""                    # optional auth token in HEP chunk 14
+      node_name: ""                   # optional node label in HEP chunk 19 (e.g. hostname)
+
   # ────────────── Global Resources ──────────────
   resources:
     max_workers: 0                    # 0 = auto (GOMAXPROCS)
