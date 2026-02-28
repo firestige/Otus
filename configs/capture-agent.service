@@ -49,20 +49,6 @@ SyslogIdentifier=capture-agent
 # Working directory
 WorkingDirectory=/var/lib/capture-agent
 
-[Unit]
-Description=Capture Agent Edge Packet Capture Agent
-After=network.target
-
-[Service]
-Type=simple
-ExecStart=/usr/local/bin/capture-agent
-Restart=on-failure
-RestartSec=5
-User=root
-Group=root
-LimitNOFILE=65536
-WorkingDirectory=/
-EnvironmentFile=-/etc/default/capture-agent
-
 [Install]
 WantedBy=multi-user.target
+

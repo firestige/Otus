@@ -1,10 +1,13 @@
-.PHONY: all build build-static build-all proto clean install uninstall test run docker-build docker-extract simulator-build
+.PHONY: all build build-static build-all proto clean install install-systemd uninstall test run docker-build dist simulator-build
 
 # Variables
 BINARY_NAME=capture-agent
 INSTALL_PATH=/usr/local/bin
 SYSTEMD_PATH=/etc/systemd/system
 VERSION?=$(shell git describe --tags --always --dirty 2>/dev/null || echo 'dev')
+ARCH:=$(shell uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')
+DIST_NAME=capture-agent-$(VERSION)-linux-$(ARCH)
+DIST_DIR=dist/$(DIST_NAME)
 BUILD_TIME=$(shell date -u '+%Y-%m-%d_%H:%M:%S_UTC')
 GIT_COMMIT=$(shell git rev-parse --short HEAD 2>/dev/null || echo 'unknown')
 LDFLAGS=-w -s -X 'main.Version=$(VERSION)' -X 'main.BuildTime=$(BUILD_TIME)' -X 'main.GitCommit=$(GIT_COMMIT)'
@@ -30,7 +33,7 @@ build:
 
 # Build static binary (for production deployment)
 # Note: Complete static linking requires many dependencies (libsystemd, libgcrypt, etc.)
-# For true static binary, use Docker build: make docker-build && make docker-extract
+# For true static binary, use Docker build: make docker-build && make dist
 build-static:
 	@echo "Building ${BINARY_NAME} with minimal dependencies..."
 	@echo "Note: This binary has glibc dependency. For fully static binary, use Docker build."
@@ -72,19 +75,29 @@ docker-build:
 		-t capture-agent:latest \
 		.
 
-# Extract static binary from Docker image
-docker-extract:
-	@echo "Extracting static binary from Docker image..."
-	@docker create --name capture-agent-extract capture-agent:latest
-	@docker cp capture-agent-extract:/capture-agent ./capture-agent-static
-	@docker rm capture-agent-extract
-	@echo "Binary extracted to ./capture-agent-static"
-	@file ./capture-agent-static
-	@ldd ./capture-agent-static 2>&1 || true
+# Build a self-contained distribution package.
+# Produces: dist/capture-agent-{version}-linux-{arch}.tar.gz
+# The tarball contains the binary, default config, service file, tmpfiles.d
+# config, and a setup.sh installer script.
+dist: docker-build
+	@echo "Creating distribution package: $(DIST_NAME).tar.gz"
+	@rm -rf $(DIST_DIR)
+	@mkdir -p $(DIST_DIR)/bin $(DIST_DIR)/configs/tmpfiles.d
+	@docker create --name _ca_dist capture-agent:latest
+	@docker cp _ca_dist:/capture-agent $(DIST_DIR)/bin/capture-agent
+	@docker rm _ca_dist
+	@cp configs/config.yml        $(DIST_DIR)/configs/
+	@cp configs/capture-agent.service $(DIST_DIR)/configs/
+	@cp configs/tmpfiles.d/capture-agent.conf $(DIST_DIR)/configs/tmpfiles.d/
+	@cp scripts/setup.sh          $(DIST_DIR)/setup.sh
+	@chmod +x $(DIST_DIR)/bin/capture-agent $(DIST_DIR)/setup.sh
+	@tar -czf dist/$(DIST_NAME).tar.gz -C dist $(DIST_NAME)
+	@rm -rf $(DIST_DIR)
+	@echo "Package ready: dist/$(DIST_NAME).tar.gz"
 
 # Build all voip-simulator Docker images.
 simulator-build:
-	@echo "Building voip-simulator images for platform: $(PLATFORM)..."
+	@echo "Building voip-simulator images..."
 	DOCKER_BUILDKIT=1 docker compose -f voip-simulator/docker-compose.yml build
 
 # 构建插件

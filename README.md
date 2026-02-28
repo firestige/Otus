@@ -42,15 +42,38 @@ make build-all
 # 输出: dist/capture-agent-linux-amd64, dist/capture-agent-linux-arm64
 ```
 
-#### 方式 B: Docker 构建
+#### 方式 B: Docker 构建 → 分发包
 
 ```bash
-# 构建当前架构镜像
+# 1. 构建当前架构镜像（以当前用户架构为准）
 make docker-build
 
-# 提取静态二进制
-make docker-extract
-# 输出: ./capture-agent-static
+# 2. 打包分发制品（在构建机上执行）
+make dist
+# 输出: dist/capture-agent-{version}-linux-{arch}.tar.gz
+# 包含: bin/capture-agent  configs/  setup.sh
+```
+
+将生成的 tarball 传到目标机器后执行安装：
+
+```bash
+# 在目标机器上执行
+tar xzf capture-agent-*-linux-*.tar.gz
+cd capture-agent-*-linux-*
+sudo ./setup.sh           # 安装 + 注册 systemd 服务
+
+# 编辑配置（首次安装）
+sudo vim /etc/capture-agent/config.yml
+
+# 启动服务
+sudo systemctl start capture-agent
+sudo systemctl status capture-agent
+```
+
+如需卸载：
+
+```bash
+sudo ./setup.sh --remove
 ```
 
 > **内网离线环境构建**，在执行 `make docker-build` 前需要完成以下配置，详见下方说明。
