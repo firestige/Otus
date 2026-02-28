@@ -45,13 +45,62 @@ make build-all
 #### 方式 B: Docker 构建
 
 ```bash
-# 多架构构建
+# 构建当前架构镜像
 make docker-build
 
 # 提取静态二进制
 make docker-extract
 # 输出: ./capture-agent-static
 ```
+
+> **内网离线环境构建**，在执行 `make docker-build` 前需要完成以下两项配置，详见下方说明。
+
+---
+
+#### 内网构建：Go 离线包
+
+Docker 构建过程中需要安装 Go 工具链。内网环境无法访问 `go.dev`，需提前将安装包下载好并放置到**项目根目录**（与 `Dockerfile` 同级）。
+
+从 [https://go.dev/dl/](https://go.dev/dl/) 下载对应平台的压缩包，命名格式为官网原始格式：
+
+| 构建机架构 | 文件名示例 |
+|---|---|
+| x86\_64 (amd64) | `go1.23.6.linux-amd64.tar.gz` |
+| aarch64 (arm64) | `go1.23.6.linux-arm64.tar.gz` |
+
+Dockerfile 通过 `COPY go*.linux-*.tar.gz` 自动匹配，**文件名中的版本号无需与 Dockerfile 匹配**，升级 Go 版本只需替换文件即可。
+
+---
+
+#### 内网构建：DNS 配置
+
+内网构建时 yum/pip 等包管理器需要通过内网 DNS 解析私有镜像仓库或代理地址。Docker 20 的 buildx 不支持 `--dns` 参数，需通过 `configs/buildkitd.toml` 注入 DNS 配置。
+
+**步骤一**：编辑 [`configs/buildkitd.toml`](configs/buildkitd.toml)，填入内网 DNS 服务器地址：
+
+```toml
+[dns]
+  nameservers = ["10.0.0.1", "10.0.0.2"]
+  # searchdomains = ["corp.example.com"]
+```
+
+**步骤二**：创建携带该配置的 buildx builder（每台构建机执行一次，重建后需重新执行）：
+
+```bash
+# 若已有旧 builder，先删除
+make docker-rm-builder
+
+# 创建新 builder（读取 configs/buildkitd.toml）
+make docker-setup-builder
+```
+
+**步骤三**：正常构建：
+
+```bash
+make docker-build
+```
+
+> DNS 配置只在 `make docker-setup-builder` 创建时读入。修改 `buildkitd.toml` 后需要先 `make docker-rm-builder` 再重新创建才能生效。
 
 ### 2. 安装
 

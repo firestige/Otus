@@ -1,8 +1,8 @@
+# syntax=docker/dockerfile:1
 FROM ubuntu:22.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# libcap2-bin provides setcap (used at runtime for capability assignment)
 RUN apt-get -o Acquire::Retries=5 update && \
     apt-get -o Acquire::Retries=5 install -y --fix-missing \
     libcap2-bin \

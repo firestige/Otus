@@ -1,0 +1,13 @@
+# BuildKit daemon configuration for the capture-agent-builder.
+# Passed to 'docker buildx create --config configs/buildkitd.toml'.
+#
+# This is the correct way to inject DNS servers into Docker 20 buildx builds
+# without modifying the host's /etc/resolv.conf and without needing
+# RUN --network=host in Dockerfiles.
+#
+# Fill in your internal DNS server IPs below.
+
+[dns]
+  nameservers = ["<DNS1>", "<DNS2>"]
+  # searchdomains = ["corp.example.com"]
+  # options       = ["ndots:1"]

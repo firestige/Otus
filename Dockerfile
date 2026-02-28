@@ -1,25 +1,37 @@
-# Multi-stage Dockerfile for static-linked capture-agent binary
-# Supports: amd64, arm64
-# Output: Fully static binary with zero runtime dependencies
-
+# syntax=docker/dockerfile:1
+# Multi-stage Dockerfile for capture-agent binary
+# Base image: CentOS 7
+# Build on the host's native architecture — no cross-compilation.
+#   amd64 host  →  linux/amd64 binary
+#   arm64 host  →  linux/arm64 binary
+#
 # ============================================================================
-# Stage 1: Builder - Alpine Linux with musl for better static linking
+# Stage 1: Builder - CentOS 7 + Go installed from official tarball
 # ============================================================================
-FROM golang:1.23-alpine AS builder
-
-ARG TARGETOS=linux
-ARG TARGETARCH
+FROM centos:7 AS builder
 
 # Install build dependencies
-# - gcc, musl-dev: C compiler and musl libc for static linking
-# - libpcap-dev: BPF filter compilation (statically linked)
-# - linux-headers: Kernel headers for AF_PACKET
-RUN apk add --no-cache \
-    gcc \
-    musl-dev \
-    libpcap-dev \
-    linux-headers \
-    make
+# - gcc, glibc-static: C compiler + static libc for static linking
+# - libpcap-devel:     BPF filter compilation (includes libpcap.a)
+# - make, tar:         build tooling
+RUN yum install -y \
+        gcc \
+        glibc-static \
+        libpcap-devel \
+        make \
+        tar \
+    && yum clean all
+
+# Install Go from an offline tarball placed in the project root.
+# Download the appropriate tarball from https://go.dev/dl/ beforehand and put
+# it alongside this Dockerfile.  The official naming convention is:
+#   go{version}.linux-{amd64|arm64}.tar.gz
+# e.g.  go1.23.6.linux-amd64.tar.gz
+# The glob below matches any tarball that follows that convention, so the
+# Go version can be updated simply by swapping the file — no Dockerfile change.
+COPY go*.linux-*.tar.gz /tmp/go.tar.gz
+RUN tar -C /usr/local -xzf /tmp/go.tar.gz && rm /tmp/go.tar.gz
+ENV PATH="/usr/local/go/bin:${PATH}"
 
 WORKDIR /build
 
@@ -34,8 +46,6 @@ COPY . .
 # -tags netgo,osusergo: Use pure Go network and user/group resolution
 # -ldflags: Strip debug info, embed version info, static linking
 RUN CGO_ENABLED=1 \
-    GOOS=${TARGETOS} \
-    GOARCH=${TARGETARCH} \
     go build \
         -tags netgo,osusergo \
         -ldflags='-w -s -linkmode external -extldflags "-static"' \
@@ -46,16 +56,9 @@ RUN CGO_ENABLED=1 \
 RUN file capture-agent && (ldd capture-agent 2>&1 || true)
 
 # ============================================================================
-# Stage 2: Runtime - Scratch (empty base image)
+# Stage 2: Runtime - CentOS 7
 # ============================================================================
-# Note: This image is NOT for runtime deployment in containers.
-# It's only used to extract the static binary for deployment on:
-# - Bare metal servers
-# - VMs (VMware, KVM, etc.)
-# - ECS instances
-# - Physical servers
-# For K8s deployment, see docs/deployment-k8s.md
-FROM scratch
+FROM centos:7
 
 # Copy static binary
 COPY --from=builder /build/capture-agent /capture-agent
@@ -65,9 +68,7 @@ COPY --from=builder /build/configs/config.yml /config.yml
 
 # Note: This container cannot run as-is for packet capture.
 # Extract the binary using:
-#   docker create --name capture-agent-extract otus:latest
-#   docker cp capture-agent-extract:/otus ./otus
-#   docker rm capture-agent-extract
+#   make docker-extract
 #
 # For actual deployment, install the binary directly on the host:
 #   sudo cp capture-agent /usr/local/bin/
