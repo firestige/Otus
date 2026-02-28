@@ -54,41 +54,37 @@ make docker-extract
 ```
 
 > **内网离线环境构建**，在执行 `make docker-build` 前需要完成以下配置，详见下方说明。
-> - `configs/buildkitd.toml` — 注入内网 DNS + Docker Hub 镜像代理
+> - `configs/build.env` — DNS、Go proxy 等所有构建期配置
 > - `configs/yum.repos.d/*.repo` — 替换 yum 仓库为 Nexus 代理
-> - `configs/build.env` — 配置 Go 相关环境变量（GOPROXY、GONOSUMDB 等）
 > - 项目根目录放置离线 Go 安装包
 
 ---
 
-#### 内网构建：DNS 与镜像仓库代理
+#### 内网构建：build.env 配置
 
-内网构建涉及两个问题，均通过 [`configs/buildkitd.toml`](configs/buildkitd.toml) 解决：
+`make docker-build` 使用 `docker build`（默认 docker driver），构建容器天然继承宿主机网络栈，因此 DNS 可以直接写入 `/etc/resolv.conf`，无需 buildx builder 或 `buildkitd.toml`。
 
-**1. DNS**：Docker 20 的 buildx 不支持 `--dns`，需在 `buildkitd.toml` 中注入。
+所有构建期配置统一在 [`configs/build.env`](configs/build.env) 中管理，Makefile 自动将每一行转换为 `--build-arg` 传入 Dockerfile：
 
-**2. 镜像拉取（Docker Hub 代理）**：Dockerfile 的 `FROM centos:7` 默认从 Docker Hub 拉取，内网无法访问时报 `dial tcp: lookup registry-1.docker.io` 错误。在 `buildkitd.toml` 配置 registry mirror 后，BuildKit 会自动将所有 `docker.io` 的拉取请求转发到内网 Nexus Docker proxy，**Dockerfile 无需修改**。
+```ini
+# 内网 DNS 服务器（注入到构建容器的 /etc/resolv.conf）
+DNS1=10.0.0.1
+DNS2=10.0.0.2
 
-编辑 [`configs/buildkitd.toml`](configs/buildkitd.toml)，填入实际地址：
+# Go Module Proxy（指向 Nexus 内网 Go 私仓）
+GOPROXY=http://nexus3.msxf.com/repository/go/,direct
 
-```toml
-[dns]
-  nameservers = ["10.0.0.1", "10.0.0.2"]
+# 禁用 sum.golang.org 校验（内网不可达时必须设置）
+GONOSUMDB=*
 
-[registry."docker.io"]
-  mirrors = ["nexus.corp"]          # 替换为 Nexus Docker proxy 主机名
-
-# Nexus 使用 HTTP（无 TLS），必须声明以下节：
-[registry."nexus.corp"]             # 与 mirrors 中的主机名保持一致
-  http = true
-  insecure = true
+GO111MODULE=on
+GOPATH=/go
 ```
 
-配置完成后，创建或重建 builder（**每次修改 `buildkitd.toml` 后都需要重建**）：
+填好后直接构建：
 
 ```bash
-make docker-rm-builder
-make docker-setup-builder
+make docker-build
 ```
 
 ---
@@ -122,39 +118,7 @@ Docker 构建过程中需要安装 Go 工具链。内网环境无法访问 `go.d
 | x86\_64 (amd64) | `go1.23.6.linux-amd64.tar.gz` |
 | aarch64 (arm64) | `go1.23.6.linux-arm64.tar.gz` |
 
-Dockerfile 通过 `COPY go*.linux-*.tar.gz` 自动匹配，**文件名中的版本号无需与 Dockerfile 匹配**，升级 Go 版本只需替换文件即可。
-
----
-
-#### 内网构建：Go 环境变量（Nexus Module Proxy）
-
-所有构建期 Go 环境变量统一在 [`configs/build.env`](configs/build.env) 中配置，Makefile 会自动读取该文件并以 `--build-arg` 方式注入 Dockerfile，无需修改 Makefile 或在命令行传参。
-
-编辑 `configs/build.env`，填入内网 Nexus 地址：
-
-```ini
-# Go Module Proxy：指向内网 Nexus Go 仓库
-# 完全隔离环境去掉 ,direct
-GOPROXY=http://<NEXUS_HOST>/repository/go-proxy,direct
-
-# 禁用 sum.golang.org 校验（内网无法访问时必须设置）
-# * 表示对所有模块跳过，也可指定路径前缀，如 corp.example.com/*
-GONOSUMDB=*
-
-# 模块模式（Go 1.16 起默认 on，保留以兼容旧工具）
-GO111MODULE=on
-
-# 构建容器内的 GOPATH
-GOPATH=/go
-```
-
-> `GOROOT` 无需配置——Go 会从二进制所在路径自动推断。
-
-配置完成后直接构建，无需额外参数：
-
-```bash
-make docker-build
-```
+Dockerfile 通过 `ADD go*.linux-*.tar.gz` 自动匹配并解压，**文件名中的版本号无需与 Dockerfile 匹配**，升级 Go 版本只需替换文件即可。
 
 ---
 

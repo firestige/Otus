@@ -1,4 +1,4 @@
-.PHONY: all build build-static build-all proto clean install uninstall test run docker-build docker-setup-builder docker-rm-builder docker-extract simulator-build
+.PHONY: all build build-static build-all proto clean install uninstall test run docker-build docker-extract simulator-build
 
 # Variables
 BINARY_NAME=capture-agent
@@ -9,28 +9,9 @@ BUILD_TIME=$(shell date -u '+%Y-%m-%d_%H:%M:%S_UTC')
 GIT_COMMIT=$(shell git rev-parse --short HEAD 2>/dev/null || echo 'unknown')
 LDFLAGS=-w -s -X 'main.Version=$(VERSION)' -X 'main.BuildTime=$(BUILD_TIME)' -X 'main.GitCommit=$(GIT_COMMIT)'
 
-# Target platform for docker-build.
-# Defaults to the host's native architecture — build amd64 on amd64, arm64 on arm64.
-# No cross-compilation: the builder uses CGO (libpcap) which requires a native
-# C toolchain.
-# Override only when targeting the same architecture:
-#   make docker-build PLATFORM=linux/amd64
-#   make docker-build PLATFORM=linux/arm64
-PLATFORM ?= linux/$(shell uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')
-
-# Dedicated buildx builder.
-BUILDER ?= capture-agent-builder
-
-# buildkitd configuration file.
-# Contains the [dns] section with internal nameservers so build containers
-# resolve names correctly without modifying the host's /etc/resolv.conf.
-# Edit configs/buildkitd.toml to set your DNS IPs before running docker-setup-builder.
-BUILDKIT_CONFIG ?= configs/buildkitd.toml
-
 # Docker build-arg values are read automatically from configs/build.env.
-# Each non-comment, non-empty line in that file becomes a --build-arg.
-# Edit configs/build.env to configure GOPROXY, GONOSUMDB, GO111MODULE, GOPATH, etc.
-# No Makefile changes are needed when those values change.
+# Each non-comment, non-empty line becomes a --build-arg flag.
+# Configure DNS1, DNS2, GOPROXY, GONOSUMDB, etc. in that file.
 BUILD_ENV_FILE ?= configs/build.env
 BUILD_ARGS := $(if $(wildcard $(BUILD_ENV_FILE)),\
 	$(shell grep -v '^\s*\#' $(BUILD_ENV_FILE) | grep -v '^\s*$$' | sed 's/^/--build-arg /'),)
@@ -80,36 +61,16 @@ build-arm64:
 	@chmod +x scripts/build.sh
 	@./scripts/build.sh --arch=arm64
 
-# Docker build — native architecture only.
-docker-build: docker-setup-builder
-	@echo "Building Docker image for platform: $(PLATFORM)..."
-	docker buildx build \
-		--builder $(BUILDER) \
-		--platform $(PLATFORM) \
+# Docker build — uses plain 'docker build' (default docker driver) so the
+# build container inherits the host network stack. DNS and yum/Go proxy
+# settings are injected via --build-arg from configs/build.env.
+docker-build:
+	@echo "Building Docker image..."
+	docker build \
 		$(BUILD_ARGS) \
 		-t capture-agent:$(VERSION) \
 		-t capture-agent:latest \
-		--load \
 		.
-
-# Create (once) the dedicated buildx builder.
-# --config $(BUILDKIT_CONFIG)  → injects [dns] nameservers into build containers
-#                                so internal packages resolve without modifying
-#                                the host /etc/resolv.conf.
-# Edit configs/buildkitd.toml with your DNS IPs before running this target.
-# Idempotent: skips creation if the builder already exists.
-docker-setup-builder:
-	@docker buildx inspect $(BUILDER) >/dev/null 2>&1 || \
-		docker buildx create \
-			--name $(BUILDER) \
-			--driver docker-container \
-			--config $(BUILDKIT_CONFIG) \
-			--use && \
-			docker buildx inspect --bootstrap $(BUILDER)
-
-# Remove the dedicated builder (e.g. to reset DNS config)
-docker-rm-builder:
-	docker buildx rm $(BUILDER) 2>/dev/null || true
 
 # Extract static binary from Docker image
 docker-extract:
