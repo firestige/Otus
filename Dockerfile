@@ -30,9 +30,12 @@ RUN yum clean all && yum makecache && \
         libpcap-devel \
     && yum clean all
 
-# libpcap static linking on CentOS 7 amd64:
-# libpcap-devel installs libpcap.a into /usr/lib64 but CGO's linker defaults
-# to /usr/lib. Set CGO_LDFLAGS so ld finds both the static and shared libs.
+# libpcap static linking note:
+# CentOS 7's libpcap-devel only ships libpcap.so (no libpcap.a), so full
+# static linking (-extldflags "-static") will fail with 'cannot find -lpcap'.
+# We link libpcap dynamically; the runtime stage and target hosts only need
+# the 'libpcap' package (not -devel), which is present by default on CentOS 7.
+# CGO_LDFLAGS tells ld where to find libpcap.so on the build host.
 ENV CGO_LDFLAGS="-L/usr/lib64"
 
 # Install Go from an offline tarball in the project root.
@@ -61,11 +64,13 @@ RUN go mod download
 
 COPY . .
 
-# Build static binary
+# Build binary
+# -tags netgo,osusergo: statically link Go runtime and use pure Go net/user
+# libpcap is linked dynamically (libpcap.so.1 on target host)
 RUN CGO_ENABLED=1 \
     go build \
         -tags netgo,osusergo \
-        -ldflags='-w -s -linkmode external -extldflags "-static"' \
+        -ldflags='-w -s' \
         -o capture-agent \
         main.go
 
@@ -75,6 +80,10 @@ RUN file capture-agent && (ldd capture-agent 2>&1 || true)
 # Stage 2: Runtime - CentOS 7 (image already cached from stage 1)
 # ============================================================================
 FROM centos:7
+
+# Copy libpcap shared library from builder — avoids running yum again in the
+# runtime stage (which would need DNS and Nexus repos configured a second time).
+COPY --from=builder /usr/lib64/libpcap.so.1* /usr/lib64/
 
 COPY --from=builder /build/capture-agent /capture-agent
 COPY --from=builder /build/configs/config.yml /config.yml
