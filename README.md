@@ -54,36 +54,42 @@ make docker-extract
 ```
 
 > **内网离线环境构建**，在执行 `make docker-build` 前需要完成以下配置，详见下方说明。
-> - `configs/buildkitd.toml` — 注入内网 DNS
+> - `configs/buildkitd.toml` — 注入内网 DNS + Docker Hub 镜像代理
 > - `configs/yum.repos.d/*.repo` — 替换 yum 仓库为 Nexus 代理
 > - `configs/build.env` — 配置 Go 相关环境变量（GOPROXY、GONOSUMDB 等）
 > - 项目根目录放置离线 Go 安装包
 
 ---
 
-#### 内网构建：DNS 配置
+#### 内网构建：DNS 与镜像仓库代理
 
-内网构建时 yum/pip 等包管理器需要通过内网 DNS 解析私有镜像仓库或代理地址。Docker 20 的 buildx 不支持 `--dns` 参数，需通过 `configs/buildkitd.toml` 注入 DNS 配置。
+内网构建涉及两个问题，均通过 [`configs/buildkitd.toml`](configs/buildkitd.toml) 解决：
 
-**步骤一**：编辑 [`configs/buildkitd.toml`](configs/buildkitd.toml)，填入内网 DNS 服务器地址：
+**1. DNS**：Docker 20 的 buildx 不支持 `--dns`，需在 `buildkitd.toml` 中注入。
+
+**2. 镜像拉取（Docker Hub 代理）**：Dockerfile 的 `FROM centos:7` 默认从 Docker Hub 拉取，内网无法访问时报 `dial tcp: lookup registry-1.docker.io` 错误。在 `buildkitd.toml` 配置 registry mirror 后，BuildKit 会自动将所有 `docker.io` 的拉取请求转发到内网 Nexus Docker proxy，**Dockerfile 无需修改**。
+
+编辑 [`configs/buildkitd.toml`](configs/buildkitd.toml)，填入实际地址：
 
 ```toml
 [dns]
   nameservers = ["10.0.0.1", "10.0.0.2"]
-  # searchdomains = ["corp.example.com"]
+
+[registry."docker.io"]
+  mirrors = ["nexus.corp"]          # 替换为 Nexus Docker proxy 主机名
+
+# 若 Nexus 使用 HTTP（无 TLS），需额外声明：
+# [registry."nexus.corp"]
+#   http = true
+#   insecure = true
 ```
 
-**步骤二**：创建携带该配置的 buildx builder（每台构建机执行一次，重建后需重新执行）：
+配置完成后，创建或重建 builder（**每次修改 `buildkitd.toml` 后都需要重建**）：
 
 ```bash
-# 若已有旧 builder，先删除
 make docker-rm-builder
-
-# 创建新 builder（读取 configs/buildkitd.toml）
 make docker-setup-builder
 ```
-
-> DNS 配置只在 `make docker-setup-builder` 创建时读入。修改 `buildkitd.toml` 后需要先 `make docker-rm-builder` 再重新创建才能生效。
 
 ---
 

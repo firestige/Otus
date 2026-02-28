@@ -1,13 +1,34 @@
 # BuildKit daemon configuration for the capture-agent-builder.
 # Passed to 'docker buildx create --config configs/buildkitd.toml'.
 #
-# This is the correct way to inject DNS servers into Docker 20 buildx builds
-# without modifying the host's /etc/resolv.conf and without needing
-# RUN --network=host in Dockerfiles.
-#
-# Fill in your internal DNS server IPs below.
+# After editing this file, recreate the builder for changes to take effect:
+#   make docker-rm-builder && make docker-setup-builder
 
+# ---------------------------------------------------------------------------
+# DNS
+# Inject internal DNS servers into build containers.
+# Required on Docker 20 which does not support --dns in 'docker buildx build'.
+# ---------------------------------------------------------------------------
 [dns]
   nameservers = ["<DNS1>", "<DNS2>"]
   # searchdomains = ["corp.example.com"]
   # options       = ["ndots:1"]
+
+# ---------------------------------------------------------------------------
+# Registry mirrors
+# Redirect image pulls to an internal Nexus Docker proxy so that base images
+# (e.g. centos:7, ubuntu:22.04) are fetched from the internal network instead
+# of Docker Hub.  Dockerfile FROM instructions do not need to change.
+#
+# Replace <NEXUS_HOST> with your Nexus hostname (and port if non-standard).
+#
+# If your Nexus Docker proxy uses plain HTTP (no TLS), also declare the mirror
+# host in a separate [registry."<NEXUS_HOST>"] section with http = true.
+# ---------------------------------------------------------------------------
+[registry."docker.io"]
+  mirrors = ["<NEXUS_HOST>"]
+
+# Uncomment and fill in if the Nexus Docker proxy serves plain HTTP:
+# [registry."<NEXUS_HOST>"]
+#   http = true
+#   insecure = true
