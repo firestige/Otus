@@ -28,6 +28,7 @@ RUN yum clean all && yum makecache && \
         gcc \
         glibc-static \
         libpcap-devel \
+        file \
     && yum clean all
 
 # libpcap static linking note:
