@@ -126,7 +126,7 @@ services:
     environment:
       CONFIG_FILE: /etc/capture-agent/config.yml
     volumes:
-      - ./otus/configs/uas-config.yml:/etc/capture-agent/config.yml:ro
+      - ./capture/configs/uas-config.yml:/etc/capture-agent/config.yml:ro
       - capture-agent-uas-data:/var/lib/capture-agent
       - capture-agent-uas-logs:/var/log/capture-agent
     depends_on:
@@ -152,7 +152,7 @@ services:
     environment:
       CONFIG_FILE: /etc/capture-agent/config.yml
     volumes:
-      - ./otus/configs/uac-config.yml:/etc/capture-agent/config.yml:ro
+      - ./capture/configs/uac-config.yml:/etc/capture-agent/config.yml:ro
       - capture-agent-uac-data:/var/lib/capture-agent
       - capture-agent-uac-logs:/var/log/capture-agent
     depends_on:

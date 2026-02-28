@@ -82,12 +82,21 @@
               <option value="task_list">task_list</option>
               <option value="task_status">task_status</option>
               <option value="config_reload">config_reload</option>
+              <optgroup label="SimpleCommand (role-based)">
+                <option value="task_start">task_start</option>
+                <option value="task_stop">task_stop</option>
+              </optgroup>
               <optgroup label="Daemon">
                 <option value="daemon_status">daemon_status</option>
                 <option value="daemon_stats">daemon_stats</option>
                 <option value="daemon_shutdown">daemon_shutdown</option>
               </optgroup>
             </select>
+          </div>
+
+          <!-- SimpleCommand hint shown only for task_start / task_stop -->
+          <div id="simple-cmd-hint" class="alert py-1 px-2 mb-2" style="display:none;font-size:.78rem;background:#1a2f1a;border:1px solid #3fb950;color:#8fcc8f">
+            ⚡ SimpleCommand 格式：当前 Target 对应的 Role 自动注入，Payload 只需填写可选覆盖项。
           </div>
 
           <div class="mb-2" id="payload-wrap">
@@ -97,7 +106,7 @@
 
           <div class="d-flex gap-2">
             <button class="btn btn-sm btn-primary flex-fill" onclick="sendCommand()">发送</button>
-            <button class="btn btn-sm btn-outline-secondary" onclick="loadTemplate()" title="Load default task_create template">Load Template</button>
+            <button id="btn-load-tpl" class="btn btn-sm btn-outline-secondary" onclick="loadTemplate()" title="Load default task_create template">Load Template</button>
           </div>
         </div>
       </div>
@@ -168,7 +177,7 @@
               <tbody id="packet-tbody">
                 <tr id="empty-row">
                   <td colspan="7" class="text-center text-muted py-4" style="font-size:.85rem">
-                    等待数据…先在左侧下发 <code>task_create</code> 命令启动抓包
+                    等待数据…先在左侧下发 <code>task_start</code>（简化模式）或 <code>task_create</code>（完整配置）命令启动抓包
                   </td>
                 </tr>
               </tbody>
@@ -451,6 +460,12 @@ async function loadTemplate() {
 
 function onCommandChange() {
   const cmd = document.getElementById('sel-command').value;
+  const hint = document.getElementById('simple-cmd-hint');
+  const btnTpl = document.getElementById('btn-load-tpl');
+  const isSimple = (cmd === 'task_start' || cmd === 'task_stop');
+  hint.style.display  = isSimple ? '' : 'none';
+  btnTpl.style.display = isSimple ? 'none' : '';
+
   const defaults = {
     task_list:        '{}',
     config_reload:    '{}',
@@ -459,6 +474,8 @@ function onCommandChange() {
     daemon_shutdown:  '{}',
     task_delete:      '{\n  "task_id": "sip-uas-capture"\n}',
     task_status:      '{\n  "task_id": ""\n}',
+    task_start:       '{\n  "portRange": "",\n  "protocol": ["SIP", "RTP"]\n}',
+    task_stop:        '{}',
   };
   if (cmd in defaults) {
     document.getElementById('txt-payload').value = defaults[cmd];

@@ -4,8 +4,10 @@
 capture-agent:
   node:
     hostname: uas          # must match Kafka command `target` field (or use "*" to broadcast)
+    role: UAS              # SimpleCommand role — used by task_start / task_stop
     tags:
-      role: uas
+      datacenter: voip-simulator
+      environment: dev
 
   control:
     socket: /tmp/capture-agent.sock
@@ -39,3 +41,35 @@ capture-agent:
   log:
     level: debug
     format: text
+
+  # ── Role-based task defaults (used by task_start / SimpleCommand) ──
+  roles:
+    UAS:
+      workers: 1
+      capture:
+        name: afpacket
+        config:
+          iface: eth0
+          buffer_size_mb: 16
+          bpf_filter: ""   # auto-generated from portRange + protocol
+      decoder:
+        ip_defrag: true
+        tcp_reassembly: true
+        transport:
+          ipip: false
+        ip_reassembly:
+          timeout: 30s
+          max_fragments: 5000
+      parsers:
+        - name: sip
+          config: {}
+        - name: rtp
+          config: {}
+      processors: []
+      reporters:
+        - name: kafka
+          config:
+            topic: capture-agent-uas-logs
+            brokers:
+              - 172.20.0.30:9092
+            serialization: json

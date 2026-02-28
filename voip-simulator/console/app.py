@@ -26,24 +26,35 @@ from kafka.errors import KafkaError
 KAFKA_BROKERS = os.environ.get("KAFKA_BROKERS", "kafka:9092").split(",")
 
 COMMAND_TOPICS = {
-    "uas": "otus-uas-commands",
-    "uac": "otus-uac-commands",
+    "uas": "capture-agent-uas-commands",
+    "uac": "capture-agent-uac-commands",
 }
 DATA_TOPICS = {
-    "uas": "otus-uas-logs",
-    "uac": "otus-uac-logs",
+    "uas": "capture-agent-uas-logs",
+    "uac": "capture-agent-uac-logs",
 }
 
 # ADR-029: all nodes write command responses to a single shared topic.
-RESPONSE_TOPIC = "otus-responses"
+RESPONSE_TOPIC = "capture-agent-responses"
 
 # Unique per-console-instance ID used as Kafka consumer group_id for the
 # response topic. api.md §4: forbids sharing group_id across instances.
 INSTANCE_ID = f"webcli-{uuid.uuid4().hex[:8]}"
 
-# All supported commands (api.md §5)
+# Roles that correspond to each simulator target (used for SimpleCommand format)
+TARGET_ROLES = {
+    "uas": "UAS",
+    "uac": "UAC",
+}
+
+# Commands that use the simplified SimpleCommand Kafka format (role-based start/stop).
+# All other commands use the legacy KafkaCommand format.
+SIMPLE_COMMANDS = {"task_start", "task_stop"}
+
+# All supported commands
 VALID_COMMANDS = {
     "task_create", "task_delete", "task_list", "task_status",
+    "task_start", "task_stop",
     "config_reload", "daemon_status", "daemon_stats", "daemon_shutdown",
 }
 
@@ -350,19 +361,28 @@ def index():
 
 @app.route("/api/command", methods=["POST"])
 def api_command():
-    """Send a command to otus via Kafka and wait for the response (ADR-029).
+    """Send a command to capture-agent via Kafka and wait for the response.
+
+    For task_start / task_stop the SimpleCommand wire format is used:
+        {id, timestamp(ms), data: [{role, cmd, portRange?, protocol?}]}
+
+    For all other commands the legacy KafkaCommand format is used:
+        {version, target, command, timestamp(RFC3339), request_id, payload}
 
     Body JSON:
         target:  "uas" | "uac" | "*"
-        command: one of VALID_COMMANDS (api.md §5)
-        payload: {} (command-specific, see api.md §5)
+        command: one of VALID_COMMANDS
+        payload: {} (command-specific)
+            task_start payload fields (all optional):
+                portRange: "5060-15000"
+                protocol:  ["SIP", "RTP"]
         wait:    true (default) | false — fire-and-forget
     """
     body = request.get_json(force=True)
-    target = body.get("target", "uas")
+    target  = body.get("target", "uas")
     command = body.get("command", "task_list")
     payload = body.get("payload", {})
-    wait = body.get("wait", True)
+    wait    = body.get("wait", True)
 
     if target not in ("uas", "uac", "*"):
         return jsonify({"error": f"invalid target: {target}"}), 400
@@ -374,35 +394,66 @@ def api_command():
     # Register waiter BEFORE sending to avoid a race where the response
     # arrives before we have subscribed.
     resp_queue: queue.Queue = queue.Queue(maxsize=1)
-    if wait and target != "*":
+    effective_wait = wait and target != "*"
+    if effective_wait:
         with pending_lock:
             pending_responses[request_id] = resp_queue
 
     try:
-        msg = {
-            "version": "v1",
-            "target": target,
-            "command": command,
-            "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-            "request_id": request_id,
-            "payload": payload or {},
-        }
-        if target == "*":
-            for t in COMMAND_TOPICS.values():
-                get_producer().send(t, key=target, value=msg)
+        if command in SIMPLE_COMMANDS:
+            # ── SimpleCommand path ──
+            # Build data[] — one item per targeted role.
+            targets = list(TARGET_ROLES.keys()) if target == "*" else [target]
+            cmd_str = "START" if command == "task_start" else "STOP"
+            data = []
+            for t in targets:
+                item = {"role": TARGET_ROLES[t], "cmd": cmd_str}
+                if payload.get("portRange"):
+                    item["portRange"] = payload["portRange"]
+                if payload.get("protocol"):
+                    item["protocol"] = payload["protocol"]
+                data.append(item)
+
+            sc = {
+                "id": request_id,
+                "timestamp": int(time.time() * 1000),
+                "data": data,
+            }
+            if target == "*":
+                for t in COMMAND_TOPICS.values():
+                    get_producer().send(t, key="*", value=sc)
+            else:
+                topic = COMMAND_TOPICS[target]
+                get_producer().send(topic, key=target, value=sc)
+            get_producer().flush()
+            log.info("simple_command=%s target=%s request_id=%s wait=%s",
+                     command, target, request_id, wait)
         else:
-            topic = COMMAND_TOPICS.get(target, COMMAND_TOPICS["uas"])
-            get_producer().send(topic, key=target, value=msg)
-        get_producer().flush()
-        log.info("command=%s target=%s request_id=%s wait=%s",
-                 command, target, request_id, wait)
+            # ── Legacy KafkaCommand path ──
+            msg = {
+                "version": "v1",
+                "target": target,
+                "command": command,
+                "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "request_id": request_id,
+                "payload": payload or {},
+            }
+            if target == "*":
+                for t in COMMAND_TOPICS.values():
+                    get_producer().send(t, key=target, value=msg)
+            else:
+                topic = COMMAND_TOPICS.get(target, COMMAND_TOPICS["uas"])
+                get_producer().send(topic, key=target, value=msg)
+            get_producer().flush()
+            log.info("command=%s target=%s request_id=%s wait=%s",
+                     command, target, request_id, wait)
     except KafkaError as e:
         with pending_lock:
             pending_responses.pop(request_id, None)
         return jsonify({"error": str(e)}), 500
 
     # Broadcast or fire-and-forget — return immediately
-    if not wait or target == "*":
+    if not effective_wait:
         return jsonify({"ok": True, "request_id": request_id})
 
     # Block until KafkaResponse arrives or timeout (api.md §4)
@@ -525,6 +576,7 @@ def task_template(channel: str):
     if channel not in ("uas", "uac"):
         return jsonify({"error": "invalid channel"}), 400
     port = "5060" if channel == "uas" else "5061"
+    rtp_start = "10000" if channel == "uas" else "10100"
     task_config = {
         "id": f"sip-{channel}-capture",
         "workers": 1,
@@ -532,9 +584,13 @@ def task_template(channel: str):
             "name": "afpacket",
             "dispatch_mode": "binding",
             "interface": "eth0",
-            # Capture SIP signalling + RTP media (UAC 10100-10200, UAS 10000-10100)
-            "bpf_filter": f"udp port {port} or (udp and portrange 10000-10200)",
-            "snap_len": 65536,  # must be power-of-2 to divide default block_size (4194304)
+            # Capture SIP signalling + RTP media + IP fragments
+            "bpf_filter": (
+                f"(tcp port {port} or udp port {port} or "
+                f"udp portrange {rtp_start}-{int(rtp_start)+200}) or "
+                f"(ip[6:2] & 0x3fff != 0)"
+            ),
+            "snap_len": 65536,
         },
         "decoder": {
             "tunnels": [],
@@ -546,7 +602,7 @@ def task_template(channel: str):
             {
                 "name": "kafka",
                 "config": {
-                    "topic": f"otus-{channel}-logs",
+                    "topic": f"capture-agent-{channel}-logs",
                     "brokers": KAFKA_BROKERS,
                     "serialization": "json",
                 },
