@@ -1,4 +1,6 @@
-.PHONY: all build build-static build-all proto clean install install-systemd uninstall test run docker-build dist simulator-build
+.PHONY: all build build-static build-all proto clean install install-systemd uninstall test run \
+        docker-build dist sidecar-build simulator-build \
+        k8s-apply-dev k8s-apply-prod k8s-render-dev k8s-render-prod k8s-delete-dev k8s-delete-prod
 
 # Variables
 BINARY_NAME=capture-agent
@@ -18,6 +20,9 @@ LDFLAGS=-w -s -X 'main.Version=$(VERSION)' -X 'main.BuildTime=$(BUILD_TIME)' -X 
 BUILD_ENV_FILE ?= configs/build.env
 BUILD_ARGS := $(if $(wildcard $(BUILD_ENV_FILE)),\
 	$(shell grep -v '^\s*\#' $(BUILD_ENV_FILE) | grep -v '^\s*$$' | sed 's/^/--build-arg /'),)
+
+SIDECAR_IMAGE ?= capture-agent-sidecar
+K8S_OVERLAY    ?= dev
 
 all: proto build
 
@@ -94,6 +99,46 @@ dist: docker-build
 	@tar -czf dist/$(DIST_NAME).tar.gz -C dist $(DIST_NAME)
 	@rm -rf $(DIST_DIR)
 	@echo "Package ready: dist/$(DIST_NAME).tar.gz"
+
+# Build Kubernetes sidecar image.
+# Layers the sidecar entrypoint on top of capture-agent:latest.
+# Must run after docker-build (the base image must exist locally).
+sidecar-build: docker-build
+	@echo "Building sidecar image: $(SIDECAR_IMAGE):$(VERSION)..."
+	docker build \
+		-f Dockerfile.sidecar \
+		--build-arg BASE_IMAGE=capture-agent:latest \
+		-t $(SIDECAR_IMAGE):$(VERSION) \
+		-t $(SIDECAR_IMAGE):latest \
+		.
+	@echo "Sidecar image ready: $(SIDECAR_IMAGE):latest"
+
+# ── Kubernetes convenience targets ─────────────────────────────────────────
+# Requires: kubectl + kustomize (or kubectl >= 1.14 with built-in kustomize)
+
+k8s-render-dev:
+	@echo "--- k8s manifests (dev overlay) ---"
+	kubectl kustomize deploy/k8s/overlays/dev
+
+k8s-render-prod:
+	@echo "--- k8s manifests (prod overlay) ---"
+	kubectl kustomize deploy/k8s/overlays/prod
+
+k8s-apply-dev:
+	@echo "Applying dev overlay to cluster..."
+	kubectl apply -k deploy/k8s/overlays/dev
+
+k8s-apply-prod:
+	@echo "Applying prod overlay to cluster..."
+	kubectl apply -k deploy/k8s/overlays/prod
+
+k8s-delete-dev:
+	@echo "Deleting dev overlay from cluster..."
+	kubectl delete -k deploy/k8s/overlays/dev
+
+k8s-delete-prod:
+	@echo "Deleting prod overlay from cluster..."
+	kubectl delete -k deploy/k8s/overlays/prod
 
 # Build all voip-simulator Docker images.
 simulator-build:

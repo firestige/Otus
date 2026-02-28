@@ -244,11 +244,22 @@ capture-agent task delete sip-capture
 ### Kubernetes
 
 ```bash
-# 创建 DaemonSet（每个节点一个实例）
-kubectl apply -f docs/kubernetes/daemonset.yaml
+# 1. 构建 sidecar 镜像（需要先完成 make docker-build）
+make sidecar-build
+# 推送到内网镜像仓库后更新 deploy/k8s/overlays/prod/kustomization.yaml 的 newTag
 
-# 查看运行状态
-kubectl get pods -n monitoring -l app=capture-agent
+# 2. 编辑对应环境的 config（Kafka 地址等）
+vim deploy/k8s/overlays/dev/configs/config.yml
+
+# 3. 预览 / 部署
+make k8s-render-dev       # 预览清单（不执行）
+make k8s-apply-dev        # 部署到集群
+
+# 4. 标记节点启用采集
+kubectl label node <node-name> capture-agent-enabled=true
+
+# 5. 查看运行状态
+kubectl get pods -n monitoring -l app.kubernetes.io/name=capture-agent -o wide
 ```
 
 详见[K8s 部署指南](doc/DEPLOYMENT.md#kubernetes-部署)
@@ -328,11 +339,17 @@ capture-agent/
 │   └── reporter/            # 上报插件
 │       ├── kafka/           # Kafka Producer
 │       └── console/         # 控制台调试输出
-├── scripts/                  # 构建脚本
-│   └── build.sh             # 交叉编译脚本
+├── scripts/                  # 构建 / 安装脚本
+│   ├── build.sh             # 交叉编译脚本
+│   └── setup.sh             # 目标机器安装脚本（dist 包内）
+├── deploy/                   # 部署清单
+│   └── k8s/                 # Kubernetes (Kustomize)
+│       ├── base/            # 基础资源（DaemonSet, SA, Service...）
+│       └── overlays/        # 环境覆盖层
+│           ├── dev/         # 开发环境
+│           └── prod/        # 生产环境
 ├── doc/                      # 文档
 │   ├── architecture.md      # 架构设计
-│   ├── config-design.md     # 配置设计
 │   ├── decisions.md         # ADR 决策记录
 │   ├── implementation-plan.md # 实施计划
 │   └── DEPLOYMENT.md        # 部署指南
@@ -340,9 +357,10 @@ capture-agent/
 │   ├── docker-compose.yml   # 编排所有服务
 │   ├── uas/                 # SIPp UAS（被叫方）
 │   ├── uac/                 # SIPp UAC（主叫方）
-│   ├── otus/                # capture-agent sidecar 容器
+│   ├── capture/             # capture-agent sidecar 容器
 │   └── console/             # Web 控制台（任务下发 + 实时查看）
-├── Dockerfile               # 静态构建镜像
+├── Dockerfile               # 裸金属/VM 构建镜像（centos:7）
+├── Dockerfile.sidecar       # Kubernetes sidecar 镜像（基于上一个）
 ├── Makefile                 # 构建任务
 ├── go.mod                   # Go 模块定义
 └── main.go                  # 程序入口

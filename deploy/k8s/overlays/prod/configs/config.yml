@@ -1,0 +1,49 @@
+capture-agent:
+  node:
+    hostname: ""       # auto-detected from host; DaemonSet uses node hostname
+    role: ""
+    tags:
+      env: prod
+
+  control:
+    socket: /tmp/capture-agent.sock
+    pid_file: /tmp/capture-agent.pid
+
+  metrics:
+    enabled: true
+    listen: :9091
+    path: /metrics
+
+  kafka:
+    brokers:
+      - kafka-broker-0.kafka.kafka.svc.cluster.local:9092    # replace with prod brokers
+      - kafka-broker-1.kafka.kafka.svc.cluster.local:9092
+      - kafka-broker-2.kafka.kafka.svc.cluster.local:9092
+
+  command_channel:
+    enabled: true
+    type: kafka
+    command_ttl: 5m
+    kafka:
+      topic: capture-agent-commands
+      response_topic: capture-agent-responses
+      group_id: ""                              # set per-node at runtime
+      auto_offset_reset: latest
+
+  reporters:
+    kafka:
+      compression: snappy
+      max_message_bytes: 1048576
+
+  log:
+    level: info
+    format: json
+    outputs:
+      file:
+        enabled: true
+        path: /var/log/capture-agent/capture-agent.log
+        rotation:
+          max_size_mb: 100
+          max_age_days: 7
+          max_backups: 5
+          compress: true

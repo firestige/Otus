@@ -48,12 +48,17 @@ make build-all
 #### 方式 2: 使用 Docker 构建
 
 ```bash
-# 多架构构建
+# 构建当前架构镜像
 make docker-build
 
-# 提取静态二进制
-make docker-extract
-# 输出: ./capture-agent-static
+# 打包分发制品（用于裸金属/VM部署）
+make dist
+# 输出: dist/capture-agent-{version}-linux-{arch}.tar.gz
+
+# 构建 Kubernetes sidecar 镜像（本地 Docker 中可用）
+make sidecar-build
+# 输出: capture-agent-sidecar:latest
+# 推送到私仓后可在 k8s 中使用
 ```
 
 #### 方式 3: 下载预编译二进制（TODO）
@@ -208,234 +213,136 @@ capture-agent task stop sip-capture-01
 
 ## Kubernetes 部署
 
-### 部署架构选择
+### 快速部署
+
+仓库内置了基于 [Kustomize](https://kustomize.io/) 的 k8s 清单，位于 `deploy/k8s/`：
+
+```
+deploy/k8s/
+├── base/                    # 基础资源（Namespace, SA, ConfigMap, DaemonSet, Service）
+│   ├── kustomization.yaml
+│   ├── namespace.yaml
+│   ├── serviceaccount.yaml
+│   ├── configmap.yaml
+│   ├── daemonset.yaml
+│   └── service.yaml
+└── overlays/
+    ├── dev/                 # 开发环境（低资源、debug 日志）
+    │   ├── kustomization.yaml
+    │   └── configs/config.yml
+    └── prod/                # 生产环境（Nexus 镜像仓库、Snappy 压缩）
+        ├── kustomization.yaml
+        └── configs/config.yml
+```
+
+#### 1. 构建并推送 sidecar 镜像
+
+```bash
+# 编译 + 打包 sidecar 镜像
+make sidecar-build
+
+# 推送到内网镜像仓库
+docker tag capture-agent-sidecar:latest registry.example.com/infra/capture-agent-sidecar:1.0.0
+docker push registry.example.com/infra/capture-agent-sidecar:1.0.0
+```
+
+然后在 `deploy/k8s/overlays/prod/kustomization.yaml` 中更新 `images.newName` 和 `newTag`。
+
+#### 2. 配置 overlay
+
+编辑对应环境的 `configs/config.yml`，修改 Kafka Broker 地址、topic 等：
+
+```bash
+vim deploy/k8s/overlays/prod/configs/config.yml
+```
+
+#### 3. 预览生成的清单
+
+```bash
+# 预览（不实际部署）
+make k8s-render-dev
+make k8s-render-prod
+# 或直接：kubectl kustomize deploy/k8s/overlays/prod
+```
+
+#### 4. 部署
+
+```bash
+# 开发环境
+make k8s-apply-dev
+
+# 生产环境
+make k8s-apply-prod
+
+# 等效命令
+kubectl apply -k deploy/k8s/overlays/prod
+```
+
+#### 5. 验证
+
+```bash
+# 标记节点（只在贴了此标签的节点上运行）
+kubectl label node <node-name> capture-agent-enabled=true
+
+# 查看 Pod 状态
+kubectl get pods -n monitoring -l app.kubernetes.io/name=capture-agent -o wide
+
+# 查看日志
+kubectl logs -n monitoring -l app.kubernetes.io/name=capture-agent --tail=100 -f
+
+# 验证 Prometheus 指标
+kubectl exec -n monitoring \
+  $(kubectl get pod -n monitoring -l app.kubernetes.io/name=capture-agent -o name | head -1) \
+  -- curl -s localhost:9091/metrics | head -20
+```
+
+#### 6. 卸载
+
+```bash
+make k8s-delete-prod
+# 或：kubectl delete -k deploy/k8s/overlays/prod
+```
+
+---
+
+### 部署架构
 
 #### 方案 A: DaemonSet（推荐）
 
-每个节点运行一个 capture-agent 实例，抓取该节点的流量。
+每个节点运行一个 capture-agent 实例，抓取该节点的全部流量：
 
-```yaml
-# daemonset-capture-agent.yaml
-apiVersion: apps/v1
-kind: DaemonSet
-metadata:
-  name: capture-agent
-  namespace: monitoring
-  labels:
-    app: capture-agent
-spec:
-  selector:
-    matchLabels:
-      app: capture-agent
-  template:
-    metadata:
-      labels:
-        app: capture-agent
-    spec:
-      # 使用宿主机网络（必需）
-      hostNetwork: true
-      hostPID: true
-      
-      # 节点选择器（可选）
-      nodeSelector:
-        capture-agent-enabled: "true"
-      
-      # 容忍度（可选）
-      tolerations:
-      - key: node-role.kubernetes.io/master
-        effect: NoSchedule
-      
-      containers:
-      - name: capture-agent
-        image: capture-agent:latest
-        imagePullPolicy: IfNotPresent
-        
-        # 运行命令
-        command: ["/capture-agent"]
-        args: ["daemon"]
-        
-        # 安全上下文（必需）
-        securityContext:
-          privileged: true
-          capabilities:
-            add:
-            - NET_RAW
-            - NET_ADMIN
-            - SYS_ADMIN
-        
-        # 资源限制
-        resources:
-          requests:
-            memory: "512Mi"
-            cpu: "500m"
-          limits:
-            memory: "2Gi"
-            cpu: "2000m"
-        
-        # 配置挂载
-        volumeMounts:
-        - name: config
-          mountPath: /etc/capture-agent
-          readOnly: true
-        - name: data
-          mountPath: /var/lib/capture-agent
-        
-        # 环境变量
-        env:
-        - name: NODE_NAME
-          valueFrom:
-            fieldRef:
-              fieldPath: spec.nodeName
-        - name: POD_NAMESPACE
-          valueFrom:
-            fieldRef:
-              fieldPath: metadata.namespace
-        
-        # 健康检查
-        livenessProbe:
-          exec:
-            command:
-            - /bin/sh
-            - -c
-            - "test -e /tmp/capture-agent.pid && kill -0 $(cat /tmp/capture-agent.pid)"
-          initialDelaySeconds: 30
-          periodSeconds: 30
-        
-        readinessProbe:
-          tcpSocket:
-            port: 9091  # Prometheus metrics port
-          initialDelaySeconds: 10
-          periodSeconds: 10
-      
-      volumes:
-      - name: config
-        configMap:
-          name: capture-agent-config
-      - name: data
-        hostPath:
-          path: /var/lib/capture-agent
-          type: DirectoryOrCreate
-```
+- `hostNetwork: true` — Pod 使用宿主机网络命名空间，可见所有节点网卡
+- `nodeSelector: capture-agent-enabled=true` — 仅在打了标签的节点部署
+- Capabilities: `CAP_NET_RAW + CAP_NET_ADMIN`（不需要 `privileged: true`）
+- ConfigMap 挂载到 `/etc/capture-agent/config.yml`
+- 数据目录 `/var/lib/capture-agent` 通过 `hostPath` 持久化
 
-#### 方案 B: 特定 Pod 部署
+#### 方案 B: 单节点 Deployment
 
-在特定节点运行单个实例（适用于测试或特定用途）。
+适合测试或指定节点场景，修改 `daemonset.yaml` 的 `kind: DaemonSet` → `kind: Deployment` 并添加 `replicas: 1`。
 
-```yaml
-# deployment-capture-agent.yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: capture-agent
-  namespace: monitoring
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: capture-agent
-  template:
-    metadata:
-      labels:
-        app: capture-agent
-    spec:
-      hostNetwork: true
-      
-      # 固定节点
-      nodeSelector:
-        kubernetes.io/hostname: worker-node-01
-      
-      containers:
-      - name: capture-agent
-        image: capture-agent:latest
-        securityContext:
-          privileged: true
-          capabilities:
-            add: ["NET_RAW", "NET_ADMIN"]
-        
-        volumeMounts:
-        - name: config
-          mountPath: /etc/capture-agent
-        
-      volumes:
-      - name: config
-        configMap:
-          name: capture-agent-config
-```
-
-### 配置 ConfigMap
-
-```yaml
-# configmap-capture-agent.yaml
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: capture-agent-config
-  namespace: monitoring
-data:
-  config.yml: |
-    capture-agent:
-      node:
-        hostname: ""  # 空 = 自动探测
-        tags:
-          env: production
-      control:
-        socket: /var/run/capture-agent.sock
-        pid_file: /var/run/capture-agent.pid
-      kafka:
-        brokers:
-          - kafka.kafka.svc.cluster.local:9092
-      command_channel:
-        enabled: true
-        type: kafka
-        kafka:
-          topic: capture-agent-commands
-          response_topic: capture-agent-responses
-          group_id: capture-agent-$(NODE_NAME)
-          auto_offset_reset: latest
-      metrics:
-        enabled: true
-        listen: :9091
-        path: /metrics
-      log:
-        level: info
-        format: json
-        outputs:
-          file:
-            enabled: true
-            path: /var/log/capture-agent/capture-agent.log
-            rotation:
-              max_size_mb: 100
-              max_age_days: 7
-              max_backups: 5
-              compress: true
-```
-
-### 部署步骤
-
-```bash
-# 1. 创建命名空间
-kubectl create namespace monitoring
-
-# 2. 创建 ConfigMap
-kubectl apply -f configmap-capture-agent.yaml
-
-# 3. 部署 DaemonSet
-kubectl apply -f daemonset-capture-agent.yaml
-
-# 4. 查看 Pod 状态
-kubectl get pods -n monitoring -l app=capture-agent -o wide
-
-# 5. 查看日志
-kubectl logs -n monitoring -l app=capture-agent --tail=100 -f
-
-# 6. 验证指标
-kubectl exec -n monitoring -it $(kubectl get pod -n monitoring -l app=capture-agent -o name | head -1) -- curl localhost:9091/metrics
-```
+---
 
 ### Prometheus 集成
 
+`base/service.yaml` 部署了一个 Headless Service（`clusterIP: None`），Prometheus 可通过以下方式发现所有 Pod：
+
 ```yaml
-# servicemonitor-capture-agent.yaml
+# prometheus scrape config（添加到 prometheus.yml）
+- job_name: capture-agent
+  kubernetes_sd_configs:
+    - role: endpoints
+      namespaces:
+        names: [monitoring]
+  relabel_configs:
+    - source_labels: [__meta_kubernetes_service_name]
+      action: keep
+      regex: capture-agent-metrics
+```
+
+如果集群安装了 Prometheus Operator，可以额外添加 ServiceMonitor：
+
+```yaml
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:
@@ -444,47 +351,22 @@ metadata:
 spec:
   selector:
     matchLabels:
-      app: capture-agent
+      app.kubernetes.io/name: capture-agent
   endpoints:
-  - port: metrics
-    interval: 30s
-    path: /metrics
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: capture-agent-metrics
-  namespace: monitoring
-  labels:
-    app: capture-agent
-spec:
-  type: ClusterIP
-  clusterIP: None
-  selector:
-    app: capture-agent
-  ports:
-  - name: metrics
-    port: 9091
-    targetPort: 9091
+    - port: metrics
+      interval: 30s
+      path: /metrics
 ```
+
+---
 
 ### 重要注意事项
 
-1. **hostNetwork: true 是必需的**
-   - Pod 需要访问宿主机网卡
-   - 抓取宿主机和其他 Pod 的流量
-
-2. **privileged: true 或特定 Capabilities**
-   - 最小权限: `CAP_NET_RAW` + `CAP_NET_ADMIN`
-   - 简化方式: `privileged: true`
-
-3. **网络策略**
-   - 确保 capture-agent Pod 可以访问 Kafka
-   - 确保 Prometheus 可以抓取 metrics 端点
-
-4. **节点选择**
-   - 使用 nodeSelector/affinity 控制部署位置
-   - 避免在不需要的节点运行
+1. **`hostNetwork: true` 是必须的** — Pod 需要直接访问宿主机网卡抓包
+2. **Capabilities** — 最小权限方案: `CAP_NET_RAW + CAP_NET_ADMIN`；如 PSP/SCC 不允许，改用 `privileged: true`
+3. **节点标签** — 默认只在 `capture-agent-enabled=true` 节点上运行，移除 `nodeSelector` 可全量铺开
+4. **网络策略** — 确保 capture-agent Pod 可以访问 Kafka、Prometheus 可以访问 9091 端口
+5. **镜像仓库** — 生产环境将 `overlays/prod/kustomization.yaml` 中的 `newName`/`newTag` 改为内网仓库地址
 
 ---
 

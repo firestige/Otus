@@ -1,0 +1,33 @@
+# syntax=docker/dockerfile:1
+# Dockerfile.sidecar — capture-agent Kubernetes sidecar image
+#
+# Layered on top of capture-agent:latest (produced by: make docker-build).
+# The sidecar image:
+#   • inherits the same binary, libpcap.so, and centos:7 runtime
+#   • adds a config-file-aware entrypoint.sh
+#   • expects the caller to mount a ConfigMap at /etc/capture-agent/config.yml
+#
+# Build:
+#   make sidecar-build
+# Or directly:
+#   docker build -f Dockerfile.sidecar -t capture-agent-sidecar:latest .
+
+ARG BASE_IMAGE=capture-agent:latest
+FROM ${BASE_IMAGE}
+
+# Sidecar entrypoint: reads CONFIG_FILE env var (default /etc/capture-agent/config.yml)
+# and launches the daemon.  This is intentionally separate from the bare-metal
+# ENTRYPOINT so the two images can evolve independently.
+COPY voip-simulator/capture/entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+# Ensure config / data / log directories exist
+RUN mkdir -p /etc/capture-agent /var/lib/capture-agent /var/log/capture-agent
+
+# The config is expected to be injected by a ConfigMap volumeMount.
+# A default config file is still available at /config.yml (from the base image)
+# and can be used as a reference.
+
+EXPOSE 9091/tcp
+
+ENTRYPOINT ["/entrypoint.sh"]

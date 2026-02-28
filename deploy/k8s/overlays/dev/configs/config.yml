@@ -1,0 +1,38 @@
+capture-agent:
+  node:
+    hostname: ""       # auto-detected from host; DaemonSet uses node hostname
+    role: ""           # set per node via patch if needed
+    tags:
+      env: dev
+
+  control:
+    socket: /tmp/capture-agent.sock
+    pid_file: /tmp/capture-agent.pid
+
+  metrics:
+    enabled: true
+    listen: :9091
+    path: /metrics
+
+  kafka:
+    brokers:
+      - kafka.default.svc.cluster.local:9092    # replace with your dev Kafka
+
+  command_channel:
+    enabled: true
+    type: kafka
+    command_ttl: 5m
+    kafka:
+      topic: capture-agent-commands-dev
+      response_topic: capture-agent-responses-dev
+      group_id: ""                              # set per-node at runtime
+      auto_offset_reset: latest
+
+  reporters:
+    kafka:
+      compression: none
+      max_message_bytes: 1048576
+
+  log:
+    level: debug
+    format: text                                # human-readable for dev

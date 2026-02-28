@@ -1,0 +1,39 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: monitoring
+
+resources:
+  - ../../base
+
+# Dev image — point to locally built image (no registry push required)
+images:
+  - name: capture-agent-sidecar
+    newTag: latest
+
+# Replace the base ConfigMap with dev-specific settings.
+configMapGenerator:
+  - name: capture-agent-config
+    behavior: replace
+    files:
+      - config.yml=configs/config.yml
+
+# Adjust resource limits downward for dev clusters
+patches:
+  - target:
+      kind: DaemonSet
+      name: capture-agent
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/nodeSelector
+        value:
+          capture-agent-enabled: "true"
+      - op: replace
+        path: /spec/template/spec/containers/0/resources
+        value:
+          requests:
+            cpu: "100m"
+            memory: "256Mi"
+          limits:
+            cpu: "500m"
+            memory: "512Mi"

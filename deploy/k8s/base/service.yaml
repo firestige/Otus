@@ -1,0 +1,21 @@
+# Headless Service — lets Prometheus and other consumers discover capture-agent
+# pods by label selector without load-balancing.
+apiVersion: v1
+kind: Service
+metadata:
+  name: capture-agent-metrics
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: capture-agent
+    app.kubernetes.io/component: metrics
+spec:
+  # Headless: each pod IP is returned in DNS; no cluster VIP created.
+  # Required for Prometheus federation / per-node scrape.
+  clusterIP: None
+  selector:
+    app.kubernetes.io/name: capture-agent
+  ports:
+    - name: metrics
+      port: 9091
+      targetPort: 9091
+      protocol: TCP

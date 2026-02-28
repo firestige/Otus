@@ -1,0 +1,57 @@
+# capture-agent ConfigMap — base template
+# Override this in an overlay by replacing the config.yml key.
+#
+# Key variables to set per environment:
+#   node.hostname   — unique identifier for this agent (or leave empty to use Pod name)
+#   kafka.brokers   — Kafka bootstrap servers
+#   command_channel.kafka.topic — Kafka topic for incoming control commands
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: capture-agent-config
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: capture-agent
+data:
+  config.yml: |
+    capture-agent:
+      node:
+        hostname: ""      # auto-detected from Pod spec (see downwardAPI in DaemonSet)
+        role: ""          # set in overlay (e.g., GATEWAY, CORE, EDGE)
+        tags:
+          env: base
+
+      control:
+        socket: /tmp/capture-agent.sock
+        pid_file: /tmp/capture-agent.pid
+
+      metrics:
+        enabled: true
+        listen: :9091
+        path: /metrics
+
+      kafka:
+        brokers:
+          - kafka.default.svc.cluster.local:9092   # override in overlay
+
+      command_channel:
+        enabled: true
+        type: kafka
+        command_ttl: 5m
+        kafka:
+          topic: capture-agent-commands    # override in overlay
+          response_topic: capture-agent-responses
+          group_id: ""                     # defaults to node.hostname at runtime
+          auto_offset_reset: latest
+
+      reporters:
+        kafka:
+          compression: snappy
+          max_message_bytes: 1048576
+
+      log:
+        level: info
+        format: json
+        outputs:
+          file:
+            enabled: false

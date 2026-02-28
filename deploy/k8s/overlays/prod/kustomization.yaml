@@ -1,0 +1,39 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: monitoring
+
+resources:
+  - ../../base
+
+# Production image — pin to an explicit registry and immutable tag.
+# Replace the registry/tag with your internal image registry value.
+images:
+  - name: capture-agent-sidecar
+    newName: registry.example.com/infra/capture-agent-sidecar
+    newTag: "1.0.0"                   # pin to a specific release tag
+
+# Replace the base ConfigMap with prod settings.
+configMapGenerator:
+  - name: capture-agent-config
+    behavior: replace
+    files:
+      - config.yml=configs/config.yml
+
+patches:
+  - target:
+      kind: DaemonSet
+      name: capture-agent
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/imagePullPolicy
+        value: IfNotPresent
+      - op: replace
+        path: /spec/template/spec/containers/0/resources
+        value:
+          requests:
+            cpu: "500m"
+            memory: "512Mi"
+          limits:
+            cpu: "2000m"
+            memory: "2Gi"
