@@ -78,10 +78,10 @@ make docker-extract
 [registry."docker.io"]
   mirrors = ["nexus.corp"]          # 替换为 Nexus Docker proxy 主机名
 
-# 若 Nexus 使用 HTTP（无 TLS），需额外声明：
-# [registry."nexus.corp"]
-#   http = true
-#   insecure = true
+# Nexus 使用 HTTP（无 TLS），必须声明以下节：
+[registry."nexus.corp"]             # 与 mirrors 中的主机名保持一致
+  http = true
+  insecure = true
 ```
 
 配置完成后，创建或重建 builder（**每次修改 `buildkitd.toml` 后都需要重建**）：

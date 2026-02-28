@@ -28,7 +28,6 @@
 [registry."docker.io"]
   mirrors = ["<NEXUS_HOST>"]
 
-# Uncomment and fill in if the Nexus Docker proxy serves plain HTTP:
-# [registry."<NEXUS_HOST>"]
-#   http = true
-#   insecure = true
+[registry."<NEXUS_HOST>"]
+  http = true
+  insecure = true
