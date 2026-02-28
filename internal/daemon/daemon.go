@@ -138,6 +138,15 @@ func (d *Daemon) Start() error {
 		close(d.shutdownChan)
 	})
 
+	// Wire role info so SimpleCommand handlers know which role this agent plays.
+	if d.config.Node.Role != "" {
+		roleConfig := d.config.Roles[d.config.Node.Role]
+		d.cmdHandler.SetAgentInfo(d.config.Node.Role, roleConfig)
+		slog.Info("agent role configured", "role", d.config.Node.Role)
+	} else {
+		slog.Warn("capture-agent.node.role is not set; task_start/task_stop commands will be unavailable")
+	}
+
 	// 7. Start UDS server for CLI control
 	d.udsServer = command.NewUDSServer(d.socketPath, d.cmdHandler)
 	go func() {
@@ -342,6 +351,7 @@ func (d *Daemon) startKafkaConsumer() error {
 	consumer, err := command.NewKafkaCommandConsumer(
 		d.config.CommandChannel,
 		d.config.Node.Hostname,
+		d.config.Node.Role,
 		d.cmdHandler,
 	)
 	if err != nil {

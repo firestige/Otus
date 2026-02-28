@@ -75,7 +75,7 @@ func TestNewKafkaCommandConsumer(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			consumer, err := NewKafkaCommandConsumer(tt.config, "test-node", handler)
+			consumer, err := NewKafkaCommandConsumer(tt.config, "test-node", "", handler)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("NewKafkaCommandConsumer() error = %v, wantErr %v", err, tt.wantErr)
 				return
@@ -97,7 +97,7 @@ func TestKafkaCommandConsumer_TTLParsing(t *testing.T) {
 	cc := validCCConfig()
 	cc.CommandTTL = "10m"
 
-	consumer, err := NewKafkaCommandConsumer(cc, "test-node", handler)
+	consumer, err := NewKafkaCommandConsumer(cc, "test-node", "", handler)
 	if err != nil {
 		t.Fatalf("NewKafkaCommandConsumer() failed: %v", err)
 	}
@@ -115,7 +115,7 @@ func TestKafkaCommandConsumer_InvalidTTL(t *testing.T) {
 	cc := validCCConfig()
 	cc.CommandTTL = "not-a-duration"
 
-	_, err := NewKafkaCommandConsumer(cc, "test-node", handler)
+	_, err := NewKafkaCommandConsumer(cc, "test-node", "", handler)
 	if err == nil {
 		t.Fatal("expected error for invalid TTL")
 	}
@@ -125,7 +125,7 @@ func TestKafkaCommandConsumer_StartStop(t *testing.T) {
 	tm := task.NewTaskManager("test-agent", nil)
 	handler := NewCommandHandler(tm, nil)
 
-	consumer, err := NewKafkaCommandConsumer(validCCConfig(), "test-node", handler)
+	consumer, err := NewKafkaCommandConsumer(validCCConfig(), "test-node", "", handler)
 	if err != nil {
 		t.Fatalf("NewKafkaCommandConsumer() failed: %v", err)
 	}
@@ -158,7 +158,7 @@ func newTestConsumer(t *testing.T, hostname string) *KafkaCommandConsumer {
 	t.Helper()
 	tm := task.NewTaskManager("test-agent", nil)
 	handler := NewCommandHandler(tm, nil)
-	consumer, err := NewKafkaCommandConsumer(validCCConfig(), hostname, handler)
+	consumer, err := NewKafkaCommandConsumer(validCCConfig(), hostname, "", handler)
 	if err != nil {
 		t.Fatalf("NewKafkaCommandConsumer: %v", err)
 	}
@@ -330,7 +330,7 @@ func TestNewKafkaCommandConsumer_WriterCreatedWhenResponseTopicSet(t *testing.T)
 	tm := task.NewTaskManager("test-agent", nil)
 	handler := NewCommandHandler(tm, nil)
 
-	consumer, err := NewKafkaCommandConsumer(ccConfigWithResponseTopic(), "node-01", handler)
+	consumer, err := NewKafkaCommandConsumer(ccConfigWithResponseTopic(), "node-01", "", handler)
 	if err != nil {
 		t.Fatalf("NewKafkaCommandConsumer: %v", err)
 	}
@@ -345,7 +345,7 @@ func TestNewKafkaCommandConsumer_WriterNilWhenResponseTopicEmpty(t *testing.T) {
 	tm := task.NewTaskManager("test-agent", nil)
 	handler := NewCommandHandler(tm, nil)
 
-	consumer, err := NewKafkaCommandConsumer(validCCConfig(), "node-01", handler)
+	consumer, err := NewKafkaCommandConsumer(validCCConfig(), "node-01", "", handler)
 	if err != nil {
 		t.Fatalf("NewKafkaCommandConsumer: %v", err)
 	}

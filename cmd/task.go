@@ -81,8 +81,39 @@ If no task-id is provided, shows status of all tasks.`,
 	},
 }
 
+// taskStartCmd represents the simplified task start command
+var taskStartCmd = &cobra.Command{
+	Use:   "start",
+	Short: "Start the default capture task for this agent's role",
+	Long: `Start the default packet capture task using the agent's configured role.
+
+The task configuration is derived from the agent's role defaults and
+the roles section in the local config file.  Optional flags override
+only the specified fields.
+
+Examples:
+  capture-agent task start
+  capture-agent task start --port-range 10000-60000
+  capture-agent task start --protocol SIP --protocol RTP`,
+	Run: func(cmd *cobra.Command, args []string) {
+		runTaskStart(cmd)
+	},
+}
+
+// taskStopCmd represents the simplified task stop command
+var taskStopCmd = &cobra.Command{
+	Use:   "stop",
+	Short: "Stop the default capture task for this agent's role",
+	Long:  `Stop and remove the default packet capture task started via 'task start'.`,
+	Run: func(cmd *cobra.Command, args []string) {
+		runTaskStop()
+	},
+}
+
 var (
 	taskConfigFile string
+	taskStartPortRange string
+	taskStartProtocols []string
 )
 
 func init() {
@@ -91,11 +122,19 @@ func init() {
 	taskCmd.AddCommand(taskDeleteCmd)
 	taskCmd.AddCommand(taskListCmd)
 	taskCmd.AddCommand(taskStatusCmd)
+	taskCmd.AddCommand(taskStartCmd)
+	taskCmd.AddCommand(taskStopCmd)
 
 	// Flags for task create
 	taskCreateCmd.Flags().StringVarP(&taskConfigFile, "file", "f", "",
 		"task configuration file (JSON or YAML) (required)")
 	taskCreateCmd.MarkFlagRequired("file")
+
+	// Flags for task start
+	taskStartCmd.Flags().StringVarP(&taskStartPortRange, "port-range", "p", "",
+		"override port range (e.g. 10000-60000)")
+	taskStartCmd.Flags().StringArrayVarP(&taskStartProtocols, "protocol", "P", nil,
+		"override protocol list (e.g. --protocol SIP --protocol RTP)")
 }
 
 func runTaskCreate(cmd *cobra.Command) {
@@ -203,5 +242,52 @@ func runTaskStatus(taskID string) {
 		exitWithError("failed to format result", err)
 	}
 
+	fmt.Println(string(resultJSON))
+}
+
+func runTaskStart(cmd *cobra.Command) {
+	client := command.NewUDSClient(socketPath, 30*time.Second)
+	ctx := context.Background()
+
+	var portRangePtr *string
+	if taskStartPortRange != "" {
+		portRangePtr = &taskStartPortRange
+	}
+
+	fmt.Println("Starting default capture task...")
+	resp, err := client.TaskStart(ctx, portRangePtr, taskStartProtocols)
+	if err != nil {
+		exitWithError("failed to send task_start command", err)
+	}
+
+	if resp.Error != nil {
+		exitWithError(fmt.Sprintf("task_start failed: %s", resp.Error.Message), nil)
+	}
+
+	resultJSON, err := json.MarshalIndent(resp.Result, "", "  ")
+	if err != nil {
+		exitWithError("failed to format result", err)
+	}
+	fmt.Println(string(resultJSON))
+}
+
+func runTaskStop() {
+	client := command.NewUDSClient(socketPath, 10*time.Second)
+	ctx := context.Background()
+
+	fmt.Println("Stopping default capture task...")
+	resp, err := client.TaskStop(ctx)
+	if err != nil {
+		exitWithError("failed to send task_stop command", err)
+	}
+
+	if resp.Error != nil {
+		exitWithError(fmt.Sprintf("task_stop failed: %s", resp.Error.Message), nil)
+	}
+
+	resultJSON, err := json.MarshalIndent(resp.Result, "", "  ")
+	if err != nil {
+		exitWithError("failed to format result", err)
+	}
 	fmt.Println(string(resultJSON))
 }

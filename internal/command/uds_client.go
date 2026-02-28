@@ -143,6 +143,30 @@ func (c *UDSClient) DaemonStats(ctx context.Context) (*Response, error) {
 	return c.Call(ctx, "daemon_stats", nil)
 }
 
+// TaskStartParams holds optional overrides for the task_start command (UDS CLI path).
+type TaskStartParams struct {
+	PortRange *string  `json:"port_range,omitempty"`
+	Protocol  []string `json:"protocol,omitempty"`
+}
+
+// TaskStart starts the default capture task for the agent's configured role.
+// portRange and protocol are optional overrides; pass nil/nil to use role defaults.
+func (c *UDSClient) TaskStart(ctx context.Context, portRange *string, protocol []string) (*Response, error) {
+	var params interface{}
+	if portRange != nil || len(protocol) > 0 {
+		params = TaskStartParams{
+			PortRange: portRange,
+			Protocol:  protocol,
+		}
+	}
+	return c.Call(ctx, "task_start", params)
+}
+
+// TaskStop stops and removes the default capture task for the agent's configured role.
+func (c *UDSClient) TaskStop(ctx context.Context) (*Response, error) {
+	return c.Call(ctx, "task_stop", nil)
+}
+
 // Ping sends a simple ping command to check if daemon is alive.
 // This is a convenience wrapper around task.list.
 func (c *UDSClient) Ping(ctx context.Context) error {

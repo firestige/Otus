@@ -25,6 +25,24 @@ type GlobalConfig struct {
 	Log              LogConfig              `mapstructure:"log"`
 	DataDir          string                 `mapstructure:"data_dir"`           // ADR-030: /var/lib/capture-agent
 	TaskPersistence  TaskPersistenceConfig  `mapstructure:"task_persistence"`   // ADR-030/031
+	Roles            map[string]RoleConfig  `mapstructure:"roles"`              // Per-role TaskConfig templates for SimpleCommand
+}
+
+// ─── Role Configuration ───
+
+// RoleConfig is a TaskConfig template for a specific agent role.
+// When a SimpleCommand is received that matches the agent's local role,
+// this config is used as the base — SimpleCommand fields (portRange/protocol)
+// override the BPF filter and parsers derived from this template.
+// The interface, workers, reporters etc. must be configured here since
+// SimpleCommand only carries portRange and protocol.
+type RoleConfig struct {
+	Workers    int                 `mapstructure:"workers"`
+	Capture    CaptureConfig       `mapstructure:"capture"`
+	Decoder    DecoderConfig       `mapstructure:"decoder"`
+	Parsers    []ParserConfig      `mapstructure:"parsers"`
+	Processors []ProcessorConfig   `mapstructure:"processors"`
+	Reporters  []ReporterConfig    `mapstructure:"reporters"`
 }
 
 // ─── Node Identity ───
@@ -33,6 +51,7 @@ type GlobalConfig struct {
 type NodeConfig struct {
 	IP       string            `mapstructure:"ip"`       // Empty = auto-detect (ADR-023)
 	Hostname string            `mapstructure:"hostname"` // Empty = os.Hostname()
+	Role     string            `mapstructure:"role"`     // Local agent role: ASBC | FS | KAMAILIO | TRACEMEDIA
 	Tags     map[string]string `mapstructure:"tags"`
 }
 

@@ -12,14 +12,14 @@ import (
 
 // TaskConfig represents dynamic per-task configuration.
 type TaskConfig struct {
-	ID              string                `json:"id" yaml:"id"`
-	Workers         int                   `json:"workers" yaml:"workers"`
-	Capture         CaptureConfig         `json:"capture" yaml:"capture"`
-	Decoder         DecoderConfig         `json:"decoder" yaml:"decoder"`
-	Parsers         []ParserConfig        `json:"parsers" yaml:"parsers"`
-	Processors      []ProcessorConfig     `json:"processors" yaml:"processors"`
-	Reporters       []ReporterConfig      `json:"reporters" yaml:"reporters"`
-	ChannelCapacity ChannelCapacityConfig `json:"channel_capacity" yaml:"channel_capacity"`
+	ID              string                `json:"id" yaml:"id" mapstructure:"id"`
+	Workers         int                   `json:"workers" yaml:"workers" mapstructure:"workers"`
+	Capture         CaptureConfig         `json:"capture" yaml:"capture" mapstructure:"capture"`
+	Decoder         DecoderConfig         `json:"decoder" yaml:"decoder" mapstructure:"decoder"`
+	Parsers         []ParserConfig        `json:"parsers" yaml:"parsers" mapstructure:"parsers"`
+	Processors      []ProcessorConfig     `json:"processors" yaml:"processors" mapstructure:"processors"`
+	Reporters       []ReporterConfig      `json:"reporters" yaml:"reporters" mapstructure:"reporters"`
+	ChannelCapacity ChannelCapacityConfig `json:"channel_capacity" yaml:"channel_capacity" mapstructure:"channel_capacity"`
 }
 
 // ChannelCapacityConfig allows tuning internal channel buffer sizes.
@@ -31,13 +31,13 @@ type ChannelCapacityConfig struct {
 
 // CaptureConfig contains capture plugin configuration.
 type CaptureConfig struct {
-	Name             string         `json:"name" yaml:"name"`
-	DispatchMode     string         `json:"dispatch_mode" yaml:"dispatch_mode"`
-	DispatchStrategy string         `json:"dispatch_strategy" yaml:"dispatch_strategy"` // "flow-hash" (default), "round-robin"
-	Interface        string         `json:"interface" yaml:"interface"`
-	BPFFilter        string         `json:"bpf_filter" yaml:"bpf_filter"`
-	SnapLen          int            `json:"snap_len" yaml:"snap_len"`
-	Config           map[string]any `json:"config" yaml:"config"`
+	Name             string         `json:"name" yaml:"name" mapstructure:"name"`
+	DispatchMode     string         `json:"dispatch_mode" yaml:"dispatch_mode" mapstructure:"dispatch_mode"`
+	DispatchStrategy string         `json:"dispatch_strategy" yaml:"dispatch_strategy" mapstructure:"dispatch_strategy"` // "flow-hash" (default), "round-robin"
+	Interface        string         `json:"interface" yaml:"interface" mapstructure:"interface"`
+	BPFFilter        string         `json:"bpf_filter" yaml:"bpf_filter" mapstructure:"bpf_filter"`
+	SnapLen          int            `json:"snap_len" yaml:"snap_len" mapstructure:"snap_len"`
+	Config           map[string]any `json:"config" yaml:"config" mapstructure:"config"`
 }
 
 // ToPluginConfig returns the map that should be passed to plugin.Capturer.Init().
@@ -68,29 +68,29 @@ func (c *CaptureConfig) ToPluginConfig() map[string]any {
 
 // DecoderConfig contains decoder configuration.
 type DecoderConfig struct {
-	Tunnels      []string `json:"tunnels" yaml:"tunnels"`
-	IPReassembly bool     `json:"ip_reassembly" yaml:"ip_reassembly"`
+	Tunnels      []string `json:"tunnels" yaml:"tunnels" mapstructure:"tunnels"`
+	IPReassembly bool     `json:"ip_reassembly" yaml:"ip_reassembly" mapstructure:"ip_reassembly"`
 }
 
 // ParserConfig contains parser plugin configuration.
 type ParserConfig struct {
-	Name   string         `json:"name" yaml:"name"`
-	Config map[string]any `json:"config" yaml:"config"`
+	Name   string         `json:"name" yaml:"name" mapstructure:"name"`
+	Config map[string]any `json:"config" yaml:"config" mapstructure:"config"`
 }
 
 // ProcessorConfig contains processor plugin configuration.
 type ProcessorConfig struct {
-	Name   string         `json:"name" yaml:"name"`
-	Config map[string]any `json:"config" yaml:"config"`
+	Name   string         `json:"name" yaml:"name" mapstructure:"name"`
+	Config map[string]any `json:"config" yaml:"config" mapstructure:"config"`
 }
 
 // ReporterConfig contains reporter plugin configuration.
 type ReporterConfig struct {
-	Name         string         `json:"name" yaml:"name"`
-	Config       map[string]any `json:"config" yaml:"config"`
-	BatchSize    int            `json:"batch_size" yaml:"batch_size"`       // Wrapper batch size (default 100)
-	BatchTimeout string         `json:"batch_timeout" yaml:"batch_timeout"` // Wrapper batch timeout (default 50ms)
-	Fallback     string         `json:"fallback" yaml:"fallback"`           // Fallback reporter name (optional)
+	Name         string         `json:"name" yaml:"name" mapstructure:"name"`
+	Config       map[string]any `json:"config" yaml:"config" mapstructure:"config"`
+	BatchSize    int            `json:"batch_size" yaml:"batch_size" mapstructure:"batch_size"`             // Wrapper batch size (default 100)
+	BatchTimeout string         `json:"batch_timeout" yaml:"batch_timeout" mapstructure:"batch_timeout"`   // Wrapper batch timeout (default 50ms)
+	Fallback     string         `json:"fallback" yaml:"fallback" mapstructure:"fallback"`                   // Fallback reporter name (optional)
 }
 
 // Validate validates task configuration.

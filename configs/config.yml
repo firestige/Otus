@@ -7,6 +7,7 @@ capture-agent:
   node:
     ip: ""                            # Empty = auto-detect (ADR-023: env > auto-detect > error)
     hostname: ""                      # Empty = os.Hostname()
+    role: ""                          # Agent role: ASBC | FS | KAMAILIO | TRACEMEDIA
     tags:
       datacenter: "dc1"
       environment: "production"
@@ -119,3 +120,42 @@ capture-agent:
         batch_size: 100
         batch_timeout: "1s"
 
+  # ────────────── Role-based Task Defaults ──────────────
+  # When a SimpleCommand (task_start / task_stop) is received, the agent
+  # fills any missing TaskConfig fields from the matching entry here.
+  # The key must match capture-agent.node.role exactly (case-insensitive lookup
+  # is performed in code).
+  roles:
+    FS:
+      workers: 2
+      capture:
+        name: "afpacket"
+        config:
+          iface: "eth0"
+          buffer_size_mb: 64
+          bpf_filter: ""              # Auto-generated from protocols + port_range if empty
+      decoder:
+        ip_defrag: true
+        tcp_reassembly: true
+        transport:
+          ipip: false
+        ip_reassembly:
+          timeout: "30s"
+          max_fragments: 10000
+      parsers:
+        - name: "sip"
+          config:
+            max_message_size: 65536
+        - name: "rtp"
+          config: {}
+      processors:
+        - name: "filter"
+          config: {}
+      reporters:
+        - name: "kafka"
+          config:
+            topic: "voip-packets"
+    # Add ASBC, KAMAILIO, TRACEMEDIA entries as needed:
+    # ASBC:
+    #   workers: 2
+    #   capture: ...

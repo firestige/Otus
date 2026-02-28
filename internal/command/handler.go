@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"icc.tech/capture-agent/internal/config"
@@ -18,6 +19,10 @@ type CommandHandler struct {
 	configReloader ConfigReloader
 	shutdownFunc   func() // Called by daemon_shutdown to trigger graceful stop
 	startTime      int64  // Unix timestamp of daemon start for uptime calc
+
+	// SimpleCommand routing
+	agentRole  string            // Local agent role (ASBC / FS / KAMAILIO / TRACEMEDIA)
+	roleConfig config.RoleConfig // Local role TaskConfig template
 }
 
 // ConfigReloader is the interface for reloading global configuration.
@@ -37,6 +42,13 @@ func NewCommandHandler(tm *task.TaskManager, reloader ConfigReloader) *CommandHa
 // SetShutdownFunc sets the callback invoked by the daemon_shutdown command.
 func (h *CommandHandler) SetShutdownFunc(fn func()) {
 	h.shutdownFunc = fn
+}
+
+// SetAgentInfo configures the local role used for SimpleCommand translation.
+// Must be called before the first SimpleCommand arrives.
+func (h *CommandHandler) SetAgentInfo(role string, roleConfig config.RoleConfig) {
+	h.agentRole = role
+	h.roleConfig = roleConfig
 }
 
 // Command represents a control plane command.
@@ -81,6 +93,10 @@ func (h *CommandHandler) Handle(ctx context.Context, cmd Command) Response {
 		return h.handleTaskList(ctx, cmd)
 	case "task_status":
 		return h.handleTaskStatus(ctx, cmd)
+	case "task_start":
+		return h.handleTaskStart(ctx, cmd)
+	case "task_stop":
+		return h.handleTaskStop(ctx, cmd)
 	case "config_reload":
 		return h.handleConfigReload(ctx, cmd)
 	case "daemon_shutdown":
@@ -331,6 +347,161 @@ func (h *CommandHandler) handleDaemonStats(_ context.Context, cmd Command) Respo
 		ID: cmd.ID,
 		Result: map[string]interface{}{
 			"tasks": taskStats,
+		},
+	}
+}
+
+// ─── SimpleCommand handlers ────────────────────────────────────────────────
+
+// handleTaskStart handles the simplified "task_start" command.
+// Params may carry optional port_range and protocol overrides.
+// The agent's local role and RoleConfig are used to build the full TaskConfig.
+func (h *CommandHandler) handleTaskStart(ctx context.Context, cmd Command) Response {
+	if h.agentRole == "" {
+		return Response{
+			ID: cmd.ID,
+			Error: &ErrorInfo{
+				Code:    ErrCodeInternalError,
+				Message: "agent role not configured (capture-agent.node.role is empty)",
+			},
+		}
+	}
+
+	// Params may come from UDS CLI as {port_range, protocol} or from Kafka as a
+	// serialised SimpleCmdItem.  We support both by inspecting the json keys.
+	// Normalise into a SimpleCmdItem so BuildTaskConfig can handle it.
+	item := SimpleCmdItem{
+		Role: h.agentRole,
+		Cmd:  "START",
+	}
+	if len(cmd.Params) > 0 {
+		// Try to decode as SimpleCmdItem (Kafka path).
+		var fromKafka SimpleCmdItem
+		if err := json.Unmarshal(cmd.Params, &fromKafka); err == nil && fromKafka.Role != "" {
+			item = fromKafka
+		} else {
+			// UDS CLI path: {port_range, protocol}.
+			var cliParams struct {
+				PortRange *string  `json:"port_range"`
+				Protocol  []string `json:"protocol"`
+			}
+			if err := json.Unmarshal(cmd.Params, &cliParams); err != nil {
+				return Response{
+					ID: cmd.ID,
+					Error: &ErrorInfo{
+						Code:    ErrCodeInvalidParams,
+						Message: fmt.Sprintf("invalid task_start params: %v", err),
+					},
+				}
+			}
+			item.PortRange = cliParams.PortRange
+			item.Protocol = cliParams.Protocol
+		}
+	}
+
+	tc, err := BuildTaskConfig(item, h.roleConfig)
+	if err != nil {
+		return Response{
+			ID: cmd.ID,
+			Error: &ErrorInfo{
+				Code:    ErrCodeInvalidParams,
+				Message: fmt.Sprintf("build task config: %v", err),
+			},
+		}
+	}
+
+	// Idempotent: if the default task for this role is already running, succeed quietly.
+	if existing, getErr := h.taskManager.Get(tc.ID); getErr == nil {
+		state := existing.GetStatus().State
+		if state == "running" || state == "starting" {
+			slog.Info("task_start: task already running, idempotent success",
+				"task_id", tc.ID, "state", state)
+			return Response{
+				ID: cmd.ID,
+				Result: map[string]interface{}{
+					"task_id": tc.ID,
+					"status":  state,
+				},
+			}
+		}
+	}
+
+	// TaskManager.Create assembles all plugins and starts the task in Phase 7.
+	if err := h.taskManager.Create(tc); err != nil {
+		return Response{
+			ID: cmd.ID,
+			Error: &ErrorInfo{
+				Code:    ErrCodeInternalError,
+				Message: fmt.Sprintf("create task failed: %v", err),
+			},
+		}
+	}
+
+	slog.Info("task_start: task started", "task_id", tc.ID, "role", h.agentRole)
+	return Response{
+		ID: cmd.ID,
+		Result: map[string]interface{}{
+			"task_id": tc.ID,
+			"status":  "started",
+		},
+	}
+}
+
+// handleTaskStop handles the simplified "task_stop" command.
+// Stops and deletes the default task for the agent's configured role.
+func (h *CommandHandler) handleTaskStop(_ context.Context, cmd Command) Response {
+	if h.agentRole == "" {
+		return Response{
+			ID: cmd.ID,
+			Error: &ErrorInfo{
+				Code:    ErrCodeInternalError,
+				Message: "agent role not configured (capture-agent.node.role is empty)",
+			},
+		}
+	}
+
+	role := strings.ToUpper(h.agentRole)
+	def, ok := roleDefaults[role]
+	if !ok {
+		return Response{
+			ID: cmd.ID,
+			Error: &ErrorInfo{
+				Code:    ErrCodeInvalidParams,
+				Message: fmt.Sprintf("unknown role %q", h.agentRole),
+			},
+		}
+	}
+
+	taskID := def.taskID
+
+	// Idempotent: if task doesn't exist, succeed quietly.
+	if _, err := h.taskManager.Get(taskID); err != nil {
+		slog.Info("task_stop: task not found, idempotent success", "task_id", taskID)
+		return Response{
+			ID: cmd.ID,
+			Result: map[string]interface{}{
+				"task_id": taskID,
+				"status":  "not_found",
+			},
+		}
+	}
+
+	if err := h.taskManager.Delete(taskID); err != nil {
+		return Response{
+			ID: cmd.ID,
+			Error: &ErrorInfo{
+				Code:    ErrCodeInternalError,
+				Message: fmt.Sprintf("stop/delete task failed: %v", err),
+			},
+		}
+	}
+
+	slog.Info("task_stop: task stopped", "task_id", taskID, "role", h.agentRole)
+	return Response{
+		ID: cmd.ID,
+		Result: map[string]interface{}{
+			"task_id": taskID,
+			"status":  "stopped",
 		},
 	}
 }

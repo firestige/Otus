@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/segmentio/kafka-go"
@@ -35,6 +36,32 @@ type KafkaCommand struct {
 	Payload   json.RawMessage `json:"payload"`    // Command-specific parameters
 }
 
+// SimpleCommand is the simplified Kafka wire format for start/stop operations.
+// Each agent consumes all messages and self-selects items matching its local role.
+//
+// Example JSON:
+//
+//	{
+//	  "id":        "a1b2c3d4e5f6",
+//	  "timestamp": 1709000000000,
+//	  "data": [
+//	    { "role": "FS", "cmd": "START", "portRange": "10000-60000", "protocol": ["SIP","RTP"] }
+//	  ]
+//	}
+type SimpleCommand struct {
+	ID        string          `json:"id"`        // UUID without dashes
+	Timestamp int64           `json:"timestamp"` // Unix ms
+	Data      []SimpleCmdItem `json:"data"`
+}
+
+// SimpleCmdItem is one element of SimpleCommand.Data.
+type SimpleCmdItem struct {
+	Role      string   `json:"role"`                // ASBC | FS | KAMAILIO | TRACEMEDIA
+	Cmd       string   `json:"cmd"`                 // START | STOP
+	PortRange *string  `json:"portRange,omitempty"` // "min-max"; nil = role default
+	Protocol  []string `json:"protocol,omitempty"`  // ["SIP","RTP"]; nil = role default
+}
+
 // messageWriter abstracts kafka.Writer for testability.
 type messageWriter interface {
 	WriteMessages(ctx context.Context, msgs ...kafka.Message) error
@@ -54,27 +81,28 @@ type messageWriter interface {
 //	  "result":     { ... }
 //	}
 type KafkaResponse struct {
-	Version   string      `json:"version"`              // Protocol version ("v1")
-	Source    string      `json:"source"`               // Agent hostname (the responder)
-	Command   string      `json:"command"`              // Echoed from KafkaCommand
-	RequestID string      `json:"request_id"`           // Correlation ID (echoed from KafkaCommand)
-	Timestamp time.Time   `json:"timestamp"`            // When the response was produced
-	Result    interface{} `json:"result,omitempty"`     // Command result, nil on error
-	Error     *ErrorInfo  `json:"error,omitempty"`      // Non-nil when command failed
+	Version   string      `json:"version"`          // Protocol version ("v1")
+	Source    string      `json:"source"`           // Agent hostname (the responder)
+	Command   string      `json:"command"`          // Echoed from KafkaCommand
+	RequestID string      `json:"request_id"`       // Correlation ID (echoed from KafkaCommand)
+	Timestamp time.Time   `json:"timestamp"`        // When the response was produced
+	Result    interface{} `json:"result,omitempty"` // Command result, nil on error
+	Error     *ErrorInfo  `json:"error,omitempty"`  // Non-nil when command failed
 }
 
 // KafkaCommandConsumer consumes commands from Kafka and dispatches to handler.
 type KafkaCommandConsumer struct {
-	ccConfig config.CommandChannelConfig
-	hostname string        // local node hostname for target matching
-	reader   *kafka.Reader
-	writer   messageWriter // nil when response_topic is empty (ADR-029)
-	handler  *CommandHandler
-	ttl      time.Duration // command TTL for stale-command rejection
+	ccConfig  config.CommandChannelConfig
+	hostname  string // local node hostname for target matching (legacy KafkaCommand)
+	agentRole string // local agent role for SimpleCommand routing
+	reader    *kafka.Reader
+	writer    messageWriter // nil when response_topic is empty (ADR-029)
+	handler   *CommandHandler
+	ttl       time.Duration // command TTL for stale-command rejection
 }
 
 // NewKafkaCommandConsumer creates a new Kafka command consumer using the global config.
-func NewKafkaCommandConsumer(ccConfig config.CommandChannelConfig, hostname string, handler *CommandHandler) (*KafkaCommandConsumer, error) {
+func NewKafkaCommandConsumer(ccConfig config.CommandChannelConfig, hostname, agentRole string, handler *CommandHandler) (*KafkaCommandConsumer, error) {
 	kc := ccConfig.Kafka
 	if len(kc.Brokers) == 0 {
 		return nil, fmt.Errorf("brokers is required")
@@ -123,19 +151,20 @@ func NewKafkaCommandConsumer(ccConfig config.CommandChannelConfig, hostname stri
 		writer = &kafka.Writer{
 			Addr:         kafka.TCP(kc.Brokers...),
 			Topic:        kc.ResponseTopic,
-			Balancer:     &kafka.Hash{},       // hostname as key → consistent partition routing
+			Balancer:     &kafka.Hash{}, // hostname as key → consistent partition routing
 			RequiredAcks: kafka.RequireOne,
-			Async:        false,               // synchronous write so failures are observable
+			Async:        false, // synchronous write so failures are observable
 		}
 	}
 
 	return &KafkaCommandConsumer{
-		ccConfig: ccConfig,
-		hostname: hostname,
-		reader:   reader,
-		writer:   writer,
-		handler:  handler,
-		ttl:      ttl,
+		ccConfig:  ccConfig,
+		hostname:  hostname,
+		agentRole: agentRole,
+		reader:    reader,
+		writer:    writer,
+		handler:   handler,
+		ttl:       ttl,
 	}, nil
 }
 
@@ -190,8 +219,104 @@ func (c *KafkaCommandConsumer) Start(ctx context.Context) error {
 	}
 }
 
-// processMessage processes a single Kafka message as a KafkaCommand (ADR-026).
+// processMessage processes a single Kafka message.
+// It first attempts to detect a SimpleCommand (has "data" array field).
+// If that fails or the message format doesn't match, it falls back to the
+// legacy KafkaCommand format (ADR-026).
 func (c *KafkaCommandConsumer) processMessage(ctx context.Context, msg kafka.Message) error {
+	// Probe message format by checking for the "data" field.
+	var probe struct {
+		Data    json.RawMessage `json:"data"`
+		Command string          `json:"command"`
+	}
+	if err := json.Unmarshal(msg.Value, &probe); err != nil {
+		return fmt.Errorf("failed to parse kafka message: %w", err)
+	}
+
+	// SimpleCommand path: "data" field is a non-null JSON array.
+	if len(probe.Data) > 0 && probe.Data[0] == '[' {
+		return c.processSimpleCommand(ctx, msg.Value)
+	}
+
+	// Legacy KafkaCommand path.
+	return c.processKafkaCommand(ctx, msg)
+}
+
+// processSimpleCommand handles the new SimpleCommand format.
+// Each item in data[] is matched against the agent's local role; non-matching
+// items are silently skipped.
+func (c *KafkaCommandConsumer) processSimpleCommand(ctx context.Context, raw []byte) error {
+	if c.agentRole == "" {
+		slog.Debug("agent role not configured, skipping SimpleCommand")
+		return nil
+	}
+
+	var sc SimpleCommand
+	if err := json.Unmarshal(raw, &sc); err != nil {
+		return fmt.Errorf("failed to parse SimpleCommand: %w", err)
+	}
+
+	slog.Info("received SimpleCommand", "id", sc.ID, "items", len(sc.Data))
+
+	matched := false
+	for i, item := range sc.Data {
+		if !strings.EqualFold(item.Role, c.agentRole) {
+			continue
+		}
+		if matched {
+			slog.Warn("duplicate role in SimpleCommand data, ignoring",
+				"id", sc.ID, "role", item.Role, "index", i)
+			continue
+		}
+		matched = true
+
+		// Map cmd → internal method name.
+		var method string
+		switch strings.ToUpper(item.Cmd) {
+		case "START":
+			method = "task_start"
+		case "STOP":
+			method = "task_stop"
+		default:
+			slog.Warn("unknown SimpleCommand cmd", "cmd", item.Cmd, "id", sc.ID)
+			continue
+		}
+
+		// Serialize the item as params so handler can reconstruct it.
+		params, err := json.Marshal(item)
+		if err != nil {
+			return fmt.Errorf("marshal SimpleCmdItem: %w", err)
+		}
+
+		cmd := Command{Method: method, Params: params, ID: sc.ID}
+		resp := c.handler.Handle(ctx, cmd)
+
+		// Write response back to Kafka response topic (mirrors KafkaCommand behaviour).
+		if c.writer != nil && sc.ID != "" {
+			if err := c.writeResponse(ctx, method, resp); err != nil {
+				slog.Error("failed to write SimpleCommand response",
+					"id", sc.ID, "method", method, "error", err)
+			}
+		}
+
+		if resp.Error != nil {
+			slog.Error("SimpleCommand execution failed",
+				"id", sc.ID, "method", method,
+				"code", resp.Error.Code, "msg", resp.Error.Message)
+			return fmt.Errorf("simple command failed: %s", resp.Error.Message)
+		}
+		slog.Info("SimpleCommand executed", "id", sc.ID, "method", method)
+	}
+
+	if !matched {
+		slog.Debug("no matching role in SimpleCommand",
+			"id", sc.ID, "agent_role", c.agentRole)
+	}
+	return nil
+}
+
+// processKafkaCommand handles the legacy KafkaCommand format (ADR-026).
+func (c *KafkaCommandConsumer) processKafkaCommand(ctx context.Context, msg kafka.Message) error {
 	// 1. Deserialize into KafkaCommand
 	var kCmd KafkaCommand
 	if err := json.Unmarshal(msg.Value, &kCmd); err != nil {
