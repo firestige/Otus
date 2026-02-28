@@ -27,11 +27,13 @@ BUILDER ?= capture-agent-builder
 # Edit configs/buildkitd.toml to set your DNS IPs before running docker-setup-builder.
 BUILDKIT_CONFIG ?= configs/buildkitd.toml
 
-# Go module proxy for Docker builds.
-# Set to your internal Nexus Go proxy URL for offline/internal builds.
-# Example: make docker-build GOPROXY=http://nexus.corp/repository/go-proxy,direct
-# Leave empty to use the default inside the Dockerfile (GOPROXY=direct).
-GOPROXY ?=
+# Docker build-arg values are read automatically from configs/build.env.
+# Each non-comment, non-empty line in that file becomes a --build-arg.
+# Edit configs/build.env to configure GOPROXY, GONOSUMDB, GO111MODULE, GOPATH, etc.
+# No Makefile changes are needed when those values change.
+BUILD_ENV_FILE ?= configs/build.env
+BUILD_ARGS := $(if $(wildcard $(BUILD_ENV_FILE)),\
+	$(shell grep -v '^\s*\#' $(BUILD_ENV_FILE) | grep -v '^\s*$$' | sed 's/^/--build-arg /'),)
 
 all: proto build
 
@@ -84,7 +86,7 @@ docker-build: docker-setup-builder
 	docker buildx build \
 		--builder $(BUILDER) \
 		--platform $(PLATFORM) \
-		$(if $(GOPROXY),--build-arg GOPROXY=$(GOPROXY)) \
+		$(BUILD_ARGS) \
 		-t capture-agent:$(VERSION) \
 		-t capture-agent:latest \
 		--load \

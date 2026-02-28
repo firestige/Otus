@@ -53,7 +53,11 @@ make docker-extract
 # 输出: ./capture-agent-static
 ```
 
-> **内网离线环境构建**，在执行 `make docker-build` 前需要完成以下四项配置，详见下方说明。
+> **内网离线环境构建**，在执行 `make docker-build` 前需要完成以下配置，详见下方说明。
+> - `configs/buildkitd.toml` — 注入内网 DNS
+> - `configs/yum.repos.d/*.repo` — 替换 yum 仓库为 Nexus 代理
+> - `configs/build.env` — 配置 Go 相关环境变量（GOPROXY、GONOSUMDB 等）
+> - 项目根目录放置离线 Go 安装包
 
 ---
 
@@ -116,23 +120,35 @@ Dockerfile 通过 `COPY go*.linux-*.tar.gz` 自动匹配，**文件名中的版�
 
 ---
 
-#### 内网构建：Go Module Proxy（Nexus 代理）
+#### 内网构建：Go 环境变量（Nexus Module Proxy）
 
-内网环境通常无法访问 `proxy.golang.org`，需将 `GOPROXY` 指向 Nexus 搭建的 Go 私仓。
+所有构建期 Go 环境变量统一在 [`configs/build.env`](configs/build.env) 中配置，Makefile 会自动读取该文件并以 `--build-arg` 方式注入 Dockerfile，无需修改 Makefile 或在命令行传参。
 
-构建时通过 `GOPROXY` 变量传入：
+编辑 `configs/build.env`，填入内网 Nexus 地址：
 
-```bash
-make docker-build GOPROXY=http://<NEXUS_HOST>/repository/go-proxy,direct
+```ini
+# Go Module Proxy：指向内网 Nexus Go 仓库
+# 完全隔离环境去掉 ,direct
+GOPROXY=http://<NEXUS_HOST>/repository/go-proxy,direct
+
+# 禁用 sum.golang.org 校验（内网无法访问时必须设置）
+# * 表示对所有模块跳过，也可指定路径前缀，如 corp.example.com/*
+GONOSUMDB=*
+
+# 模块模式（Go 1.16 起默认 on，保留以兼容旧工具）
+GO111MODULE=on
+
+# 构建容器内的 GOPATH
+GOPATH=/go
 ```
 
-若内网完全隔离（无 `direct` 回退），去掉 `,direct`：
+> `GOROOT` 无需配置——Go 会从二进制所在路径自动推断。
+
+配置完成后直接构建，无需额外参数：
 
 ```bash
-make docker-build GOPROXY=http://<NEXUS_HOST>/repository/go-proxy
+make docker-build
 ```
-
-不传 `GOPROXY` 时默认使用 `GOPROXY=direct`（直连 VCS，适用于有公网访问的环境）。
 
 ---
 

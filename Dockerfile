@@ -39,11 +39,25 @@ COPY go*.linux-*.tar.gz /tmp/go.tar.gz
 RUN tar -C /usr/local -xzf /tmp/go.tar.gz && rm /tmp/go.tar.gz
 ENV PATH="/usr/local/go/bin:${PATH}"
 
-# Go module proxy — point to internal Nexus Go proxy for offline builds.
-# Passed as a build argument so no Dockerfile change is needed when the URL changes.
-# Example: make docker-build GOPROXY=http://nexus.corp/repository/go-proxy,direct
+# Go environment — all values are injected at build time from configs/build.env
+# via 'make docker-build' (Makefile reads the file and passes --build-arg flags).
+# Defaults here are suitable for public-internet builds; override in build.env
+# for internal/offline builds.
+#
+#   GOPROXY    - module proxy URL (default: direct VCS access)
+#   GONOSUMDB  - skip checksum DB for matching modules (required when
+#                sum.golang.org is unreachable; use * for all modules)
+#   GO111MODULE - module mode switch (on since Go 1.16, kept for compat)
+#   GOPATH      - Go workspace directory inside the container
+#   GOROOT is intentionally omitted: Go detects it from the binary location.
 ARG GOPROXY=direct
-ENV GOPROXY=${GOPROXY}
+ARG GONOSUMDB=
+ARG GO111MODULE=on
+ARG GOPATH=/go
+ENV GOPROXY=${GOPROXY} \
+    GONOSUMDB=${GONOSUMDB} \
+    GO111MODULE=${GO111MODULE} \
+    GOPATH=${GOPATH}
 
 WORKDIR /build
 
