@@ -30,12 +30,13 @@ RUN yum clean all && yum makecache && \
         libpcap-devel \
     && yum clean all
 
-# libpcap static linking: CentOS 7 places the lib under lib64 but the linker
-# also looks in lib; create the symlink if it doesn't exist.
-RUN ln -sf /usr/lib64/libpcap.so.1 /usr/lib/libpcap.so || true
+# libpcap static linking on CentOS 7 amd64:
+# libpcap-devel installs libpcap.a into /usr/lib64 but CGO's linker defaults
+# to /usr/lib. Set CGO_LDFLAGS so ld finds both the static and shared libs.
+ENV CGO_LDFLAGS="-L/usr/lib64"
 
 # Install Go from an offline tarball in the project root.
-# ADD auto-extracts the tarball to /usr/local/go/.
+# ADD auto-extracts the tarball to /usr/local/.
 # Naming convention: go{version}.linux-{amd64|arm64}.tar.gz
 ADD go*.linux-*.tar.gz /usr/local/
 ENV PATH="/usr/local/go/bin:${PATH}"
