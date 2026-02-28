@@ -10,6 +10,12 @@
 # ============================================================================
 FROM centos:7 AS builder
 
+# Load internal Nexus yum repository definitions.
+# Place your *.repo file(s) in configs/yum.repos.d/ before building.
+# They replace the default CentOS mirrors with the internal proxy so that
+# 'yum install' works without public internet access.
+COPY configs/yum.repos.d/*.repo /etc/yum.repos.d/
+
 # Install build dependencies
 # - gcc, glibc-static: C compiler + static libc for static linking
 # - libpcap-devel:     BPF filter compilation (includes libpcap.a)
@@ -32,6 +38,12 @@ RUN yum install -y \
 COPY go*.linux-*.tar.gz /tmp/go.tar.gz
 RUN tar -C /usr/local -xzf /tmp/go.tar.gz && rm /tmp/go.tar.gz
 ENV PATH="/usr/local/go/bin:${PATH}"
+
+# Go module proxy — point to internal Nexus Go proxy for offline builds.
+# Passed as a build argument so no Dockerfile change is needed when the URL changes.
+# Example: make docker-build GOPROXY=http://nexus.corp/repository/go-proxy,direct
+ARG GOPROXY=direct
+ENV GOPROXY=${GOPROXY}
 
 WORKDIR /build
 

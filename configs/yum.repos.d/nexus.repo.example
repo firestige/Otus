@@ -1,0 +1,21 @@
+# Rename this file to nexus.repo and fill in your internal Nexus URLs.
+# All *.repo files in this directory are copied into /etc/yum.repos.d/ inside
+# the build container, replacing the default CentOS mirrors with your internal proxy.
+
+[nexus-base]
+name=Nexus CentOS Base
+baseurl=http://<NEXUS_HOST>/repository/centos-proxy/$releasever/os/$basearch/
+enabled=1
+gpgcheck=0
+
+[nexus-updates]
+name=Nexus CentOS Updates
+baseurl=http://<NEXUS_HOST>/repository/centos-proxy/$releasever/updates/$basearch/
+enabled=1
+gpgcheck=0
+
+[nexus-extras]
+name=Nexus CentOS Extras
+baseurl=http://<NEXUS_HOST>/repository/centos-proxy/$releasever/extras/$basearch/
+enabled=1
+gpgcheck=0

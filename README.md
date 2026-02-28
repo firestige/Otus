@@ -53,22 +53,7 @@ make docker-extract
 # 输出: ./capture-agent-static
 ```
 
-> **内网离线环境构建**，在执行 `make docker-build` 前需要完成以下两项配置，详见下方说明。
-
----
-
-#### 内网构建：Go 离线包
-
-Docker 构建过程中需要安装 Go 工具链。内网环境无法访问 `go.dev`，需提前将安装包下载好并放置到**项目根目录**（与 `Dockerfile` 同级）。
-
-从 [https://go.dev/dl/](https://go.dev/dl/) 下载对应平台的压缩包，命名格式为官网原始格式：
-
-| 构建机架构 | 文件名示例 |
-|---|---|
-| x86\_64 (amd64) | `go1.23.6.linux-amd64.tar.gz` |
-| aarch64 (arm64) | `go1.23.6.linux-arm64.tar.gz` |
-
-Dockerfile 通过 `COPY go*.linux-*.tar.gz` 自动匹配，**文件名中的版本号无需与 Dockerfile 匹配**，升级 Go 版本只需替换文件即可。
+> **内网离线环境构建**，在执行 `make docker-build` 前需要完成以下四项配置，详见下方说明。
 
 ---
 
@@ -94,13 +79,62 @@ make docker-rm-builder
 make docker-setup-builder
 ```
 
-**步骤三**：正常构建：
+> DNS 配置只在 `make docker-setup-builder` 创建时读入。修改 `buildkitd.toml` 后需要先 `make docker-rm-builder` 再重新创建才能生效。
 
-```bash
-make docker-build
+---
+
+#### 内网构建：yum 仓库（Nexus 代理）
+
+构建镜像基于 CentOS 7，`yum install` 需要能访问软件包仓库。内网环境需将默认的公网 CentOS 镜像替换为内网 Nexus 代理。
+
+**步骤**：将 yum `.repo` 文件放置到 `configs/yum.repos.d/` 目录，Dockerfile 会自动将该目录下所有 `*.repo` 文件复制到构建容器的 `/etc/yum.repos.d/`，覆盖默认的公网仓库配置。
+
+参考 [`configs/yum.repos.d/nexus.repo.example`](configs/yum.repos.d/nexus.repo.example) 填写实际 Nexus 地址后，将文件重命名为 `nexus.repo`（或任意 `.repo` 扩展名）：
+
+```ini
+[nexus-base]
+name=Nexus CentOS Base
+baseurl=http://<NEXUS_HOST>/repository/centos-proxy/$releasever/os/$basearch/
+enabled=1
+gpgcheck=0
 ```
 
-> DNS 配置只在 `make docker-setup-builder` 创建时读入。修改 `buildkitd.toml` 后需要先 `make docker-rm-builder` 再重新创建才能生效。
+---
+
+#### 内网构建：Go 离线包
+
+Docker 构建过程中需要安装 Go 工具链。内网环境无法访问 `go.dev`，需提前将安装包下载好并放置到**项目根目录**（与 `Dockerfile` 同级）。
+
+从 [https://go.dev/dl/](https://go.dev/dl/) 下载对应平台的压缩包，命名格式为官网原始格式：
+
+| 构建机架构 | 文件名示例 |
+|---|---|
+| x86\_64 (amd64) | `go1.23.6.linux-amd64.tar.gz` |
+| aarch64 (arm64) | `go1.23.6.linux-arm64.tar.gz` |
+
+Dockerfile 通过 `COPY go*.linux-*.tar.gz` 自动匹配，**文件名中的版本号无需与 Dockerfile 匹配**，升级 Go 版本只需替换文件即可。
+
+---
+
+#### 内网构建：Go Module Proxy（Nexus 代理）
+
+内网环境通常无法访问 `proxy.golang.org`，需将 `GOPROXY` 指向 Nexus 搭建的 Go 私仓。
+
+构建时通过 `GOPROXY` 变量传入：
+
+```bash
+make docker-build GOPROXY=http://<NEXUS_HOST>/repository/go-proxy,direct
+```
+
+若内网完全隔离（无 `direct` 回退），去掉 `,direct`：
+
+```bash
+make docker-build GOPROXY=http://<NEXUS_HOST>/repository/go-proxy
+```
+
+不传 `GOPROXY` 时默认使用 `GOPROXY=direct`（直连 VCS，适用于有公网访问的环境）。
+
+---
 
 ### 2. 安装
 
