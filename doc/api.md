@@ -1,4 +1,4 @@
-# Otus API 参考手册
+# capture-agent API 参考手册
 
 > 快速查询手册。数据模型直接对应代码中的 Go 结构体，所有字段名均为 JSON/YAML key。
 > 设计决策背景见 [decisions.md](decisions.md)，完整架构见 [architecture.md](architecture.md)。
@@ -28,7 +28,7 @@
 | 方向 | 双向（同步请求-响应） | 命令单向发送，响应异步回写到响应 topic |
 | 命令集 | 全部 8 条命令 | 全部 8 条命令 |
 | 请求格式 | `JSONRPCRequest` | `KafkaCommand` |
-| 响应格式 | `JSONRPCResponse` | `KafkaResponse`（写入 `otus-responses`） |
+| 响应格式 | `JSONRPCResponse` | `KafkaResponse`（写入 `capture-agent-responses`） |
 | 目标路由 | 不需要（本机） | `target` 字段按 hostname 路由 |
 | 认证 | socket 文件权限 0600，owner-only | Kafka SASL/TLS |
 | 超时 | 客户端 10s（可配置） | 调用方自行设置（推荐 30s） |
@@ -37,7 +37,7 @@
 
 ## 2. 本地控制：JSON-RPC over UDS
 
-Socket 路径由 `otus.control.socket` 配置（默认 `/var/run/otus.sock`）。
+Socket 路径由 `capture-agent.control.socket` 配置（默认 `/var/run/capture-agent.sock`）。
 
 ### 请求格式
 
@@ -86,7 +86,7 @@ Socket 路径由 `otus.control.socket` 配置（默认 `/var/run/otus.sock`）�
 
 ## 3. 远程控制：Kafka 命令 topic
 
-**Topic**：`otus.command_channel.kafka.topic`（默认 `otus-commands`）  
+**Topic**：`capture-agent.command_channel.kafka.topic`（默认 `capture-agent-commands`）  
 **Kafka message key**：必须设为 `target` 字段值，保证同一节点命令落到同一 partition（顺序保障，见 ADR-026）。
 
 ### `KafkaCommand` 消息格式
@@ -115,7 +115,7 @@ Socket 路径由 `otus.control.socket` 配置（默认 `/var/run/otus.sock`）�
 
 ## 4. 远程响应：Kafka 响应 topic
 
-**Topic**：`otus.command_channel.kafka.response_topic`（默认 `otus-responses`，ADR-029）  
+**Topic**：`capture-agent.command_channel.kafka.response_topic`（默认 `capture-agent-responses`，ADR-029）  
 **Kafka message key**：Agent 的 `hostname`，保证同一节点响应落到固定 partition。
 
 ### `KafkaResponse` 消息格式
@@ -145,7 +145,7 @@ Socket 路径由 `otus.control.socket` 配置（默认 `/var/run/otus.sock`）�
 ### 调用方消费规范
 
 ```
-1. 记录当前 otus-responses 对应 partition 的最新 offset（在发送命令之前）
+1. 记录当前 capture-agent-responses 对应 partition 的最新 offset（在发送命令之前）
 2. 发送 KafkaCommand，携带唯一 request_id
 3. 从记录的 offset 起消费，按 request_id 过滤属于本次请求的响应
 4. 超过超时时间（推荐 30s）未收到响应 → 视为节点无响应
@@ -361,9 +361,9 @@ reporters:
     batch_timeout: "50ms"      # 批发超时，默认 50ms
     fallback: ""               # 备用 reporter 名（可选）
     config:
-      brokers: ["kafka:9092"]  # 未设置时继承 otus.reporters.kafka.brokers
+      brokers: ["kafka:9092"]  # 未设置时继承 capture-agent.reporters.kafka.brokers
       topic: "voip-packets"    # 固定 topic（与 topic_prefix 互斥）
-      topic_prefix: ""         # 动态路由前缀，如 "otus" → "otus-sip", "otus-rtp"
+      topic_prefix: ""         # 动态路由前缀，如 "capture-agent" → "capture-agent-sip", "capture-agent-rtp"
       compression: "snappy"    # none | gzip | snappy | lz4
       max_attempts: 3
       serialization: "json"    # json（默认）| binary（Phase 2）
@@ -406,10 +406,10 @@ channel_capacity:
 ## 8. 全局配置模型
 
 文件路径由 CLI `--config` 指定（默认 `configs/config.yml`）。  
-所有字段均在 `otus:` 根 key 下。环境变量优先，格式：`OTUS_` + 点路径全大写（如 `otus.log.level` → `OTUS_LOG_LEVEL`）。
+所有字段均在 `otus:` 根 key 下。环境变量优先，格式：`CAPTURE_AGENT_` + 点路径全大写（如 `capture-agent.log.level` → `CAPTURE_AGENT_LOG_LEVEL`）。
 
 ```yaml
-otus:
+capture-agent:
 
   # ── 节点标识 ──
   node:
@@ -421,8 +421,8 @@ otus:
 
   # ── 本地控制 ──
   control:
-    socket: "/var/run/otus.sock"
-    pid_file: "/var/run/otus.pid"
+    socket: "/var/run/capture-agent.sock"
+    pid_file: "/var/run/capture-agent.pid"
 
   # ── Kafka 全局默认（ADR-024）──
   # command_channel.kafka 和 reporters.kafka 在各自字段为空时自动继承
@@ -445,9 +445,9 @@ otus:
     enabled: false
     type: "kafka"               # 目前仅支持 "kafka"
     kafka:
-      topic: "otus-commands"
-      response_topic: "otus-responses"  # 空字符串 = 禁用响应（ADR-029）
-      group_id: ""              # 空 = "otus-{hostname}"
+      topic: "capture-agent-commands"
+      response_topic: "capture-agent-responses"  # 空字符串 = 禁用响应（ADR-029）
+      group_id: ""              # 空 = "capture-agent-{hostname}"
       auto_offset_reset: "latest"  # "latest"（仅处理启动后命令）或 "earliest"
     command_ttl: "5m"           # 超过此时间的命令被丢弃（ADR-026）
 
@@ -501,7 +501,7 @@ otus:
     outputs:
       file:
         enabled: true
-        path: "/var/log/otus/otus.log"
+        path: "/var/log/capture-agent/capture-agent.log"
         rotation:
           max_size_mb: 100     # ADR-025：单位编码在字段名中
           max_age_days: 30
@@ -511,12 +511,12 @@ otus:
         enabled: false
         endpoint: "http://loki:3100/loki/api/v1/push"
         labels:
-          app: "otus"
+          app: "capture-agent"
         batch_size: 100
         batch_timeout: "1s"
 
   # ── Task 持久化（ADR-030, ADR-031）──
-  data_dir: "/var/lib/otus"   # 顶级数据目录；task 记录存储于 {data_dir}/tasks/
+  data_dir: "/var/lib/capture-agent"   # 顶级数据目录；task 记录存储于 {data_dir}/tasks/
   task_persistence:
     enabled: true             # false = 禁用持久化（开发 / 单测场景）
     auto_restart: true        # 重启后自动恢复 running/starting/stopping 状态的 task
@@ -528,25 +528,25 @@ otus:
 
 | 字段 | 类型 | 默认 | 说明 |
 |---|---|---|---|
-| `data_dir` | `string` | `/var/lib/otus` | 顶级数据目录，task 状态文件存放于 `{data_dir}/tasks/` |
+| `data_dir` | `string` | `/var/lib/capture-agent` | 顶级数据目录，task 状态文件存放于 `{data_dir}/tasks/` |
 | `task_persistence.enabled` | `bool` | `true` | `false` 时所有持久化操作降级为 no-op |
 | `task_persistence.auto_restart` | `bool` | `true` | Daemon 启动时是否自动重建上次处于 running/starting/stopping 状态的 task |
 | `task_persistence.gc_interval` | `string` | `1h` | 进程内 GC goroutine 的触发间隔（Go duration 格式） |
 | `task_persistence.max_task_history` | `int` | `100` | 终态（stopped / failed）task 记录的保留上限；超出则按 created_at 升序删除旧记录；`0` = 禁用 |
 
-> **目录初始化**：由 `ExecStartPre=systemd-tmpfiles --create /etc/tmpfiles.d/otus.conf` 负责创建目录并设置权限（ADR-031）。不需要手动 `mkdir`。
+> **目录初始化**：由 `ExecStartPre=systemd-tmpfiles --create /etc/tmpfiles.d/capture-agent.conf` 负责创建目录并设置权限（ADR-031）。不需要手动 `mkdir`。
 
 ---
 
 ### 配置继承规则（ADR-024）
 
 ```
-otus.kafka.brokers
+capture-agent.kafka.brokers
   ├── → command_channel.kafka.brokers（当后者为空时）
   └── → reporters.kafka.brokers（当后者为空时）
 
-otus.kafka.sasl  →  同上（仅当子节点 sasl.enabled=false 且全局 sasl.enabled=true 时）
-otus.kafka.tls   →  同上
+capture-agent.kafka.sasl  →  同上（仅当子节点 sasl.enabled=false 且全局 sasl.enabled=true 时）
+capture-agent.kafka.tls   →  同上
 ```
 
 ---
@@ -622,7 +622,7 @@ otus.kafka.tls   →  同上
 | 配置 | 实际 Topic | 示例 |
 |---|---|---|
 | `topic: "voip"` | 固定 `voip` | 所有包写同一 topic |
-| `topic_prefix: "otus"` | `otus-{payload_type}` | `otus-sip`, `otus-rtp`, `otus-raw` |
+| `topic_prefix: "capture-agent"` | `otus-{payload_type}` | `otus-sip`, `otus-rtp`, `otus-raw` |
 
 ---
 

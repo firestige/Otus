@@ -9,13 +9,13 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"firestige.xyz/otus/internal/command"
+	"icc.tech/capture-agent/internal/command"
 )
 
 var statsCmd = &cobra.Command{
 	Use:   "stats",
 	Short: "Show runtime statistics",
-	Long: `Query the Otus daemon for runtime statistics.
+	Long: `Query the capture-agent daemon for runtime statistics.
 
 Shows: capture rates, drop counts, pipeline throughput per task.`,
 	Run: func(cmd *cobra.Command, args []string) {

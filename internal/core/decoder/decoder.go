@@ -4,7 +4,7 @@ package decoder
 import (
 	"fmt"
 
-	"firestige.xyz/otus/internal/core"
+	"icc.tech/capture-agent/internal/core"
 )
 
 // Decoder decodes raw packets into structured format.

@@ -135,40 +135,17 @@ curl http://localhost:9091/metrics
 ### 6. 创建抓包任务
 
 ```bash
-# 准备任务配置文件（JSON 格式）
-cat > sip-capture.json <<'EOF'
-{
-  "id": "sip-capture-01",
-  "workers": 1,
-  "capture": {
-    "name": "afpacket",
-    "interface": "eth0",
-    "bpf_filter": "udp port 5060 or udp port 5061",
-    "snap_len": 65536
-  },
-  "parsers": [{"name": "sip", "config": {}}],
-  "processors": [],
-  "reporters": [{
-    "name": "kafka",
-    "config": {
-      "brokers": ["kafka:9092"],
-      "topic": "capture-agent-sip-data"
-    }
-  }]
-}
-EOF
-
 # 通过 UDS 创建任务
-capture-agent task create -f sip-capture.json
+capture-agent task create --name sip-capture --interface eth0 --protocol sip
 
 # 查看任务列表
 capture-agent task list
 
 # 查看任务状态
-capture-agent task status sip-capture-01
+capture-agent task status sip-capture
 
 # 停止任务
-capture-agent task stop sip-capture-01
+capture-agent task stop sip-capture
 ```
 
 ---
@@ -373,41 +350,29 @@ metadata:
   namespace: monitoring
 data:
   config.yml: |
-    capture-agent:
-      node:
-        hostname: ""  # 空 = 自动探测
-        tags:
-          env: production
-      control:
-        socket: /var/run/capture-agent.sock
-        pid_file: /var/run/capture-agent.pid
-      kafka:
-        brokers:
-          - kafka.kafka.svc.cluster.local:9092
-      command_channel:
-        enabled: true
-        type: kafka
-        kafka:
-          topic: capture-agent-commands
-          response_topic: capture-agent-responses
-          group_id: capture-agent-$(NODE_NAME)
-          auto_offset_reset: latest
+    global:
+      log_level: info
+    
+    daemon:
+      unix_socket: /tmp/capture-agent.sock
+      pid_file: /tmp/capture-agent.pid
       metrics:
         enabled: true
         listen: :9091
-        path: /metrics
-      log:
-        level: info
-        format: json
-        outputs:
-          file:
-            enabled: true
-            path: /var/log/capture-agent/capture-agent.log
-            rotation:
-              max_size_mb: 100
-              max_age_days: 7
-              max_backups: 5
-              compress: true
+    
+    log:
+      appenders:
+        - type: kafka
+          brokers:
+            - kafka.kafka.svc.cluster.local:9092
+          topic: capture-agent-logs
+    
+    command:
+      channel: kafka
+      brokers:
+        - kafka.kafka.svc.cluster.local:9092
+      consumer_topic: capture-agent-commands
+      consumer_group_id: capture-agent-consumer
 ```
 
 ### 部署步骤
@@ -605,8 +570,8 @@ capture:
    - 监控异常抓包行为
 
 4. **加密传输**:
-   - 配置 Kafka TLS/SASL 认证（`capture-agent.kafka.sasl` + `capture-agent.kafka.tls`）
-   - 使用 NetworkPolicy 限制 capture-agent Pod 的入站流量
+   - 配置 Kafka TLS/SASL 认证
+   - 使用 mTLS 保护 gRPC 接口
 
 ---
 
@@ -634,10 +599,11 @@ capture:
 ### C. 相关文档
 
 - [配置参考](../configs/config.yml)
+- [API 文档](../api/v1/daemon.proto)
 - [架构设计](architecture.md)
 - [开发指南](implementation-plan.md)
 
 ---
 
-**更新时间**: 2026-02-22  
+**更新时间**: 2026-02-17  
 **维护者**: capture-agent 开发团队

@@ -16,8 +16,8 @@ import (
 	"github.com/segmentio/kafka-go"
 	"github.com/segmentio/kafka-go/compress"
 
-	"firestige.xyz/otus/internal/core"
-	"firestige.xyz/otus/pkg/plugin"
+	"icc.tech/capture-agent/internal/core"
+	"icc.tech/capture-agent/pkg/plugin"
 )
 
 const (
@@ -42,13 +42,13 @@ type KafkaReporter struct {
 
 // Config represents Kafka reporter configuration.
 type Config struct {
-	// Connection — may come from otus.reporters.kafka (ADR-028) or per-reporter config.
+	// Connection — may come from capture-agent.reporters.kafka (ADR-028) or per-reporter config.
 	Brokers     []string `json:"brokers"`
 	Compression string   `json:"compression"`  // none|gzip|snappy|lz4, default snappy
 	MaxAttempts int      `json:"max_attempts"` // default 3
 
 	// Topic routing (ADR-027): topic and topic_prefix are mutually exclusive.
-	// When topic_prefix is set, actual topic = "{prefix}-{protocol}" (e.g. "otus-sip").
+	// When topic_prefix is set, actual topic = "{prefix}-{protocol}" (e.g. "capture-agent-sip").
 	Topic       string `json:"topic"`        // Fixed topic
 	TopicPrefix string `json:"topic_prefix"` // Dynamic routing prefix
 
@@ -261,7 +261,7 @@ func (r *KafkaReporter) Report(ctx context.Context, pkt *core.OutputPacket) erro
 }
 
 // resolveTopic returns the target topic for a packet (ADR-027).
-// With topic_prefix: "{prefix}-{protocol}" (e.g. "otus-sip", "otus-rtp").
+// With topic_prefix: "{prefix}-{protocol}" (e.g. "capture-agent-sip", "capture-agent-rtp").
 // With fixed topic: returns the configured topic directly.
 func (r *KafkaReporter) resolveTopic(pkt *core.OutputPacket) string {
 	if r.config.TopicPrefix != "" {

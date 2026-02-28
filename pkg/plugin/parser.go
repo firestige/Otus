@@ -4,7 +4,7 @@ package plugin
 import (
 	"net/netip"
 
-	"firestige.xyz/otus/internal/core"
+	"icc.tech/capture-agent/internal/core"
 )
 
 // Parser parses application-layer protocols.

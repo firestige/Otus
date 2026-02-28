@@ -10,15 +10,15 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"firestige.xyz/otus/internal/command"
-	"firestige.xyz/otus/internal/config"
+	"icc.tech/capture-agent/internal/command"
+	"icc.tech/capture-agent/internal/config"
 )
 
 // taskCmd represents the task command group
 var taskCmd = &cobra.Command{
 	Use:   "task",
 	Short: "Manage capture tasks",
-	Long: `Manage packet capture tasks on the Otus daemon.
+	Long: `Manage packet capture tasks on the capture-agent daemon.
 
 Subcommands:
   create  - Create a new capture task
@@ -35,8 +35,8 @@ var taskCreateCmd = &cobra.Command{
 File format is auto-detected from extension (.json, .yaml, .yml).
 
 Examples:
-  otus task create -f task.json
-  otus task create -f task.yaml`,
+  capture-agent task create -f task.json
+  capture-agent task create -f task.yaml`,
 	Run: func(cmd *cobra.Command, args []string) {
 		runTaskCreate(cmd)
 	},

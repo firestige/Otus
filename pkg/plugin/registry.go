@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"sort"
 
-	"firestige.xyz/otus/internal/core"
+	"icc.tech/capture-agent/internal/core"
 )
 
 // Registry is a type-safe generic plugin registry that stores factory functions.

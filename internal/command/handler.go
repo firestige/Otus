@@ -8,8 +8,8 @@ import (
 	"log/slog"
 	"time"
 
-	"firestige.xyz/otus/internal/config"
-	"firestige.xyz/otus/internal/task"
+	"icc.tech/capture-agent/internal/config"
+	"icc.tech/capture-agent/internal/task"
 )
 
 // CommandHandler handles control plane commands.

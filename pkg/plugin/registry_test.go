@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"firestige.xyz/otus/internal/core"
+	"icc.tech/capture-agent/internal/core"
 )
 
 // Test cases

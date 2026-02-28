@@ -1,7 +1,7 @@
 // Package models re-exports core types for external use.
 package models
 
-import "firestige.xyz/otus/internal/core"
+import "icc.tech/capture-agent/internal/core"
 
 // Re-export core packet types for plugins
 type (

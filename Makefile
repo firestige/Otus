@@ -1,7 +1,7 @@
 .PHONY: all build build-static build-all proto clean install uninstall test run docker-build docker-extract
 
 # Variables
-BINARY_NAME=otus
+BINARY_NAME=capture-agent
 INSTALL_PATH=/usr/local/bin
 SYSTEMD_PATH=/etc/systemd/system
 VERSION?=$(shell git describe --tags --always --dirty 2>/dev/null || echo 'dev')
@@ -59,20 +59,20 @@ docker-build:
 	@echo "Building Docker image with static binary..."
 	docker buildx build \
 		--platform linux/amd64,linux/arm64 \
-		-t otus:$(VERSION) \
-		-t otus:latest \
+		-t capture-agent:$(VERSION) \
+		-t capture-agent:latest \
 		--load \
 		.
 
 # Extract static binary from Docker image
 docker-extract:
 	@echo "Extracting static binary from Docker image..."
-	@docker create --name otus-extract otus:latest
-	@docker cp otus-extract:/otus ./otus-static
-	@docker rm otus-extract
-	@echo "Binary extracted to ./otus-static"
-	@file ./otus-static
-	@ldd ./otus-static 2>&1 || true
+	@docker create --name capture-agent-extract otus:latest
+	@docker cp capture-agent-extract:/capture-agent ./capture-agent-static
+	@docker rm capture-agent-extract
+	@echo "Binary extracted to ./capture-agent-static"
+	@file ./capture-agent-static
+	@ldd ./capture-agent-static 2>&1 || true
 
 # 构建插件
 build-plugins:
@@ -90,17 +90,17 @@ install: build
 # 安装 systemd 服务
 install-systemd: install
 	@echo "Installing systemd service..."
-	sudo cp configs/otus.service ${SYSTEMD_PATH}/
+	sudo cp configs/capture-agent.service ${SYSTEMD_PATH}/
 	sudo systemctl daemon-reload
-	sudo systemctl enable otus
-	@echo "Run 'sudo systemctl start otus' to start the service"
+	sudo systemctl enable capture-agent
+	@echo "Run 'sudo systemctl start capture-agent' to start the service"
 
 # 卸载
 uninstall:
 	@echo "Uninstalling ${BINARY_NAME}..."
-	sudo systemctl stop otus 2>/dev/null || true
-	sudo systemctl disable otus 2>/dev/null || true
-	sudo rm -f ${SYSTEMD_PATH}/otus.service
+	sudo systemctl stop capture-agent 2>/dev/null || true
+	sudo systemctl disable capture-agent 2>/dev/null || true
+	sudo rm -f ${SYSTEMD_PATH}/capture-agent.service
 	sudo rm -f ${INSTALL_PATH}/${BINARY_NAME}
 	sudo systemctl daemon-reload
 
@@ -108,11 +108,11 @@ uninstall:
 clean:
 	@echo "Cleaning up..."
 	rm -f ${BINARY_NAME}
-	rm -f otus-static
+	rm -f capture-agent-static
 	rm -rf dist/
-	rm -f /tmp/otus.sock
-	rm -f /tmp/otus.pid
-	rm -f /tmp/otus.log
+	rm -f /tmp/capture-agent.sock
+	rm -f /tmp/capture-agent.pid
+	rm -f /tmp/capture-agent.log
 
 # 测试
 test:
@@ -124,7 +124,7 @@ run: build
 
 # 查看日志
 logs:
-	tail -f /tmp/otus.log
+	tail -f /tmp/capture-agent.log
 
 # 开发模式（前台运行）
 dev: build

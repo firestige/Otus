@@ -3,8 +3,8 @@ package task
 import (
 	"testing"
 
-	"firestige.xyz/otus/internal/config"
-	"firestige.xyz/otus/internal/core"
+	"icc.tech/capture-agent/internal/config"
+	"icc.tech/capture-agent/internal/core"
 )
 
 func TestTaskStateTransitions(t *testing.T) {

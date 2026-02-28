@@ -10,7 +10,7 @@ func TestDaemon_ReloadLogLevel(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	configContent := `
-otus:
+capture-agent:
   node:
     hostname: test-reload-001
   log:
@@ -27,8 +27,8 @@ otus:
 		t.Fatalf("write config: %v", err)
 	}
 
-	socketPath := filepath.Join(tmpDir, "otus.sock")
-	pidFile := filepath.Join(tmpDir, "otus.pid")
+	socketPath := filepath.Join(tmpDir, "capture-agent.sock")
+	pidFile := filepath.Join(tmpDir, "capture-agent.pid")
 
 	d, err := New(configPath, socketPath, pidFile)
 	if err != nil {
@@ -47,7 +47,7 @@ otus:
 
 	// Update config file to change log level
 	newConfigContent := `
-otus:
+capture-agent:
   node:
     hostname: test-reload-001
   log:
@@ -78,7 +78,7 @@ func TestDaemon_ReloadPreservesRunningTasks(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	configContent := `
-otus:
+capture-agent:
   node:
     hostname: test-reload-002
   log:
@@ -95,8 +95,8 @@ otus:
 		t.Fatalf("write config: %v", err)
 	}
 
-	socketPath := filepath.Join(tmpDir, "otus.sock")
-	pidFile := filepath.Join(tmpDir, "otus.pid")
+	socketPath := filepath.Join(tmpDir, "capture-agent.sock")
+	pidFile := filepath.Join(tmpDir, "capture-agent.pid")
 
 	d, err := New(configPath, socketPath, pidFile)
 	if err != nil {
@@ -126,7 +126,7 @@ func TestDaemon_ReloadMetricsInterval(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	configContent := `
-otus:
+capture-agent:
   node:
     hostname: test-reload-003
   log:
@@ -143,8 +143,8 @@ otus:
 		t.Fatalf("write config: %v", err)
 	}
 
-	socketPath := filepath.Join(tmpDir, "otus.sock")
-	pidFile := filepath.Join(tmpDir, "otus.pid")
+	socketPath := filepath.Join(tmpDir, "capture-agent.sock")
+	pidFile := filepath.Join(tmpDir, "capture-agent.pid")
 
 	d, err := New(configPath, socketPath, pidFile)
 	if err != nil {
@@ -158,7 +158,7 @@ otus:
 
 	// Update config with different metrics interval
 	newConfigContent := `
-otus:
+capture-agent:
   node:
     hostname: test-reload-003
   log:

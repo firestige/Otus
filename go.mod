@@ -1,4 +1,4 @@
-module firestige.xyz/otus
+module icc.tech/capture-agent
 
 go 1.24
 

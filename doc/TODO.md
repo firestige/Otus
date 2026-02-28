@@ -1,4 +1,4 @@
-# Otus TODO
+# capture-agent TODO
 
 后续待完成工作清单。Phase 1 已全部完成（含 Step 16/17/18）。
 
@@ -26,8 +26,8 @@
 
 `internal/task/reporter.go` 或接入 `internal/daemon/daemon.go`
 
-- 心跳：每 30s 向 `otus-heartbeat` topic 推送节点状态（hostname、版本、运行时间、active task 数）
-- Task 状态变更事件：Task 进入 running/stopped/failed 时推送到 `otus-events` topic
+- 心跳：每 30s 向 `capture-agent-heartbeat` topic 推送节点状态（hostname、版本、运行时间、active task 数）
+- Task 状态变更事件：Task 进入 running/stopped/failed 时推送到 `capture-agent-events` topic
 - 远端平台通过这两个 topic 判断节点可用性和任务执行结果
 
 ---
@@ -119,7 +119,7 @@
 
 - 当 pps 超过阈值时自动按比例采样（基于哈希/随机）
 - 支持按 flow、按协议类型差异化采样率
-- 采样状态上报到 `otus-events` topic
+- 采样状态上报到 `capture-agent-events` topic
 
 ---
 
@@ -127,9 +127,9 @@
 
 独立服务（超出本仓库范围）：
 
-- 多节点注册与发现（基于 `otus-heartbeat` topic）
+- 多节点注册与发现（基于 `capture-agent-heartbeat` topic）
 - Web UI：节点状态、Task 管理、流量统计
-- 配置下发：通过 `otus-commands` topic 批量管理节点
+- 配置下发：通过 `capture-agent-commands` topic 批量管理节点
 - 告警规则：基于 Prometheus AlertManager
 
 ---
@@ -164,4 +164,4 @@
 ---
 
 **更新日期**: 2026-02-22  
-**维护者**: Otus Team
+**维护者**: capture-agent Team

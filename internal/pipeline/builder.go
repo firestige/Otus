@@ -2,8 +2,8 @@
 package pipeline
 
 import (
-	"firestige.xyz/otus/internal/core/decoder"
-	"firestige.xyz/otus/pkg/plugin"
+	"icc.tech/capture-agent/internal/core/decoder"
+	"icc.tech/capture-agent/pkg/plugin"
 )
 
 // Builder provides a fluent interface for building pipelines.

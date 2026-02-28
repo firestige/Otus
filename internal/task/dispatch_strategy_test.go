@@ -3,7 +3,7 @@ package task
 import (
 	"testing"
 
-	"firestige.xyz/otus/internal/core"
+	"icc.tech/capture-agent/internal/core"
 )
 
 func TestFlowHashStrategy_Consistency(t *testing.T) {

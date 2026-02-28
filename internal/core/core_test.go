@@ -131,14 +131,14 @@ func TestSentinelErrors(t *testing.T) {
 			err     error
 			message string
 		}{
-			{ErrTaskNotFound, "otus: task not found"},
-			{ErrTaskAlreadyExists, "otus: task already exists"},
-			{ErrPipelineStopped, "otus: pipeline stopped"},
-			{ErrPacketTooShort, "otus: packet too short"},
-			{ErrReassemblyTimeout, "otus: fragment reassembly timeout"},
-			{ErrPluginNotFound, "otus: plugin not found"},
-			{ErrConfigInvalid, "otus: invalid configuration"},
-			{ErrDaemonNotRunning, "otus: daemon not running"},
+			{ErrTaskNotFound, "capture-agent: task not found"},
+			{ErrTaskAlreadyExists, "capture-agent: task already exists"},
+			{ErrPipelineStopped, "capture-agent: pipeline stopped"},
+			{ErrPacketTooShort, "capture-agent: packet too short"},
+			{ErrReassemblyTimeout, "capture-agent: fragment reassembly timeout"},
+			{ErrPluginNotFound, "capture-agent: plugin not found"},
+			{ErrConfigInvalid, "capture-agent: invalid configuration"},
+			{ErrDaemonNotRunning, "capture-agent: daemon not running"},
 		}
 
 		for _, tt := range tests {

@@ -8,10 +8,10 @@ import (
 	"sync"
 	"time"
 
-	"firestige.xyz/otus/internal/config"
-	"firestige.xyz/otus/internal/core/decoder"
-	"firestige.xyz/otus/internal/pipeline"
-	"firestige.xyz/otus/pkg/plugin"
+	"icc.tech/capture-agent/internal/config"
+	"icc.tech/capture-agent/internal/core/decoder"
+	"icc.tech/capture-agent/internal/pipeline"
+	"icc.tech/capture-agent/pkg/plugin"
 )
 
 // TaskManager manages task CRUD and state machine.

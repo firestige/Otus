@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"firestige.xyz/otus/internal/core"
+	"icc.tech/capture-agent/internal/core"
 )
 
 // ─── Init Tests ───
@@ -45,7 +45,7 @@ func TestKafkaReporter_Init(t *testing.T) {
 			name: "valid with topic_prefix",
 			config: map[string]any{
 				"brokers":      []any{"localhost:9092"},
-				"topic_prefix": "otus",
+				"topic_prefix": "capture-agent",
 			},
 			wantErr: false,
 		},
@@ -54,7 +54,7 @@ func TestKafkaReporter_Init(t *testing.T) {
 			config: map[string]any{
 				"brokers":      []any{"localhost:9092"},
 				"topic":        "fixed-topic",
-				"topic_prefix": "otus",
+				"topic_prefix": "capture-agent",
 			},
 			wantErr: true,
 		},
@@ -171,16 +171,16 @@ func TestKafkaReporter_ResolveTopic_FixedTopic(t *testing.T) {
 }
 
 func TestKafkaReporter_ResolveTopic_DynamicPrefix(t *testing.T) {
-	r := &KafkaReporter{config: Config{TopicPrefix: "otus"}}
+	r := &KafkaReporter{config: Config{TopicPrefix: "capture-agent"}}
 
 	tests := []struct {
 		payloadType string
 		wantTopic   string
 	}{
-		{"sip", "otus-sip"},
-		{"rtp", "otus-rtp"},
-		{"raw", "otus-raw"},
-		{"", "otus-raw"}, // empty defaults to "raw"
+		{"sip", "capture-agent-sip"},
+		{"rtp", "capture-agent-rtp"},
+		{"raw", "capture-agent-raw"},
+		{"", "capture-agent-raw"}, // empty defaults to "raw"
 	}
 
 	for _, tt := range tests {
@@ -389,7 +389,7 @@ func TestKafkaReporter_Lifecycle_TopicPrefix(t *testing.T) {
 
 	config := map[string]any{
 		"brokers":      []any{"localhost:9092"},
-		"topic_prefix": "otus",
+		"topic_prefix": "capture-agent",
 	}
 
 	err := r.Init(config)
@@ -398,8 +398,8 @@ func TestKafkaReporter_Lifecycle_TopicPrefix(t *testing.T) {
 	}
 
 	kr := r.(*KafkaReporter)
-	if kr.config.TopicPrefix != "otus" {
-		t.Errorf("TopicPrefix = %s, want otus", kr.config.TopicPrefix)
+	if kr.config.TopicPrefix != "capture-agent" {
+		t.Errorf("TopicPrefix = %s, want capture-agent", kr.config.TopicPrefix)
 	}
 	if kr.config.Topic != "" {
 		t.Errorf("Topic = %s, want empty", kr.config.Topic)

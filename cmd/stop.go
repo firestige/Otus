@@ -8,14 +8,14 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"firestige.xyz/otus/internal/command"
+	"icc.tech/capture-agent/internal/command"
 )
 
 // stopCmd represents the stop command
 var stopCmd = &cobra.Command{
 	Use:   "stop",
-	Short: "Stop the Otus daemon",
-	Long: `Stop the Otus daemon gracefully.
+	Short: "Stop the capture-agent daemon",
+	Long: `Stop the capture-agent daemon gracefully.
 
 This command sends a daemon_shutdown signal to the running daemon via Unix Domain Socket.
 The daemon will stop all tasks, flush reporters, and exit cleanly.`,

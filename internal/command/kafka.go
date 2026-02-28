@@ -11,7 +11,7 @@ import (
 
 	"github.com/segmentio/kafka-go"
 
-	"firestige.xyz/otus/internal/config"
+	"icc.tech/capture-agent/internal/config"
 )
 
 // KafkaCommand is the wire format for commands received via Kafka (ADR-026).

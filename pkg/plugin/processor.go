@@ -1,7 +1,7 @@
 // Package plugin defines plugin interfaces.
 package plugin
 
-import "firestige.xyz/otus/internal/core"
+import "icc.tech/capture-agent/internal/core"
 
 // Processor processes output packets.
 type Processor interface {

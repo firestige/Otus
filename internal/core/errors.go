@@ -6,29 +6,29 @@ import "errors"
 // Sentinel errors following ADR-021 error handling pattern.
 var (
 	// Task management errors
-	ErrTaskNotFound      = errors.New("otus: task not found")
-	ErrTaskAlreadyExists = errors.New("otus: task already exists")
-	ErrTaskStartFailed   = errors.New("otus: task start failed")
+	ErrTaskNotFound      = errors.New("capture-agent: task not found")
+	ErrTaskAlreadyExists = errors.New("capture-agent: task already exists")
+	ErrTaskStartFailed   = errors.New("capture-agent: task start failed")
 
 	// Pipeline errors
-	ErrPipelineStopped = errors.New("otus: pipeline stopped")
+	ErrPipelineStopped = errors.New("capture-agent: pipeline stopped")
 
 	// Packet decoding errors
-	ErrPacketTooShort   = errors.New("otus: packet too short")
-	ErrUnsupportedProto = errors.New("otus: unsupported protocol")
+	ErrPacketTooShort   = errors.New("capture-agent: packet too short")
+	ErrUnsupportedProto = errors.New("capture-agent: unsupported protocol")
 
 	// IP reassembly errors
-	ErrReassemblyTimeout  = errors.New("otus: fragment reassembly timeout")
-	ErrReassemblyLimit    = errors.New("otus: fragment reassembly limit exceeded")
-	ErrFragmentIncomplete = errors.New("otus: fragment not complete")
+	ErrReassemblyTimeout  = errors.New("capture-agent: fragment reassembly timeout")
+	ErrReassemblyLimit    = errors.New("capture-agent: fragment reassembly limit exceeded")
+	ErrFragmentIncomplete = errors.New("capture-agent: fragment not complete")
 
 	// Plugin errors
-	ErrPluginNotFound   = errors.New("otus: plugin not found")
-	ErrPluginInitFailed = errors.New("otus: plugin init failed")
+	ErrPluginNotFound   = errors.New("capture-agent: plugin not found")
+	ErrPluginInitFailed = errors.New("capture-agent: plugin init failed")
 
 	// Configuration errors
-	ErrConfigInvalid = errors.New("otus: invalid configuration")
+	ErrConfigInvalid = errors.New("capture-agent: invalid configuration")
 
 	// Daemon errors
-	ErrDaemonNotRunning = errors.New("otus: daemon not running")
+	ErrDaemonNotRunning = errors.New("capture-agent: daemon not running")
 )

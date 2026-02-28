@@ -18,7 +18,7 @@ node:
   hostname: test-daemon-001
 
 control:
-  socket: ` + filepath.Join(tmpDir, "otus.sock") + `
+  socket: ` + filepath.Join(tmpDir, "capture-agent.sock") + `
   timeout: 30s
 
 log:
@@ -27,7 +27,7 @@ log:
   output:
     type: file
     file:
-      path: ` + filepath.Join(tmpDir, "otus.log") + `
+      path: ` + filepath.Join(tmpDir, "capture-agent.log") + `
       max_size: 10
       max_backups: 3
       max_age: 7
@@ -46,8 +46,8 @@ command_channel:
 		t.Fatalf("failed to write config file: %v", err)
 	}
 
-	socketPath := filepath.Join(tmpDir, "otus.sock")
-	pidFile := filepath.Join(tmpDir, "otus.pid")
+	socketPath := filepath.Join(tmpDir, "capture-agent.sock")
+	pidFile := filepath.Join(tmpDir, "capture-agent.pid")
 
 	// Create daemon instance
 	d, err := New(configPath, socketPath, pidFile)

@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"firestige.xyz/otus/internal/config"
+	"icc.tech/capture-agent/internal/config"
 )
 
 func testPersistedTask(id, state string) PersistedTask {

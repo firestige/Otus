@@ -8,8 +8,8 @@ import (
 
 	"github.com/segmentio/kafka-go"
 
-	"firestige.xyz/otus/internal/config"
-	"firestige.xyz/otus/internal/task"
+	"icc.tech/capture-agent/internal/config"
+	"icc.tech/capture-agent/internal/task"
 )
 
 // helper: minimal valid CommandChannelConfig for constructor tests
@@ -21,7 +21,7 @@ func validCCConfig() config.CommandChannelConfig {
 		Kafka: config.CommandKafkaConfig{
 			Brokers:         []string{"localhost:9092"},
 			Topic:           "commands",
-			GroupID:         "otus-group",
+			GroupID:         "capture-agent-group",
 			AutoOffsetReset: "latest",
 		},
 	}
@@ -46,7 +46,7 @@ func TestNewKafkaCommandConsumer(t *testing.T) {
 			config: config.CommandChannelConfig{
 				Kafka: config.CommandKafkaConfig{
 					Topic:   "commands",
-					GroupID: "otus-group",
+					GroupID: "capture-agent-group",
 				},
 			},
 			wantErr: true,
@@ -56,7 +56,7 @@ func TestNewKafkaCommandConsumer(t *testing.T) {
 			config: config.CommandChannelConfig{
 				Kafka: config.CommandKafkaConfig{
 					Brokers: []string{"localhost:9092"},
-					GroupID: "otus-group",
+					GroupID: "capture-agent-group",
 				},
 			},
 			wantErr: true,
@@ -322,7 +322,7 @@ func newTestConsumerWithMockWriter(t *testing.T, hostname string, mw *mockWriter
 // ccConfigWithResponseTopic returns a valid config with response_topic set.
 func ccConfigWithResponseTopic() config.CommandChannelConfig {
 	cfg := validCCConfig()
-	cfg.Kafka.ResponseTopic = "otus-responses"
+	cfg.Kafka.ResponseTopic = "capture-agent-responses"
 	return cfg
 }
 

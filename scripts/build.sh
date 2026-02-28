@@ -1,5 +1,5 @@
 #!/bin/bash
-# Cross-compilation script for otus
+# Cross-compilation script for capture-agent
 # Builds static binaries for multiple architectures
 
 set -euo pipefail
@@ -66,7 +66,7 @@ check_deps() {
 build_arch() {
     local os="$1"
     local arch="$2"
-    local output_name="otus-${os}-${arch}"
+    local output_name="capture-agent-${os}-${arch}"
     
     log "Building $output_name..."
     
@@ -120,7 +120,7 @@ build_arch() {
 # Main build function
 main() {
     log "========================================"
-    log "Otus Static Build Script"
+    log "Capture-Agent Static Build Script"
     log "Version: $VERSION"
     log "Commit:  $GIT_COMMIT"
     log "Time:    $BUILD_TIME"
@@ -149,7 +149,7 @@ main() {
                 cat <<EOF
 Usage: $0 [OPTIONS]
 
-Build static otus binaries for deployment.
+Build static capture-agent binaries for deployment.
 
 Options:
   --arch=ARCH     Build only for specified architecture (amd64, arm64)
@@ -212,20 +212,20 @@ EOF
     if [[ -d "$OUTPUT_DIR" ]]; then
         log ""
         log "Available binaries:"
-        ls -lh "$OUTPUT_DIR"/otus-* | awk '{print "  " $9 " (" $5 ")"}'
+        ls -lh "$OUTPUT_DIR"/capture-agent-* | awk '{print "  " $9 " (" $5 ")"}'
     fi
     
     log "========================================"
     log ""
     log "Deployment instructions:"
     log "  1. Copy binary to target server:"
-    log "     scp $OUTPUT_DIR/otus-linux-amd64 user@server:/tmp/otus"
+    log "     scp $OUTPUT_DIR/capture-agent-linux-amd64 user@server:/tmp/capture-agent"
     log ""
     log "  2. Install on target server:"
-    log "     sudo install -m 755 /tmp/otus /usr/local/bin/otus"
-    log "     sudo cp configs/otus.service /etc/systemd/system/"
+    log "     sudo install -m 755 /tmp/capture-agent /usr/local/bin/capture-agent"
+    log "     sudo cp configs/capture-agent.service /etc/systemd/system/"
     log "     sudo systemctl daemon-reload"
-    log "     sudo systemctl enable --now otus"
+    log "     sudo systemctl enable --now capture-agent"
     log ""
     log "See README.md for K8s and other deployment scenarios."
 }

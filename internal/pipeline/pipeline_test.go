@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"firestige.xyz/otus/internal/core"
-	"firestige.xyz/otus/pkg/plugin"
+	"icc.tech/capture-agent/internal/core"
+	"icc.tech/capture-agent/pkg/plugin"
 )
 
 // Mock implementations for testing

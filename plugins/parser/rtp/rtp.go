@@ -19,8 +19,8 @@ import (
 	"encoding/binary"
 	"fmt"
 
-	"firestige.xyz/otus/internal/core"
-	"firestige.xyz/otus/pkg/plugin"
+	"icc.tech/capture-agent/internal/core"
+	"icc.tech/capture-agent/pkg/plugin"
 )
 
 // rtcpPayloadTypeMin / Max define the RTCP PT range per RFC 5761 / RFC 3550.

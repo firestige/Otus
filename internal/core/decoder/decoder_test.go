@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"firestige.xyz/otus/internal/core"
+	"icc.tech/capture-agent/internal/core"
 )
 
 // Helper function to create a simple IPv4 UDP packet

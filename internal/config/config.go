@@ -11,7 +11,7 @@ import (
 )
 
 // GlobalConfig represents the top-level global static configuration.
-// Maps to the `otus:` root key in YAML (see config-design.md §2).
+// Maps to the `capture-agent:` root key in YAML (see config-design.md §2).
 type GlobalConfig struct {
 	Node             NodeConfig             `mapstructure:"node"`
 	Control          ControlConfig          `mapstructure:"control"`
@@ -23,7 +23,7 @@ type GlobalConfig struct {
 	Core             CoreConfig             `mapstructure:"core"`
 	Metrics          MetricsConfig          `mapstructure:"metrics"`
 	Log              LogConfig              `mapstructure:"log"`
-	DataDir          string                 `mapstructure:"data_dir"`           // ADR-030: /var/lib/otus
+	DataDir          string                 `mapstructure:"data_dir"`           // ADR-030: /var/lib/capture-agent
 	TaskPersistence  TaskPersistenceConfig  `mapstructure:"task_persistence"`   // ADR-030/031
 }
 
@@ -234,11 +234,11 @@ type TaskPersistenceConfig struct {
 
 // configRoot is the top-level wrapper matching the YAML structure `otus: ...`.
 type configRoot struct {
-	Otus GlobalConfig `mapstructure:"otus"`
+	CaptureAgent GlobalConfig `mapstructure:"capture-agent"`
 }
 
 // Load loads configuration from file.
-// The YAML file uses `otus:` as root key; env vars use OTUS_ prefix (e.g., OTUS_LOG_LEVEL).
+// The YAML file uses `capture-agent:` as root key; env vars use CAPTURE_AGENT_ prefix (e.g., CAPTURE_AGENT_LOG_LEVEL).
 func Load(path string) (*GlobalConfig, error) {
 	v := viper.New()
 
@@ -251,12 +251,12 @@ func Load(path string) (*GlobalConfig, error) {
 	}
 
 	// Environment variable overrides.
-	// No explicit env prefix — the `otus.` key prefix naturally maps to `OTUS_`
-	// in env vars via the key replacer (e.g., key "otus.log.level" → env "OTUS_LOG_LEVEL").
+	// No explicit env prefix — the `capture-agent.` key prefix naturally maps to `CAPTURE_AGENT_`
+	// in env vars via the key replacer (e.g., key "capture-agent.log.level" → env "CAPTURE_AGENT_LOG_LEVEL").
 	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
 	v.AutomaticEnv()
 
-	// Set defaults with "otus." prefix to match the YAML structure
+	// Set defaults with "capture-agent." prefix to match the YAML structure
 	setDefaults(v)
 
 	// Unmarshal into wrapper → extract inner GlobalConfig
@@ -264,7 +264,7 @@ func Load(path string) (*GlobalConfig, error) {
 	if err := v.Unmarshal(&root); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal config: %w", err)
 	}
-	cfg := root.Otus
+	cfg := root.CaptureAgent
 
 	// Validate and apply defaults
 	if err := cfg.ValidateAndApplyDefaults(); err != nil {
@@ -275,58 +275,58 @@ func Load(path string) (*GlobalConfig, error) {
 }
 
 // setDefaults sets default values for configuration.
-// All keys use "otus." prefix to match the YAML root wrapper.
+// All keys use "capture-agent." prefix to match the YAML root wrapper.
 func setDefaults(v *viper.Viper) {
 	// Control defaults
-	v.SetDefault("otus.control.pid_file", "/var/run/otus.pid")
-	v.SetDefault("otus.control.socket", "/var/run/otus.sock")
+	v.SetDefault("capture-agent.control.pid_file", "/var/run/capture-agent.pid")
+	v.SetDefault("capture-agent.control.socket", "/var/run/capture-agent.sock")
 
 	// Log defaults
-	v.SetDefault("otus.log.level", "info")
-	v.SetDefault("otus.log.format", "json")
-	v.SetDefault("otus.log.outputs.file.enabled", false)
-	v.SetDefault("otus.log.outputs.file.path", "/var/log/otus/otus.log")
-	v.SetDefault("otus.log.outputs.file.rotation.max_size_mb", 100)
-	v.SetDefault("otus.log.outputs.file.rotation.max_age_days", 30)
-	v.SetDefault("otus.log.outputs.file.rotation.max_backups", 5)
-	v.SetDefault("otus.log.outputs.file.rotation.compress", true)
+	v.SetDefault("capture-agent.log.level", "info")
+	v.SetDefault("capture-agent.log.format", "json")
+	v.SetDefault("capture-agent.log.outputs.file.enabled", false)
+	v.SetDefault("capture-agent.log.outputs.file.path", "/var/log/capture-agent/capture-agent.log")
+	v.SetDefault("capture-agent.log.outputs.file.rotation.max_size_mb", 100)
+	v.SetDefault("capture-agent.log.outputs.file.rotation.max_age_days", 30)
+	v.SetDefault("capture-agent.log.outputs.file.rotation.max_backups", 5)
+	v.SetDefault("capture-agent.log.outputs.file.rotation.compress", true)
 
 	// Metrics defaults
-	v.SetDefault("otus.metrics.enabled", true)
-	v.SetDefault("otus.metrics.listen", ":9091")
-	v.SetDefault("otus.metrics.path", "/metrics")
-	v.SetDefault("otus.metrics.collect_interval", "5s")
+	v.SetDefault("capture-agent.metrics.enabled", true)
+	v.SetDefault("capture-agent.metrics.listen", ":9091")
+	v.SetDefault("capture-agent.metrics.path", "/metrics")
+	v.SetDefault("capture-agent.metrics.collect_interval", "5s")
 
 	// Command channel defaults
-	v.SetDefault("otus.command_channel.enabled", false)
-	v.SetDefault("otus.command_channel.type", "kafka")
-	v.SetDefault("otus.command_channel.kafka.auto_offset_reset", "latest")
-	v.SetDefault("otus.command_channel.command_ttl", "5m")
+	v.SetDefault("capture-agent.command_channel.enabled", false)
+	v.SetDefault("capture-agent.command_channel.type", "kafka")
+	v.SetDefault("capture-agent.command_channel.kafka.auto_offset_reset", "latest")
+	v.SetDefault("capture-agent.command_channel.command_ttl", "5m")
 
 	// Backpressure defaults
-	v.SetDefault("otus.backpressure.pipeline_channel.capacity", 65536)
-	v.SetDefault("otus.backpressure.pipeline_channel.drop_policy", "tail")
-	v.SetDefault("otus.backpressure.send_buffer.capacity", 16384)
-	v.SetDefault("otus.backpressure.send_buffer.drop_policy", "head")
-	v.SetDefault("otus.backpressure.send_buffer.high_watermark", 0.8)
-	v.SetDefault("otus.backpressure.send_buffer.low_watermark", 0.3)
-	v.SetDefault("otus.backpressure.reporter.send_timeout", "3s")
-	v.SetDefault("otus.backpressure.reporter.max_retries", 1)
+	v.SetDefault("capture-agent.backpressure.pipeline_channel.capacity", 65536)
+	v.SetDefault("capture-agent.backpressure.pipeline_channel.drop_policy", "tail")
+	v.SetDefault("capture-agent.backpressure.send_buffer.capacity", 16384)
+	v.SetDefault("capture-agent.backpressure.send_buffer.drop_policy", "head")
+	v.SetDefault("capture-agent.backpressure.send_buffer.high_watermark", 0.8)
+	v.SetDefault("capture-agent.backpressure.send_buffer.low_watermark", 0.3)
+	v.SetDefault("capture-agent.backpressure.reporter.send_timeout", "3s")
+	v.SetDefault("capture-agent.backpressure.reporter.max_retries", 1)
 
 	// Core decoder defaults
-	v.SetDefault("otus.core.decoder.ip_reassembly.timeout", "30s")
-	v.SetDefault("otus.core.decoder.ip_reassembly.max_fragments", 10000)
+	v.SetDefault("capture-agent.core.decoder.ip_reassembly.timeout", "30s")
+	v.SetDefault("capture-agent.core.decoder.ip_reassembly.max_fragments", 10000)
 
 	// Task persistence defaults (ADR-030, ADR-031)
-	v.SetDefault("otus.data_dir", "/var/lib/otus")
-	v.SetDefault("otus.task_persistence.enabled", true)
-	v.SetDefault("otus.task_persistence.auto_restart", true)
-	v.SetDefault("otus.task_persistence.gc_interval", "1h")
-	v.SetDefault("otus.task_persistence.max_task_history", 100)
+	v.SetDefault("capture-agent.data_dir", "/var/lib/capture-agent")
+	v.SetDefault("capture-agent.task_persistence.enabled", true)
+	v.SetDefault("capture-agent.task_persistence.auto_restart", true)
+	v.SetDefault("capture-agent.task_persistence.gc_interval", "1h")
+	v.SetDefault("capture-agent.task_persistence.max_task_history", 100)
 
 	// Reporter defaults
-	v.SetDefault("otus.reporters.kafka.compression", "snappy")
-	v.SetDefault("otus.reporters.kafka.max_message_bytes", 1048576)
+	v.SetDefault("capture-agent.reporters.kafka.compression", "snappy")
+	v.SetDefault("capture-agent.reporters.kafka.max_message_bytes", 1048576)
 }
 
 // ValidateAndApplyDefaults validates configuration and applies runtime defaults.
@@ -372,7 +372,7 @@ func (cfg *GlobalConfig) ValidateAndApplyDefaults() error {
 			return fmt.Errorf("command_channel.kafka.topic is required when command_channel.enabled=true")
 		}
 		if cfg.CommandChannel.Kafka.GroupID == "" {
-			cfg.CommandChannel.Kafka.GroupID = "otus-" + cfg.Node.Hostname
+			cfg.CommandChannel.Kafka.GroupID = "capture-agent-" + cfg.Node.Hostname
 		}
 	}
 
@@ -418,11 +418,11 @@ func resolveNodeIP(node *NodeConfig) (string, error) {
 		}
 	}
 
-	return "", fmt.Errorf("cannot resolve node IP: set OTUS_NODE_IP or otus.node.ip")
+	return "", fmt.Errorf("cannot resolve node IP: set CAPTURE_AGENT_NODE_IP or capture-agent.node.ip")
 }
 
 // applyKafkaInheritance applies ADR-024 Kafka global config inheritance.
-// Global otus.kafka fields are inherited by command_channel.kafka and reporters.kafka
+// Global capture-agent.kafka fields are inherited by command_channel.kafka and reporters.kafka
 // when their local fields are empty/zero.
 func applyKafkaInheritance(cfg *GlobalConfig) {
 	global := &cfg.Kafka

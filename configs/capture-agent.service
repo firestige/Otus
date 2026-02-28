@@ -1,6 +1,6 @@
 [Unit]
-Description=Otus Network Packet Capture Daemon
-Documentation=https://github.com/firestige/otus
+Description=capture-agent Network Packet Capture Daemon
+Documentation=https://github.com/firestige/capture-agent
 After=network-online.target
 Wants=network-online.target
 
@@ -11,9 +11,9 @@ User=root
 Group=root
 
 # Ensure data directories exist with correct permissions (ADR-031)
-ExecStartPre=systemd-tmpfiles --create /etc/tmpfiles.d/otus.conf
+ExecStartPre=systemd-tmpfiles --create /etc/tmpfiles.d/capture-agent.conf
 # Daemon mode (foreground for systemd)
-ExecStart=/usr/local/bin/otus daemon
+ExecStart=/usr/local/bin/capture-agent daemon
 ExecReload=/bin/kill -HUP $MAINPID
 
 # Graceful shutdown (SIGTERM)
@@ -35,7 +35,7 @@ NoNewPrivileges=false
 PrivateTmp=true
 ProtectSystem=full
 ProtectHome=true
-ReadWritePaths=/var/lib/otus /var/log/otus /etc/otus
+ReadWritePaths=/var/lib/capture-agent /var/log/capture-agent /etc/capture-agent
 
 # Required capabilities for packet capture
 AmbientCapabilities=CAP_NET_RAW CAP_NET_ADMIN
@@ -44,10 +44,25 @@ CapabilityBoundingSet=CAP_NET_RAW CAP_NET_ADMIN CAP_DAC_OVERRIDE
 # Logging
 StandardOutput=journal
 StandardError=journal
-SyslogIdentifier=otus
+SyslogIdentifier=capture-agent
 
 # Working directory
-WorkingDirectory=/var/lib/otus
+WorkingDirectory=/var/lib/capture-agent
+
+[Unit]
+Description=Capture Agent Edge Packet Capture Agent
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/capture-agent
+Restart=on-failure
+RestartSec=5
+User=root
+Group=root
+LimitNOFILE=65536
+WorkingDirectory=/
+EnvironmentFile=-/etc/default/capture-agent
 
 [Install]
 WantedBy=multi-user.target

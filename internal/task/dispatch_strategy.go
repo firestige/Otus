@@ -4,7 +4,7 @@ package task
 import (
 	"sync/atomic"
 
-	"firestige.xyz/otus/internal/core"
+	"icc.tech/capture-agent/internal/core"
 )
 
 // DispatchStrategy determines how packets are distributed across pipelines.

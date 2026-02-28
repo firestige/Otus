@@ -8,14 +8,14 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"firestige.xyz/otus/internal/daemon"
+	"icc.tech/capture-agent/internal/daemon"
 )
 
 // daemonCmd represents the daemon command
 var daemonCmd = &cobra.Command{
 	Use:   "daemon",
-	Short: "Run Otus daemon in foreground",
-	Long: `Run the Otus daemon process in foreground.
+	Short: "Run capture-agent daemon in foreground",
+	Long: `Run the capture-agent daemon process in foreground.
 
 The daemon will:
   1. Load global configuration from config file
@@ -40,12 +40,12 @@ var (
 func init() {
 	daemonCmd.Flags().BoolVarP(&daemonForeground, "foreground", "f", true,
 		"run in foreground (default: true)")
-	daemonCmd.Flags().StringVarP(&pidFile, "pidfile", "p", "/var/run/otus.pid",
+	daemonCmd.Flags().StringVarP(&pidFile, "pidfile", "p", "/var/run/capture-agent.pid",
 		"PID file path")
 }
 
 func runDaemon() error {
-	fmt.Println("Starting Otus daemon...")
+	fmt.Println("Starting capture-agent daemon...")
 	fmt.Printf("Config: %s\n", configFile)
 	fmt.Printf("Socket: %s\n", socketPath)
 	fmt.Printf("PID file: %s\n", pidFile)

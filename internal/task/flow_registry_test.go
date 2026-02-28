@@ -5,7 +5,7 @@ import (
 	"sync"
 	"testing"
 
-	"firestige.xyz/otus/pkg/plugin"
+	"icc.tech/capture-agent/pkg/plugin"
 )
 
 func TestFlowRegistry(t *testing.T) {

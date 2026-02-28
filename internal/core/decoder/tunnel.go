@@ -4,7 +4,7 @@ package decoder
 import (
 	"encoding/binary"
 
-	"firestige.xyz/otus/internal/core"
+	"icc.tech/capture-agent/internal/core"
 )
 
 const (

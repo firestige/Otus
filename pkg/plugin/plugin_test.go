@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"firestige.xyz/otus/internal/core"
+	"icc.tech/capture-agent/internal/core"
 )
 
 // Mock implementations for testing interface compliance

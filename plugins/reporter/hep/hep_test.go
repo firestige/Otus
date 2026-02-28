@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"firestige.xyz/otus/internal/core"
+	"icc.tech/capture-agent/internal/core"
 )
 
 // ─── Encoder tests ─────────────────────────────────────────────────────────

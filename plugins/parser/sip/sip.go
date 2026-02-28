@@ -14,8 +14,8 @@ import (
 
 	"github.com/patrickmn/go-cache"
 
-	"firestige.xyz/otus/internal/core"
-	"firestige.xyz/otus/pkg/plugin"
+	"icc.tech/capture-agent/internal/core"
+	"icc.tech/capture-agent/pkg/plugin"
 )
 
 const (

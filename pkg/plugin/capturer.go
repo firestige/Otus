@@ -4,7 +4,7 @@ package plugin
 import (
 	"context"
 
-	"firestige.xyz/otus/internal/core"
+	"icc.tech/capture-agent/internal/core"
 )
 
 // Capturer captures raw packets from network interface.

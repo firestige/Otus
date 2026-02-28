@@ -2,13 +2,13 @@
 package plugins
 
 import (
-	"firestige.xyz/otus/pkg/plugin"
-	"firestige.xyz/otus/plugins/capture/afpacket"
-	"firestige.xyz/otus/plugins/parser/rtp"
-	"firestige.xyz/otus/plugins/parser/sip"
-	"firestige.xyz/otus/plugins/reporter/console"
-	"firestige.xyz/otus/plugins/reporter/hep"
-	"firestige.xyz/otus/plugins/reporter/kafka"
+	"icc.tech/capture-agent/pkg/plugin"
+	"icc.tech/capture-agent/plugins/capture/afpacket"
+	"icc.tech/capture-agent/plugins/parser/rtp"
+	"icc.tech/capture-agent/plugins/parser/sip"
+	"icc.tech/capture-agent/plugins/reporter/console"
+	"icc.tech/capture-agent/plugins/reporter/hep"
+	"icc.tech/capture-agent/plugins/reporter/kafka"
 )
 
 func init() {

@@ -1,6 +1,6 @@
-# Otus - 架构决策记录 (Architecture Decision Records)
+# capture-agent - 架构决策记录 (Architecture Decision Records)
 
-本文档记录 Otus 项目在架构设计过程中的关键决策讨论、备选方案分析和最终结论。
+本文档记录 capture-agent 项目在架构设计过程中的关键决策讨论、备选方案分析和最终结论。
 每个决策包含完整的上下文和推理过程，便于后续回溯和审查。
 
 ---
@@ -177,7 +177,7 @@ IP 分片重组是核心代码，**常开，不可配置关闭**。
 
 **决定**：采用 **方案 B**。
 
-**理由**：Otus 是被动观测程序，不暴露网络服务，攻击者不知道有抓包程序在运行。不存在被定向攻击的可能。简单上限 + 超时足以防止资源泄漏。
+**理由**：Capture-Agent 是被动观测程序，不暴露网络服务，攻击者不知道有抓包程序在运行。不存在被定向攻击的可能。简单上限 + 超时足以防止资源泄漏。
 
 #### ADR-004b: 分片重组与零拷贝的矛盾
 
@@ -263,7 +263,7 @@ type TCPReassembler interface {
 
 #### ADR-005c: Mid-stream Join（中途加入已有连接）
 
-**问题**：如果 Otus 启动时 TCP 连接已存在（看不到 SYN），如何处理？
+**问题**：如果 capture-agent 启动时 TCP 连接已存在（看不到 SYN），如何处理？
 
 **备选方案**：
 | 方案 | 描述 | 优点 | 缺点 |
@@ -276,7 +276,7 @@ type TCPReassembler interface {
 **关键分析——为什么不能丢弃 mid-stream 流**：
 
 SIP over TCP（trunk 长连接）、WebSocket 等连接可能存活数小时甚至数天。丢弃 mid-stream 流意味着：
-- Otus 每次 start / reload 后，所有存量 TCP 连接都是 mid-stream
+- capture-agent 每次 start / reload 后，所有存量 TCP 连接都是 mid-stream
 - SIP trunk 长连接场景下，可能几小时内整条线路的信令全部丢失
 - 运维无法感知"为什么某些呼叫看不到信令"
 
@@ -575,13 +575,13 @@ type OutputPacket struct {
 1. 边缘节点网络环境复杂——防火墙、NAT、安全策略普遍禁止入站端口，推模式要求宿主机/容器开放 gRPC 监听端口，部署阻力大
 2. Kafka 已是系统依赖（Reporter 上报数据用 Kafka），复用 Kafka 做命令通道**零新增依赖**
 3. 拉模式天然适合异步控制：Control Plane 发布命令到 topic，Agent 上线后自动消费，支持离线重连后补偿
-4. `group_id` 按节点隔离（`otus-${node.id}`），`target` 字段按节点路由，确保消息精准投递
+4. `group_id` 按节点隔离（`capture-agent-${node.id}`），`target` 字段按节点路由，确保消息精准投递
 5. 本地调试通过 CLI + Unix Domain Socket 解决，不依赖远程通道
 
 **命令通道设计**：
-- 命令 topic：`otus-commands`，JSON 格式，`target` 字段路由
-- 本地控制：CLI → Unix Domain Socket（`/var/run/otus.sock`）→ daemon
-- Phase 2 补充：`otus-status` topic 上报心跳和 Task 状态，形成完整闭环
+- 命令 topic：`capture-agent-commands`，JSON 格式，`target` 字段路由
+- 本地控制：CLI → Unix Domain Socket（`/var/run/capture-agent.sock`）→ daemon
+- Phase 2 补充：`capture-agent-status` topic 上报心跳和 Task 状态，形成完整闭环
 
 **被否决的方案**：
 - gRPC Server（推模式）：需要开放入站端口，Phase 1 不实施
@@ -606,8 +606,8 @@ type OutputPacket struct {
 
 **保留参考价值的旧代码**：
 - `internal/utils/bpf.go` — BPF 过滤器编译逻辑
-- `internal/otus/module/capture/codec/assembly_ipv4.go` — IPv4 分片重组算法思路
-- `internal/otus/module/capture/handle/handle_afpacket.go` — AF_PACKET TPacket v3 配置参数
+- `internal/capture-agent/module/capture/codec/assembly_ipv4.go` — IPv4 分片重组算法思路
+- `internal/capture-agent/module/capture/handle/handle_afpacket.go` — AF_PACKET TPacket v3 配置参数
 - `plugins/parser/sip/sip_parser.go` — SIP 协议检测和解析逻辑
 
 ---
@@ -620,10 +620,10 @@ type OutputPacket struct {
 
 **理由**：
 
-1. 这套逻辑本质是 **Collector 的职责**——从 Otus 收集到观测数据后，在 Collector 侧整理计算得到 Tracing Span
+1. 这套逻辑本质是 **Collector 的职责**——从 capture-agent 收集到观测数据后，在 Collector 侧整理计算得到 Tracing Span
 2. 需要缓存完整 SIP 会话（Dialog 状态 + Transaction 状态机），内存占用和计算复杂度远超抓包引擎应有的范围
 3. 会话关联计算（跨多个包的状态追踪）会拖慢 hot path 性能，违背"核心只做捕获+解码+分发"的原则
-4. Otus 的定位是**边缘抓包 Agent**，输出原始观测数据（OutputPacket），由下游 Collector 负责关联分析和 APM 集成
+4. capture-agent 的定位是**边缘抓包 Agent**，输出原始观测数据（OutputPacket），由下游 Collector 负责关联分析和 APM 集成
 
 ---
 
@@ -669,9 +669,9 @@ type OutputPacket struct {
 
 **理由**：
 
-1. **CGO 是硬伤**：Otus 部署在边缘节点，需要简单的静态二进制 + 多架构交叉编译（amd64/arm64），confluent-kafka-go 排除
-2. Otus 的 Kafka 使用场景简单：一个 Consumer Group 订阅命令 topic + Producer 发送数据，不需要事务/Exactly-Once
-3. kafka-go 的 `Reader`/`Writer` 抽象与 Otus 场景精确匹配，代码量约为 sarama 的 1/3
+1. **CGO 是硬伤**：Capture-Agent 部署在边缘节点，需要简单的静态二进制 + 多架构交叉编译（amd64/arm64），confluent-kafka-go 排除
+2. capture-agent 的 Kafka 使用场景简单：一个 Consumer Group 订阅命令 topic + Producer 发送数据，不需要事务/Exactly-Once
+3. kafka-go 的 `Reader`/`Writer` 抽象与 capture-agent 场景精确匹配，代码量约为 sarama 的 1/3
 
 ---
 
@@ -765,7 +765,7 @@ type DecodedPacket struct {
 **理由**（选 A）：
 
 1. Go 的 `plugin.Open()` 限制严格——必须同 Go 版本、同依赖版本编译，不可卸载，仅 Linux/macOS，社区普遍不推荐
-2. Otus 是边缘采集 Agent，部署时重新编译二进制是正常流程（交叉编译 amd64/arm64），不需要运行时扩展
+2. capture-agent 是边缘采集 Agent，部署时重新编译二进制是正常流程（交叉编译 amd64/arm64），不需要运行时扩展
 3. 静态链接的性能最优——函数调用无间接层，编译器可内联优化
 4. 模式成熟：`database/sql`、`image`、`hash` 等标准库均使用 init() + Register 模式
 
@@ -792,21 +792,21 @@ Factory(构造空实例) → Init(注入配置) → Wire(注入共享资源) →
 
 ### 背景
 
-`otus.node.ip` 用于 Label 注入（每个 OutputPacket 携带采集节点 IP）和人类识读。需要在"必须手动配置"和"支持自动探测"之间选择。
+`capture-agent.node.ip` 用于 Label 注入（每个 OutputPacket 携带采集节点 IP）和人类识读。需要在"必须手动配置"和"支持自动探测"之间选择。
 
 ### 决定
 
 **混合方案：环境变量 > 自动探测 > 启动报错**。
 
 解析优先级：
-1. 环境变量 `OTUS_NODE_IP`（Viper `AutomaticEnv()` 映射）
-2. YAML 配置 `otus.node.ip` 显式值
+1. 环境变量 `CAPTURE_AGENT_NODE_IP`（Viper `AutomaticEnv()` 映射）
+2. YAML 配置 `capture-agent.node.ip` 显式值
 3. 自动探测：`net.Interfaces()` 遍历，取首个 UP 且非 loopback 的 IPv4 地址（排除 169.254.x.x link-local）
-4. 全部失败 → `log.Fatal("cannot resolve node IP: set OTUS_NODE_IP or otus.node.ip")`
+4. 全部失败 → `log.Fatal("cannot resolve node IP: set CAPTURE_AGENT_NODE_IP or capture-agent.node.ip")`
 
 ### 理由
 
-- 容器/K8s 环境通过 `OTUS_NODE_IP` env 注入最方便（Downward API）
+- 容器/K8s 环境通过 `CAPTURE_AGENT_NODE_IP` env 注入最方便（Downward API）
 - 裸机部署自动探测减少配置负担
 - 不允许静默成功（如 fallback 到 127.0.0.1），宁可启动失败也要获得正确的节点 IP
 
@@ -824,13 +824,13 @@ Factory(构造空实例) → Init(注入配置) → Wire(注入共享资源) →
 
 ### 决定
 
-新增顶层 `otus.kafka` 全局配置节，提供 `brokers`/`sasl`/`tls` 默认值。`command_channel.kafka` 和 `reporters.kafka` 自动继承，显式设置的字段覆盖全局默认。
+新增顶层 `capture-agent.kafka` 全局配置节，提供 `brokers`/`sasl`/`tls` 默认值。`command_channel.kafka` 和 `reporters.kafka` 自动继承，显式设置的字段覆盖全局默认。
 
 ### 继承规则
 
-- `otus.kafka.brokers` → 被 `command_channel.kafka.brokers`（空时）和 `reporters.kafka.brokers`（空时）继承
-- `otus.kafka.sasl` → 被子节点的 `sasl`（零值时）继承
-- `otus.kafka.tls` → 被子节点的 `tls`（零值时）继承
+- `capture-agent.kafka.brokers` → 被 `command_channel.kafka.brokers`（空时）和 `reporters.kafka.brokers`（空时）继承
+- `capture-agent.kafka.sasl` → 被子节点的 `sasl`（零值时）继承
+- `capture-agent.kafka.tls` → 被子节点的 `tls`（零值时）继承
 - 合并逻辑在 `GlobalConfig.validateAndApplyDefaults()` 中实现
 
 ### 理由
@@ -858,7 +858,7 @@ Factory(构造空实例) → Init(注入配置) → Wire(注入共享资源) →
 ### 理由
 
 - 无需解析函数，无单位歧义
-- Viper 环境变量覆盖直接传数值（`OTUS_LOG_OUTPUTS_FILE_ROTATION_MAX_SIZE_MB=200`）
+- Viper 环境变量覆盖直接传数值（`CAPTURE_AGENT_LOG_OUTPUTS_FILE_ROTATION_MAX_SIZE_MB=200`）
 - 与 lumberjack 库的 API 直接映射（`MaxSize int` 单位 MB，`MaxAge int` 单位天）
 
 ---
@@ -906,7 +906,7 @@ Kafka at-least-once 语义下需要处理三个可靠性问题：重复投递、
 
 ### 背景
 
-架构文档示例代码使用 `"otus-" + pkt.Protocol` 的动态 topic 路由，但当前实现使用固定 `topic`。
+架构文档示例代码使用 `"capture-agent-" + pkt.Protocol` 的动态 topic 路由，但当前实现使用固定 `topic`。
 
 ### 决定
 
@@ -915,7 +915,7 @@ Kafka at-least-once 语义下需要处理三个可靠性问题：重复投递、
 | 配置 | 路由行为 | topic 示例 |
 |------|---------|-----------|
 | `topic: "voip-packets"` | 固定 topic | `voip-packets` |
-| `topic_prefix: "otus"` | 动态路由 | `otus-sip`, `otus-rtp`, `otus-raw` |
+| `topic_prefix: "capture-agent"` | 动态路由 | `otus-sip`, `otus-rtp`, `otus-raw` |
 
 `topic_prefix` 存在时优先使用动态路由。路由键为 `OutputPacket.PayloadType`（`"sip"`, `"rtp"`, `"raw"` 等）。
 
@@ -965,7 +965,7 @@ Kafka `message.value` 是 `[]byte`，支持任意格式。需要确定 Envelope�
 
 ### 背景
 
-现有 Kafka 命令通道为单向拉模式：远端写入 `otus-commands`，近端（Otus Agent）消费并执行，
+现有 Kafka 命令通道为单向拉模式：远端写入 `capture-agent-commands`，近端（Otus Agent）消费并执行，
 但命令执行结果无回写路径。`CommandHandler` 对每条命令都构造了 `Response`，结果被丢弃。
 这使得所有需要返回数据的交互式命令（`task_list`、`task_status`、`daemon_status`、
 `daemon_stats`）在 Web CLI 场景下完全无法工作——命令发出后调用方永远收不到响应。
@@ -973,12 +973,12 @@ Kafka `message.value` 是 `[]byte`，支持任意格式。需要确定 Envelope�
 ### 问题根源
 
 ```
-远端 ──► [otus-commands] ──► Agent.Handle() ──► Response{ result } ──► ✗ 丢弃
+远端 ──► [capture-agent-commands] ──► Agent.Handle() ──► Response{ result } ──► ✗ 丢弃
 ```
 
 ### 决定
 
-新增固定 `otus-responses` topic 作为命令响应通道，形成完整的请求-响应闭环。
+新增固定 `capture-agent-responses` topic 作为命令响应通道，形成完整的请求-响应闭环。
 
 #### 响应消息格式（`KafkaResponse`）
 
@@ -1003,14 +1003,14 @@ Agent 写响应时以自身 `hostname` 为 Kafka message key。Kafka 一致性�
 
 ```
 node-01 的响应 ──► key="edge-beijing-01" ──► partition-P1 ─┐
-node-02 的响应 ──► key="edge-shanghai-02" ──► partition-P2  ├─ otus-responses
+node-02 的响应 ──► key="edge-shanghai-02" ──► partition-P2  ├─ capture-agent-responses
 node-03 的响应 ──► key="edge-guangzhou-03" ──► partition-P3 ┘
 ```
 
 #### 消费端：per-instance 唯一 consumer group
 
 Web CLI（或任何调用方）每个**实例**（进程/Pod）使用唯一 `group_id`（推荐格式：`webcli-{instance-id}`），
-独立消费 `otus-responses` 全量消息，以 `request_id` 过滤属于本实例本请求的响应。
+独立消费 `capture-agent-responses` 全量消息，以 `request_id` 过滤属于本实例本请求的响应。
 同一实例内的多个并发 session 共享同一 consumer，无需各自建立独立 consumer group。
 
 `instance-id` 必须**从运行环境注入，不得写死**在配置文件中：
@@ -1041,17 +1041,17 @@ instance-B (group_id="webcli-pod-xyz99") → 消费全量，多 session 共享�
 #### 完整交互流程
 
 ```
-远端 (Web CLI session)              Kafka                    Otus (近端)
+远端 (Web CLI session)              Kafka                    capture-agent (近端)
         │                                                         │
         │  1. 记录当前 offset                                     │
-        │  fetch_offset(otus-responses)                           │
+        │  fetch_offset(capture-agent-responses)                           │
         │                                                         │
         │  2. 发送命令                                            │
-        │──► KafkaCommand ────────► [otus-commands] ────────────► │
+        │──► KafkaCommand ────────► [capture-agent-commands] ────────────► │
         │    request_id: "req-001"                                │  3. 执行命令
         │    target: "edge-beijing-01"                            │     task_list()
         │                                                         │
-        │                        [otus-responses]                 │  4. 写响应
+        │                        [capture-agent-responses]                 │  4. 写响应
         │◄── KafkaResponse ◄──── partition-P1 ◄── key=hostname ◄──│
         │    request_id: "req-001"                                │
         │    source: "edge-beijing-01"                            │
@@ -1080,21 +1080,21 @@ instance-B (group_id="webcli-pod-xyz99") → 消费全量，多 session 共享�
 ```yaml
 command_channel:
   kafka:
-    topic: otus-commands
-    response_topic: otus-responses   # 新增，空字符串表示禁用响应
-    group_id: "otus-${node.hostname}"
+    topic: capture-agent-commands
+    response_topic: capture-agent-responses   # 新增，空字符串表示禁用响应
+    group_id: "capture-agent-${node.hostname}"
 ```
 
-#### 与 otus-status 的关系
+#### 与 capture-agent-status 的关系
 
-`otus-status`（Phase 2）是节点主动发布的心跳和 Task 状态快照，属于事件驱动的
+`capture-agent-status`（Phase 2）是节点主动发布的心跳和 Task 状态快照，属于事件驱动的
 状态上报，与本 ADR 的命令响应通道**用途不同、topic 不同、不可混用**。
 
 | topic | 方向 | 触发 | 内容 |
 |---|---|---|---|
-| `otus-commands` | 远端→近端 | 调用方主动 | 命令请求 |
-| `otus-responses` | 近端→远端 | 命令执行后 | 命令结果 |
-| `otus-status` (Phase 2) | 近端→远端 | 定时/事件 | 节点心跳、Task 状态 |
+| `capture-agent-commands` | 远端→近端 | 调用方主动 | 命令请求 |
+| `capture-agent-responses` | 近端→远端 | 命令执行后 | 命令结果 |
+| `capture-agent-status` (Phase 2) | 近端→远端 | 定时/事件 | 节点心跳、Task 状态 |
 
 ### 理由
 
@@ -1135,7 +1135,7 @@ command_channel:
 #### 存储结构
 
 ```
-/var/lib/otus/            ← data_dir（全局配置，符合 FHS 标准）
+/var/lib/capture-agent/            ← data_dir（全局配置，符合 FHS 标准）
   tasks/
     sip-capture-01.json   ← 每任务一个文件，文件名 = task_id.json
     voip-monitor-02.json
@@ -1168,8 +1168,8 @@ command_channel:
 
 写入使用 **temp-file + rename** 原子操作：
 ```
-写 /var/lib/otus/tasks/.{id}.json.tmp
-→ os.Rename → /var/lib/otus/tasks/{id}.json
+写 /var/lib/capture-agent/tasks/.{id}.json.tmp
+→ os.Rename → /var/lib/capture-agent/tasks/{id}.json
 ```
 
 #### 重启恢复策略
@@ -1177,7 +1177,7 @@ command_channel:
 `Daemon.Start()` 步骤 4.5（TaskManager 创建后，UDS/Kafka 启动前）执行：
 
 ```
-扫描 /var/lib/otus/tasks/*.json
+扫描 /var/lib/capture-agent/tasks/*.json
   ↓
 state == running / starting / stopping  →  auto-restart（下面详述）
 state == stopped / failed              →  加载为只读历史记录，不启动
@@ -1204,8 +1204,8 @@ Phase 1 的"最多 1 个 Task"限制仅针对**活跃任务（非终止态）**�
 #### 全局配置新增字段
 
 ```yaml
-otus:
-  data_dir: /var/lib/otus     # FHS 标准路径，需要目录已存在或 systemd 创建
+capture-agent:
+  data_dir: /var/lib/capture-agent     # FHS 标准路径，需要目录已存在或 systemd 创建
 
   task_persistence:
     enabled: true              # false = 禁用（开发/测试用），重启后不恢复
@@ -1224,7 +1224,7 @@ otus:
 ### 理由
 
 - **每任务独立文件**：原子 rename 写单个文件，无争用；文件名即 ID，删除 = `os.Remove`
-- **`/var/lib/otus`**：FHS 标准持久数据目录，与 root 运行的系统服务一致，避免用户 HOME
+- **`/var/lib/capture-agent`**：FHS 标准持久数据目录，与 root 运行的系统服务一致，避免用户 HOME
 - **temp + rename**：系统崩溃时绝对不会写出损坏的半成品 JSON
 - **重启后 auto-restart 默认 true**：边缘无人值守场景下，运维期望"重启自愈"而非"重启后人工重下发命令"
 
@@ -1244,26 +1244,26 @@ ADR-030 持久化方案在磁盘上累积终止态任务文件（stopped/failed�
 
 ### 核心目标
 
-**文件清理能力必须独立于 otus 进程存活，在 otus 未运行时也能被系统清理。**
+**文件清理能力必须独立于 capture-agent 进程存活，在 capture-agent 未运行时也能被系统清理。**
 
 ### 决定
 
 #### 主清理机制：systemd-tmpfiles.d
 
-提供 `configs/tmpfiles.d/otus.conf`（随包安装到 `/etc/tmpfiles.d/otus.conf`）：
+提供 `configs/tmpfiles.d/capture-agent.conf`（随包安装到 `/etc/tmpfiles.d/capture-agent.conf`）：
 
 ```
-# systemd-tmpfiles(5) 配置：清理 otus 任务历史文件
+# systemd-tmpfiles(5) 配置：清理 capture-agent 任务历史文件
 #  类型  路径                          模式    UID   GID   期限
-   D     /var/lib/otus                  0750    root  root  -       # 确保目录存在
-   d     /var/lib/otus/tasks            0750    root  root  -
-   e     /var/lib/otus/tasks            -       -     -     7d      # 超过 7 天的文件由 systemd 删除
+   D     /var/lib/capture-agent                  0750    root  root  -       # 确保目录存在
+   d     /var/lib/capture-agent/tasks            0750    root  root  -
+   e     /var/lib/capture-agent/tasks            -       -     -     7d      # 超过 7 天的文件由 systemd 删除
 ```
 
 - `D` 指令：创建目录（如不存在），由 `systemd-tmpfiles --create` 在服务启动前执行
 - `e` 指令：age-based 清理，由 `systemd-tmpfiles --clean`（系统每日定时任务）执行
 
-**结果**：即使 otus 进程从未启动，系统的 `systemd-tmpfiles-clean.timer`（默认每日运行）
+**结果**：即使 capture-agent 进程从未启动，系统的 `systemd-tmpfiles-clean.timer`（默认每日运行）
 也会自动清理超过 TTL 的任务历史文件。
 
 #### 辅助清理机制：程序内 GC（守护进程运行期间）
@@ -1284,7 +1284,7 @@ GC 触发条件（满足任一即删除对应文件）：
 - 可以通过 将 `max_task_history: 0` 设置为 0 完全禁用程序内 GC（完全依赖 tmpfiles.d）
 
 ```yaml
-otus:
+capture-agent:
   task_persistence:
     enabled: true
     auto_restart: true
@@ -1296,16 +1296,16 @@ otus:
 
 ```
 安装时：
-  systemd-tmpfiles --create /etc/tmpfiles.d/otus.conf  # 创建 /var/lib/otus/tasks/
+  systemd-tmpfiles --create /etc/tmpfiles.d/capture-agent.conf  # 创建 /var/lib/capture-agent/tasks/
 
 运行时（系统自动）：
   systemd-tmpfiles-clean.timer → systemd-tmpfiles --clean → 删除 >7d 的 .json 文件
 ```
 
-与 `otus.service` 的集成（写入 systemd unit 文件）：
+与 `capture-agent.service` 的集成（写入 systemd unit 文件）：
 ```ini
 [Service]
-ExecStartPre=systemd-tmpfiles --create /etc/tmpfiles.d/otus.conf
+ExecStartPre=systemd-tmpfiles --create /etc/tmpfiles.d/capture-agent.conf
 ```
 确保目录在服务启动前一定存在，即便 tmpfiles.d 尚未被手动执行过。
 
@@ -1369,17 +1369,17 @@ ExecStartPre=systemd-tmpfiles --create /etc/tmpfiles.d/otus.conf
 | 021 | DecodedPacket 类型 | 自定义值类型 struct，隔离 gopacket | Phase 1 |
 | 022 | 插件注册机制 | 静态链接 + init() 全局 Registry，不支持动态 .so | Phase 1 |
 | 023 | Node IP 解析策略 | 环境变量 > 自动探测 > 启动报错 | Phase 1 |
-| 024 | Kafka 全局配置继承 | `otus.kafka` 提供 brokers/sasl/tls 默认，子节点显式覆盖 | Phase 1 |
+| 024 | Kafka 全局配置继承 | `capture-agent.kafka` 提供 brokers/sasl/tls 默认，子节点显式覆盖 | Phase 1 |
 | 025 | 日志滚动字段格式 | 数值字段 `max_size_mb` / `max_age_days`，单位编码在字段名中 | Phase 1 |
 | 026 | Kafka 命令可靠性 | 去重 Phase2(LRU)、排序(target 做 key)、TTL 过期检查 | Phase 1 |
 | 027 | Kafka Reporter 动态 Topic | `topic_prefix` 优先动态路由，与 `topic` 互斥 | Phase 1 |
 | 028 | Kafka 数据序列化 | Headers 承载 envelope，Value 承载 binary/json payload | Phase 1 |
-| 029 | Kafka 命令响应通道 | 固定 `otus-responses` topic，per-instance group_id（环境变量注入），hostname 作 key | Phase 1 |
-| 030 | Task 持久化 | 每任务独立 JSON 文件（`/var/lib/otus/tasks/`），temp+rename 原子写，重启 auto-restart 默认 true | Phase 1 |
+| 029 | Kafka 命令响应通道 | 固定 `capture-agent-responses` topic，per-instance group_id（环境变量注入），hostname 作 key | Phase 1 |
+| 030 | Task 持久化 | 每任务独立 JSON 文件（`/var/lib/capture-agent/tasks/`），temp+rename 原子写，重启 auto-restart 默认 true | Phase 1 |
 | 031 | Task 历史清理 | 主清理委托 systemd-tmpfiles.d（解决进程未运行时死锁），程序内 GC 作辅助（数量上限 + 周期 1h） | Phase 1 |
 
 ---
 
 **文档版本**: v0.5.0
 **更新日期**: 2026-02-22
-**作者**: Otus Team
+**作者**: capture-agent Team

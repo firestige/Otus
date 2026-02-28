@@ -1,0 +1,41 @@
+# capture-agent UAS sidecar configuration
+# The `capture-agent:` root key is required — config.go unmarshals into configRoot{CaptureAgent: ...}
+
+capture-agent:
+  node:
+    hostname: uas          # must match Kafka command `target` field (or use "*" to broadcast)
+    tags:
+      role: uas
+
+  control:
+    socket: /tmp/capture-agent.sock
+    pid_file: /tmp/capture-agent.pid
+
+  metrics:
+    enabled: true
+    listen: :9091
+
+  # Global Kafka defaults (inherited by command_channel and reporters via ADR-024)
+  # Use IP instead of hostname to avoid DNS failure when Docker network is reconfigured
+  kafka:
+    brokers:
+      - 172.20.0.30:9092
+
+  command_channel:
+    enabled: true
+    type: kafka
+    command_ttl: 5m
+    kafka:
+      topic: capture-agent-uas-commands
+      response_topic: "capture-agent-responses"
+      group_id: capture-agent-uas
+      auto_offset_reset: earliest
+
+  reporters:
+    kafka:
+      compression: snappy
+      max_message_bytes: 1048576
+
+  log:
+    level: debug
+    format: text

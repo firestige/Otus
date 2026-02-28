@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"firestige.xyz/otus/internal/core"
+	"icc.tech/capture-agent/internal/core"
 )
 
 func TestConsoleReporter_Init(t *testing.T) {

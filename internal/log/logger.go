@@ -10,7 +10,7 @@ import (
 
 	"gopkg.in/natefinch/lumberjack.v2"
 
-	"firestige.xyz/otus/internal/config"
+	"icc.tech/capture-agent/internal/config"
 )
 
 var (

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"firestige.xyz/otus/internal/config"
+	"icc.tech/capture-agent/internal/config"
 )
 
 func TestParseLevelValid(t *testing.T) {

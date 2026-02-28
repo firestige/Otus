@@ -1,4 +1,4 @@
-# Multi-stage Dockerfile for static-linked otus binary
+# Multi-stage Dockerfile for static-linked capture-agent binary
 # Supports: amd64, arm64
 # Output: Fully static binary with zero runtime dependencies
 
@@ -39,11 +39,11 @@ RUN CGO_ENABLED=1 \
     go build \
         -tags netgo,osusergo \
         -ldflags='-w -s -linkmode external -extldflags "-static"' \
-        -o otus \
+        -o capture-agent \
         main.go
 
 # Verify static linking (should show "not a dynamic executable")
-RUN file otus && (ldd otus 2>&1 || true)
+RUN file capture-agent && (ldd capture-agent 2>&1 || true)
 
 # ============================================================================
 # Stage 2: Runtime - Scratch (empty base image)
@@ -58,20 +58,20 @@ RUN file otus && (ldd otus 2>&1 || true)
 FROM scratch
 
 # Copy static binary
-COPY --from=builder /build/otus /otus
+COPY --from=builder /build/capture-agent /capture-agent
 
 # Copy default config (optional, for reference)
 COPY --from=builder /build/configs/config.yml /config.yml
 
 # Note: This container cannot run as-is for packet capture.
 # Extract the binary using:
-#   docker create --name otus-extract otus:latest
-#   docker cp otus-extract:/otus ./otus
-#   docker rm otus-extract
+#   docker create --name capture-agent-extract otus:latest
+#   docker cp capture-agent-extract:/otus ./otus
+#   docker rm capture-agent-extract
 #
 # For actual deployment, install the binary directly on the host:
-#   sudo cp otus /usr/local/bin/
-#   sudo cp configs/otus.service /etc/systemd/system/
-#   sudo systemctl enable --now otus
+#   sudo cp capture-agent /usr/local/bin/
+#   sudo cp configs/capture-agent.service /etc/systemd/system/
+#   sudo systemctl enable --now capture-agent
 
-ENTRYPOINT ["/otus"]
+ENTRYPOINT ["/capture-agent"]

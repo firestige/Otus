@@ -7,7 +7,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"firestige.xyz/otus/internal/config"
+	"icc.tech/capture-agent/internal/config"
 )
 
 var validateCmd = &cobra.Command{
@@ -19,8 +19,8 @@ This is useful for pre-checking configuration before deploying to the daemon.
 File format is auto-detected from extension (.json, .yaml, .yml).
 
 Examples:
-  otus validate -f task.json
-  otus validate -f task.yaml`,
+  capture-agent validate -f task.json
+  capture-agent validate -f task.yaml`,
 	Run: func(cmd *cobra.Command, args []string) {
 		runValidateCommand()
 	},

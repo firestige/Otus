@@ -1,8 +1,8 @@
-# Otus - 高性能边缘抓包观测系统架构设计
+# capture-agent - 高性能边缘抓包观测系统架构设计
 
 ## 1. 项目概述
 
-Otus 是一个高性能、低资源占用的边缘网络数据包捕获和观测系统，专注于在边缘环境中以最小的资源消耗捕获和处理网络流量。
+Capture-Agent 是一个高性能、低资源占用的边缘网络数据包捕获和观测系统，专注于在边缘环境中以最小的资源消耗捕获和处理网络流量。
 
 ### 1.1 核心目标
 
@@ -61,7 +61,7 @@ Otus 是一个高性能、低资源占用的边缘网络数据包捕获和观测
 #### 2.2.3 管理和控制能力
 - 系统服务集成（systemd）
 - 本地 CLI 控制（daemon 管理 + task 管理，通过 Unix Domain Socket）
-- 远程控制：订阅 Kafka 命令 topic (`otus-commands`) 拉模式接收任务指令，向 `otus-responses` topic 写回执行结果（零额外端口，闭环交互，见 ADR-029）
+- 远程控制：订阅 Kafka 命令 topic (`capture-agent-commands`) 拉模式接收任务指令，向 `capture-agent-responses` topic 写回执行结果（零额外端口，闭环交互，见 ADR-029）
 - 全局配置热加载（SIGHUP / CLI reload）
 - 健康检查和 Prometheus 指标暴露
 
@@ -155,14 +155,14 @@ Otus 是一个高性能、低资源占用的边缘网络数据包捕获和观测
 - 通过 Unix Domain Socket 与 Daemon 通信
 
 **Kafka 命令通道** - `internal/command/`
-- 订阅 `otus-commands` topic，拉模式接收远程指令
+- 订阅 `capture-agent-commands` topic，拉模式接收远程指令
 - 按 `target` 字段路由消息到本节点，执行命令
-- 向 `otus-responses` topic 写回执行结果，以 `hostname` 作为 message key（ADR-029）
+- 向 `capture-agent-responses` topic 写回执行结果，以 `hostname` 作为 message key（ADR-029）
 - 零入站端口，复用已有 Kafka 基础设施
 
 #### 3.2.2 核心引擎 (Core Engine)
 
-**Bootstrap** - `internal/otus/boot/bootstrap.go`
+**Bootstrap** - `internal/capture-agent/boot/bootstrap.go`
 - 系统初始化和启动流程
 - 配置加载和验证
 - 依赖注入和组件装配
@@ -173,18 +173,18 @@ Otus 是一个高性能、低资源占用的边缘网络数据包捕获和观测
 - 提供类型安全的 Factory 查找 API
 - 详见 4.3 节
 
-**Protocol Stack Decoder** - `internal/otus/decoder/`
+**Protocol Stack Decoder** - `internal/capture-agent/decoder/`
 - L2-L4 协议栈解码（以太网/VLAN/IP/TCP/UDP）
 - IP 分片重组、隧道解封装
 - 核心代码，非插件
 
-**Pipeline Engine** - `internal/otus/module/pipeline/`
+**Pipeline Engine** - `internal/capture-agent/module/pipeline/`
 - 每 vCPU 一条独立 pipeline，线性扩展
 - 流量分发依赖内核/硬件（RSS/FANOUT），用户态零开销
 - Pipeline 主循环：Decode → Parser.CanHandle → Parser.Handle → Send Buffer
 - 管理流水线生命周期
 
-**Flow Registry** - `internal/otus/registry/`
+**Flow Registry** - `internal/capture-agent/registry/`
 - 跨 pipeline 共享的流注册表（lock-free，读多写少）
 - Parser 在解析信令时注册媒体流五元组（如 SIP SDP → RTP 五元组）
 - Parser 在 CanHandle 时查表做快速匹配
@@ -195,7 +195,7 @@ Otus 是一个高性能、低资源占用的边缘网络数据包捕获和观测
 - 事件发布订阅
 - 解耦核心组件
 
-**Buffer Pool** - `internal/otus/module/buffer/`
+**Buffer Pool** - `internal/capture-agent/module/buffer/`
 - 内存池管理
 - 零拷贝优化
 - 背压控制
@@ -503,7 +503,7 @@ func (r *KafkaReporter) resolveTopic(pkt *OutputPacket) string {
 reporters:
   - name: kafka
     config:
-      topic_prefix: otus           # 动态路由：otus-sip, otus-rtp（与 topic 互斥）
+      topic_prefix: capture-agent           # 动态路由：otus-sip, otus-rtp（与 topic 互斥）
       # topic: voip-packets        # 或固定 topic（与 topic_prefix 互斥）
       serialization: json          # "json"（默认）| "binary"（生产推荐）
       compression: snappy
@@ -567,7 +567,7 @@ func ListReporters() []string
 // plugins/parser/sip/sip.go
 package sip
 
-import "firestige.xyz/otus/pkg/plugin"
+import "icc.tech/capture-agent/pkg/plugin"
 
 func init() {
     plugin.RegisterParser("sip", func() plugin.Parser {
@@ -596,11 +596,11 @@ func (p *SIPParser) Init(cfg map[string]any) error {
 package plugins
 
 import (
-    _ "firestige.xyz/otus/plugins/capture/afpacket"
-    _ "firestige.xyz/otus/plugins/parser/sip"
-    _ "firestige.xyz/otus/plugins/processor/filter"
-    _ "firestige.xyz/otus/plugins/reporter/kafka"
-    _ "firestige.xyz/otus/plugins/reporter/console"
+    _ "icc.tech/capture-agent/plugins/capture/afpacket"
+    _ "icc.tech/capture-agent/plugins/parser/sip"
+    _ "icc.tech/capture-agent/plugins/processor/filter"
+    _ "icc.tech/capture-agent/plugins/reporter/kafka"
+    _ "icc.tech/capture-agent/plugins/reporter/console"
 )
 ```
 
@@ -611,7 +611,7 @@ main 包 import `plugins` 即可完成全部注册：
 package main
 
 import (
-    _ "firestige.xyz/otus/plugins" // 触发所有插件 init() 注册
+    _ "icc.tech/capture-agent/plugins" // 触发所有插件 init() 注册
 )
 ```
 
@@ -922,7 +922,7 @@ Stop (Capturers → Pipelines[WaitGroup] → Sender → Reporters.Flush)
 
 ```yaml
 # configs/config.yml
-otus:
+capture-agent:
   # 节点信息（Label Processor 自动引用）
   node:
     ip: ""                         # 空 = 自动探测（见 ADR-023）
@@ -933,8 +933,8 @@ otus:
 
   # 本地控制 Socket（CLI 通过此 socket 与 daemon 通信）
   control:
-    socket: /var/run/otus.sock
-    pid_file: /var/run/otus.pid
+    socket: /var/run/capture-agent.sock
+    pid_file: /var/run/capture-agent.pid
 
   # Kafka 全局默认（见 ADR-024）
   # command_channel.kafka 和 reporters.kafka 继承此处的 brokers/sasl/tls
@@ -953,10 +953,10 @@ otus:
     enabled: true
     type: kafka                    # Phase 1 仅 kafka
     kafka:
-      # brokers/sasl/tls 继承自 otus.kafka，如需覆盖可在此显式设置
-      topic: otus-commands         # 命令 topic（近端订阅）
-      response_topic: otus-responses  # 响应 topic（近端写入），空字符串禁用
-      group_id: "otus-${node.hostname}"  # 按节点隔离消费
+      # brokers/sasl/tls 继承自 capture-agent.kafka，如需覆盖可在此显式设置
+      topic: capture-agent-commands         # 命令 topic（近端订阅）
+      response_topic: capture-agent-responses  # 响应 topic（近端写入），空字符串禁用
+      group_id: "capture-agent-${node.hostname}"  # 按节点隔离消费
       auto_offset_reset: latest    # 只处理启动后的新命令
 
   # Prometheus 指标
@@ -968,14 +968,14 @@ otus:
   # 共享 Reporter 连接配置（Task 引用，不重复声明）
   reporters:
     kafka:
-      # brokers/sasl/tls 继承自 otus.kafka，如需覆盖可在此显式设置
+      # brokers/sasl/tls 继承自 capture-agent.kafka，如需覆盖可在此显式设置
       compression: snappy
       max_message_bytes: 1048576
     # grpc:                        # Phase 2
     #   endpoint: collector.example.com:4317
     #   tls:
     #     enabled: true
-    #     ca_cert: /etc/otus/ca.pem
+    #     ca_cert: /etc/capture-agent/ca.pem
 
   # 全局资源上限
   resources:
@@ -1015,7 +1015,7 @@ otus:
     outputs:
       file:
         enabled: true
-        path: /var/log/otus/otus.log
+        path: /var/log/capture-agent/capture-agent.log
         rotation:
           max_size_mb: 100         # 单文件最大大小（MB）（见 ADR-025）
           max_age_days: 7          # 保留天数
@@ -1025,13 +1025,13 @@ otus:
         enabled: false
         endpoint: http://loki.observability:3100/loki/api/v1/push
         labels:                    # 静态标签（自动附加 node.id）
-          app: otus
+          app: capture-agent
           env: production
         batch_size: 100
         batch_timeout: 1s
 
   # 数据目录与 Task 持久化（ADR-030, ADR-031）
-  data_dir: /var/lib/otus        # task 记录存储于 {data_dir}/tasks/
+  data_dir: /var/lib/capture-agent        # task 记录存储于 {data_dir}/tasks/
   task_persistence:
     enabled: true
     auto_restart: true           # 重启后自动恢复 running/starting/stopping 状态的 task
@@ -1040,9 +1040,9 @@ otus:
 ```
 
 **关键原则**：
-- **Kafka 全局默认**（ADR-024）：`otus.kafka` 提供 brokers/sasl/tls 共享默认，`command_channel.kafka` 和 `reporters.kafka` 继承，显式覆盖优先
+- **Kafka 全局默认**（ADR-024）：`capture-agent.kafka` 提供 brokers/sasl/tls 共享默认，`command_channel.kafka` 和 `reporters.kafka` 继承，显式覆盖优先
 - Reporter 的**连接配置**全局声明一次，Task 按名称引用
-- **Node IP 自动解析**（ADR-023）：环境变量 `OTUS_NODE_IP` > 自动探测 > 启动报错
+- **Node IP 自动解析**（ADR-023）：环境变量 `CAPTURE_AGENT_NODE_IP` > 自动探测 > 启动报错
 - 节点元数据（ip、hostname、tags）全局声明，Label Processor 自动注入
 - 协议栈解码器配置（隧道开关、分片重组参数）属于全局，因为它是核心引擎的固有行为
 - 背压参数属于全局，所有 Task 共享相同的资源保护策略
@@ -1102,15 +1102,15 @@ task:
 
 | 配置项 | 来源 | 示例 |
 |--------|------|------|
-| Kafka 连接默认（brokers/sasl/tls） | 全局静态 | `otus.kafka.brokers` |
-| Reporter 连接（继承或覆盖） | 全局静态 | `otus.reporters.kafka.brokers` |
+| Kafka 连接默认（brokers/sasl/tls） | 全局静态 | `capture-agent.kafka.brokers` |
+| Reporter 连接（继承或覆盖） | 全局静态 | `capture-agent.reporters.kafka.brokers` |
 | Reporter 业务参数（topic） | Task 动态 | `task.reporters[].config.topic` |
-| 节点元数据 | 全局静态 | `otus.node.hostname` |
+| 节点元数据 | 全局静态 | `capture-agent.node.hostname` |
 | BPF 过滤规则 | Task 动态 | `task.capture.bpf_filter` |
-| 解码器/隧道/重组 | 全局静态 | `otus.core.decoder.tunnel` |
+| 解码器/隧道/重组 | 全局静态 | `capture-agent.core.decoder.tunnel` |
 | Parser/Processor 链 | Task 动态 | `task.parsers`, `task.processors` |
 | Pipeline 数量 | Task 动态 | `task.workers` |
-| 背压参数 | 全局静态 | `otus.backpressure.*` |
+| 背压参数 | 全局静态 | `capture-agent.backpressure.*` |
 
 ## 5. 数据流处理
 
@@ -1477,7 +1477,7 @@ type TunnelInfo struct {
 #### 5.2.7 配置示例
 
 ```yaml
-otus:
+capture-agent:
   core:
     decoder:
       # VLAN / QinQ: 常开，无需配置
@@ -1637,31 +1637,31 @@ Send Buffer 水位 < 30%
 
 ```
 # 内核侧丢包（tp_drops），由 Capture 插件从驱动获取
-otus_capture_kernel_drops_total{interface="eth0"}
+capture_agent_capture_kernel_drops_total{interface="eth0"}
 
 # Pipeline channel 满导致的丢弃
-otus_pipeline_channel_drops_total{task="voip-monitor-01", pipeline="0"}
+capture_agent_pipeline_channel_drops_total{task="voip-monitor-01", pipeline="0"}
 
 # 发送缓冲区满导致的丢弃（drop-head 淘汰）
-otus_sender_buffer_drops_total{task="voip-monitor-01"}
+capture_agent_sender_buffer_drops_total{task="voip-monitor-01"}
 
 # Reporter 超时导致的丢弃
-otus_reporter_timeout_drops_total{task="voip-monitor-01"}
+capture_agent_reporter_timeout_drops_total{task="voip-monitor-01"}
 
 # Reporter 错误导致的丢弃
-otus_reporter_error_drops_total{task="voip-monitor-01"}
+capture_agent_reporter_error_drops_total{task="voip-monitor-01"}
 
 # 当前动态采样率（1.0 = 全量，0.1 = 十分之一）
-otus_backpressure_sample_rate{task="voip-monitor-01"}
+capture_agent_backpressure_sample_rate{task="voip-monitor-01"}
 
 # 各层队列当前水位（用于告警和容量规划）
-otus_pipeline_channel_usage_ratio{task="voip-monitor-01", pipeline="0"}
-otus_sender_buffer_usage_ratio{task="voip-monitor-01"}
+capture_agent_pipeline_channel_usage_ratio{task="voip-monitor-01", pipeline="0"}
+capture_agent_sender_buffer_usage_ratio{task="voip-monitor-01"}
 ```
 
 #### 5.4.6 配置
 
-背压参数在全局静态配置中设置（见 [4.4.1 全局静态配置](#441-全局静态配置) 的 `otus.backpressure` 部分），所有 Task 共享相同的资源保护策略。
+背压参数在全局静态配置中设置（见 [4.4.1 全局静态配置](#441-全局静态配置) 的 `capture-agent.backpressure` 部分），所有 Task 共享相同的资源保护策略。
 
 #### 5.4.7 故障场景分析
 
@@ -1894,10 +1894,10 @@ processors:
 ### 6.1 系统服务集成
 
 ```ini
-# configs/otus.service
+# configs/capture-agent.service
 [Unit]
-Description=Otus Network Packet Capture Daemon
-Documentation=https://github.com/firestige/otus
+Description=capture-agent Network Packet Capture Daemon
+Documentation=https://github.com/firestige/capture-agent
 After=network-online.target
 Wants=network-online.target
 
@@ -1908,9 +1908,9 @@ User=root
 Group=root
 
 # Ensure data directories exist with correct permissions (ADR-031)
-ExecStartPre=systemd-tmpfiles --create /etc/tmpfiles.d/otus.conf
+ExecStartPre=systemd-tmpfiles --create /etc/tmpfiles.d/capture-agent.conf
 # Daemon mode (foreground for systemd)
-ExecStart=/usr/local/bin/otus daemon
+ExecStart=/usr/local/bin/capture-agent daemon
 ExecReload=/bin/kill -HUP $MAINPID
 
 # Graceful shutdown (SIGTERM)
@@ -1931,7 +1931,7 @@ NoNewPrivileges=false
 PrivateTmp=true
 ProtectSystem=full
 ProtectHome=true
-ReadWritePaths=/var/lib/otus /var/log/otus /etc/otus
+ReadWritePaths=/var/lib/capture-agent /var/log/capture-agent /etc/capture-agent
 
 # Required capabilities for packet capture
 AmbientCapabilities=CAP_NET_RAW CAP_NET_ADMIN
@@ -1940,10 +1940,10 @@ CapabilityBoundingSet=CAP_NET_RAW CAP_NET_ADMIN CAP_DAC_OVERRIDE
 # Logging
 StandardOutput=journal
 StandardError=journal
-SyslogIdentifier=otus
+SyslogIdentifier=capture-agent
 
 # Working directory
-WorkingDirectory=/var/lib/otus
+WorkingDirectory=/var/lib/capture-agent
 
 [Install]
 WantedBy=multi-user.target
@@ -1951,33 +1951,33 @@ WantedBy=multi-user.target
 
 ### 6.2 CLI 命令
 
-CLI 通过 **Unix Domain Socket**（`/var/run/otus.sock`）与 daemon 通信，不需要开放任何 TCP 端口。
+CLI 通过 **Unix Domain Socket**（`/var/run/capture-agent.sock`）与 daemon 通信，不需要开放任何 TCP 端口。
 
 ```bash
 # 启动 daemon（加载全局配置，订阅 Kafka 命令 topic）
-otus daemon --config /etc/otus/config.yml
+capture-agent daemon --config /etc/capture-agent/config.yml
 
 # ── 本地 Task 管理（通过 UDS 与 daemon 通信）──
 # 创建观测任务（从 YAML 文件加载 Task 配置）
-otus task create --file task-voip.yml
+capture-agent task create --file task-voip.yml
 
 # 停止观测任务
-otus task stop --id voip-monitor-01
+capture-agent task stop --id voip-monitor-01
 
 # 查看当前活跃任务
-otus task list
+capture-agent task list
 
 # 查看任务详情和统计
-otus task status --id voip-monitor-01
+capture-agent task status --id voip-monitor-01
 
 # ── Daemon 管理 ──
-otus status           # daemon 状态
-otus stats            # 全局统计
-otus reload           # 重新加载全局配置（等效 SIGHUP）
+capture-agent status           # daemon 状态
+capture-agent stats            # 全局统计
+capture-agent reload           # 重新加载全局配置（等效 SIGHUP）
 
 # 验证配置文件
-otus validate --config /etc/otus/config.yml
-otus validate --task task-voip.yml
+capture-agent validate --config /etc/capture-agent/config.yml
+capture-agent validate --task task-voip.yml
 ```
 
 ### 6.3 远程控制通道（Kafka 请求-响应模式）
@@ -1990,23 +1990,23 @@ otus validate --task task-voip.yml
 ```
                     Kafka Topics（固定 2 个，不随节点数增长）
                    ┌─────────────────────────────────────────┐
-                   │  otus-commands   │  otus-responses       │
+                   │  capture-agent-commands   │  capture-agent-responses       │
                    │  (命令 → 近端)   │  (结果 → 远端)        │
                    └─────────────────────────────────────────┘
 
 ┌──────────────────┐   produce(key=target)    ┌──────────────────┐
-│  Control Plane   │ ──────────────────────→  │  otus-commands   │
+│  Control Plane   │ ──────────────────────→  │  capture-agent-commands   │
 │  / Web CLI       │                          └────────┬─────────┘
 │                  │                                   │ subscribe(pull)
 │  group_id:       │                                   │ filter by target
 │  webcli-POD_NAME │                          ┌────────▼─────────┐
-│  (per instance)  │                          │   Otus Agent     │
+│  (per instance)  │                          │   capture-agent Agent     │
 │                  │                          │   group_id:      │
-│  subscribe all   │                          │   otus-{hostname}│
+│  subscribe all   │                          │   capture-agent-{hostname}│
 │  filter by       │   produce(key=hostname)  └────────┬─────────┘
 │  request_id      │ ←────────────────────────────────┘
 │                  │          ┌──────────────────┐
-└──────────────────┘          │  otus-responses  │
+└──────────────────┘          │  capture-agent-responses  │
                               └──────────────────┘
 ```
 
@@ -2103,18 +2103,18 @@ Agent 以自身 `hostname` 作为 Kafka message key 写入响应，Kafka 一致�
 - 每个 Web CLI **实例**（进程/Pod）使用唯一 `group_id`（格式：`webcli-{instance-id}`），独立消费全量响应；实例内多 session 共享同一 consumer，以 `request_id` 区分
 - `instance-id` 从运行环境注入：Kubernetes 使用 `$POD_NAME`（Downward API），裸机/VM 使用 `$HOSTNAME`，**不得硬编码在配置中**
 - **多个实例严禁共享 group_id**：共享会导致 partition rebalance 后响应被其他实例抢读，双方均无法匹配
-- 发送命令前先记录 `otus-responses` 的当前 partition offset，避免读到历史旧响应
+- 发送命令前先记录 `capture-agent-responses` 的当前 partition offset，避免读到历史旧响应
 - 建议超时设置 30s，超时视为节点无响应
 
 **状态上报**（Phase 2，与命令响应通道独立）：
-- Agent 向独立的 `otus-status` topic 定时发布心跳和 Task 状态快照
+- Agent 向独立的 `capture-agent-status` topic 定时发布心跳和 Task 状态快照
 - Control Plane 订阅该 topic 获取节点状态
 
 | topic | 方向 | 触发 | 用途 |
 |---|---|---|---|
-| `otus-commands` | 远端→近端 | 调用方主动 | 命令请求 |
-| `otus-responses` | 近端→远端 | 命令执行后 | 命令结果（本 ADR） |
-| `otus-status` (Phase 2) | 近端→远端 | 定时/事件 | 节点心跳、Task 状态 |
+| `capture-agent-commands` | 远端→近端 | 调用方主动 | 命令请求 |
+| `capture-agent-responses` | 近端→远端 | 命令执行后 | 命令结果（本 ADR） |
+| `capture-agent-status` (Phase 2) | 近端→远端 | 定时/事件 | 节点心跳、Task 状态 |
 
 ### 6.4 Task 生命周期
 
@@ -2161,7 +2161,7 @@ Kafka 命令消息 / CLI create
 
 ### 6.5 全局配置热加载
 
-- SIGHUP 信号或 CLI `otus reload` 或 Kafka `reload` 命令触发
+- SIGHUP 信号或 CLI `capture-agent reload` 或 Kafka `reload` 命令触发
 - 仅重载全局静态配置（Reporter 连接参数、背压参数、日志级别等）
 - **不影响正在运行的 Task**——Task 的运行时状态由 Task 自身管理
 - 如需更改 Task 配置，需 task_delete + task_create
@@ -2178,18 +2178,18 @@ Kafka 命令消息 / CLI create
 **部署步骤**：
 ```bash
 # 1. 安装二进制文件
-sudo cp otus /usr/local/bin/
-sudo chmod +x /usr/local/bin/otus
+sudo cp capture-agent /usr/local/bin/
+sudo chmod +x /usr/local/bin/capture-agent
 
 # 2. 安装配置文件
-sudo mkdir -p /etc/otus
-sudo cp config.yml /etc/otus/
+sudo mkdir -p /etc/capture-agent
+sudo cp config.yml /etc/capture-agent/
 
 # 3. 安装 systemd 服务
-sudo cp otus.service /etc/systemd/system/
+sudo cp capture-agent.service /etc/systemd/system/
 sudo systemctl daemon-reload
-sudo systemctl enable otus
-sudo systemctl start otus
+sudo systemctl enable capture-agent
+sudo systemctl start capture-agent
 ```
 
 ### 7.2 虚拟机（ECS）部署
@@ -2211,22 +2211,22 @@ sudo systemctl start otus
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
-  name: otus
+  name: capture-agent
   namespace: observability
 spec:
   selector:
     matchLabels:
-      app: otus
+      app: capture-agent
   template:
     metadata:
       labels:
-        app: otus
+        app: capture-agent
     spec:
       hostNetwork: true
       hostPID: true
       containers:
-      - name: otus
-        image: otus:latest
+      - name: capture-agent
+        image: capture-agent:latest
         securityContext:
           privileged: true
           capabilities:
@@ -2241,7 +2241,7 @@ spec:
               fieldPath: spec.nodeName
         volumeMounts:
         - name: config
-          mountPath: /etc/otus
+          mountPath: /etc/capture-agent
         - name: sys
           mountPath: /sys
           readOnly: true
@@ -2255,7 +2255,7 @@ spec:
       volumes:
       - name: config
         configMap:
-          name: otus-config
+          name: capture-agent-config
       - name: sys
         hostPath:
           path: /sys
@@ -2266,7 +2266,7 @@ spec:
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: otus-config
+  name: capture-agent-config
   namespace: observability
 data:
   config.yml: |
@@ -2274,14 +2274,14 @@ data:
       id: "${NODE_NAME}"
       region: k8s
     control:
-      socket: /var/run/otus.sock
+      socket: /var/run/capture-agent.sock
     command_channel:
       enabled: true
       type: kafka
       kafka:
         brokers: ["kafka.observability:9092"]
-        topic: otus-commands
-        group_id: "otus-${NODE_NAME}"
+        topic: capture-agent-commands
+        group_id: "capture-agent-${NODE_NAME}"
     reporters:
       kafka:
         brokers: ["kafka.observability:9092"]
@@ -2306,12 +2306,12 @@ data:
           enabled: true
           endpoint: http://loki.observability:3100/loki/api/v1/push
           labels:
-            app: otus
+            app: capture-agent
             env: k8s
 ```
 
 > **说明**：Task 配置（BPF 过滤器、Parser 链、workers 数量等）通过 Kafka 命令 topic 动态下发，不放入 ConfigMap。
-> 外部编排系统（如 Operator）向 `otus-commands` topic 发布命令消息即可创建观测任务，无需向 Agent 开放端口。
+> 外部编排系统（如 Operator）向 `capture-agent-commands` topic 发布命令消息即可创建观测任务，无需向 Agent 开放端口。
 
 ### 7.4 多平台支持
 
@@ -2323,10 +2323,10 @@ data:
 build-all: build-linux-amd64 build-linux-arm64
 
 build-linux-amd64:
-	GOOS=linux GOARCH=amd64 go build -o bin/otus-linux-amd64 main.go
+	GOOS=linux GOARCH=amd64 go build -o bin/capture-agent-linux-amd64 main.go
 
 build-linux-arm64:
-	GOOS=linux GOARCH=arm64 go build -o bin/otus-linux-arm64 main.go
+	GOOS=linux GOARCH=arm64 go build -o bin/capture-agent-linux-arm64 main.go
 ```
 
 #### 7.4.2 多架构容器镜像
@@ -2339,7 +2339,7 @@ FROM golang:1.22 AS builder
 WORKDIR /build
 COPY . .
 RUN CGO_ENABLED=1 GOOS=linux GOARCH=$TARGETARCH \
-    go build -ldflags="-s -w" -o otus main.go
+    go build -ldflags="-s -w" -o capture-agent main.go
 
 FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y \
@@ -2347,8 +2347,8 @@ RUN apt-get update && apt-get install -y \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
     
-COPY --from=builder /build/otus /usr/local/bin/
-ENTRYPOINT ["/usr/local/bin/otus"]
+COPY --from=builder /build/capture-agent /usr/local/bin/
+ENTRYPOINT ["/usr/local/bin/capture-agent"]
 CMD ["daemon"]
 ```
 
@@ -2359,24 +2359,24 @@ CMD ["daemon"]
 **Prometheus 指标**：
 ```go
 // 捕获指标
-otus_packets_captured_total{task="voip-monitor-01",interface="eth0"} 1234567
-otus_packets_dropped_total{task="voip-monitor-01",interface="eth0"} 123
-otus_bytes_captured_total{task="voip-monitor-01",interface="eth0"} 1234567890
+capture_agent_packets_captured_total{task="voip-monitor-01",interface="eth0"} 1234567
+capture_agent_packets_dropped_total{task="voip-monitor-01",interface="eth0"} 123
+capture_agent_bytes_captured_total{task="voip-monitor-01",interface="eth0"} 1234567890
 
 // 处理指标
-otus_packets_parsed_total{task="voip-monitor-01",parser="sip"} 123456
-otus_packets_filtered_total{task="voip-monitor-01",reason="not_invite"} 12345
-otus_packets_reported_total{task="voip-monitor-01",reporter="kafka"} 123000
+capture_agent_packets_parsed_total{task="voip-monitor-01",parser="sip"} 123456
+capture_agent_packets_filtered_total{task="voip-monitor-01",reason="not_invite"} 12345
+capture_agent_packets_reported_total{task="voip-monitor-01",reporter="kafka"} 123000
 
 // 性能指标
-otus_processing_latency_seconds{task="voip-monitor-01",quantile="0.5"} 0.0001
-otus_processing_latency_seconds{task="voip-monitor-01",quantile="0.99"} 0.0008
-otus_cpu_usage_ratio 0.85
-otus_memory_usage_bytes 536870912
+capture_agent_processing_latency_seconds{task="voip-monitor-01",quantile="0.5"} 0.0001
+capture_agent_processing_latency_seconds{task="voip-monitor-01",quantile="0.99"} 0.0008
+capture_agent_cpu_usage_ratio 0.85
+capture_agent_memory_usage_bytes 536870912
 
 // 插件指标
-otus_plugin_loaded{name="sip_parser",type="parser"} 1
-otus_plugin_health{name="kafka_reporter",status="healthy"} 1
+capture_agent_plugin_loaded{name="sip_parser",type="parser"} 1
+capture_agent_plugin_health{name="kafka_reporter",status="healthy"} 1
 ```
 
 ### 8.2 日志
@@ -2404,7 +2404,7 @@ otus_plugin_health{name="kafka_reporter",status="healthy"} 1
 | **Stdout** | 标准输出（容器环境自动启用） | K8s / Docker 环境 |
 
 **本地日志滚动**：基于 [lumberjack](https://github.com/natefinch/lumberjack) 实现，配置项见 4.5.1 `log.outputs.file.rotation`。字段使用数值格式（ADR-025）。滚动策略：
-- 文件达到 `max_size_mb` → 重命名为 `otus-2026-02-13T10-30.log.gz` 并创建新文件
+- 文件达到 `max_size_mb` → 重命名为 `capture-agent-2026-02-13T10-30.log.gz` 并创建新文件
 - 超过 `max_age_days` 天的旧日志自动删除
 - 保留最多 `max_backups` 个历史文件
 
@@ -2482,13 +2482,13 @@ otus_plugin_health{name="kafka_reporter",status="healthy"} 1
 | 020 | 本地控制通道 | JSON-RPC over UDS，不用 gRPC | Phase 1 |
 | 021 | DecodedPacket 类型 | 自定义值类型 struct，隔离 gopacket 到解码器内部 | Phase 1 |
 | 022 | 插件注册机制 | 纯静态链接 + `init()` blank import，编译期确定插件集合 | Phase 1 |
-| 023 | Node IP 解析 | 环境变量 `OTUS_NODE_IP` > 自动探测首个非回环 IPv4 > 启动报错 | Phase 1 |
-| 024 | Kafka 全局默认 | `otus.kafka` 提供 brokers/sasl/tls 共享默认，子节点继承，显式覆盖优先 | Phase 1 |
+| 023 | Node IP 解析 | 环境变量 `CAPTURE_AGENT_NODE_IP` > 自动探测首个非回环 IPv4 > 启动报错 | Phase 1 |
+| 024 | Kafka 全局默认 | `capture-agent.kafka` 提供 brokers/sasl/tls 共享默认，子节点继承，显式覆盖优先 | Phase 1 |
 | 025 | 日志滚动配置 | 数值格式字段名（`max_size_mb` / `max_age_days`），lumberjack 驱动 | Phase 1 |
 | 026 | 命令 TTL | 超时命令静默丢弃，防止节点重启后重放旧命令 | Phase 1 |
 | 027 | 动态 Topic 路由 | `topic_prefix` + `payload_type` 后缀，与 `topic` 固定配置互斥 | Phase 1 |
 | 028 | Kafka 消息格式 | Headers 承载元数据，Value 承载业务数据（JSON/binary） | Phase 1 |
-| 029 | 双 Topic 响应 | `otus-responses` 写回结果，`request_id` correlation，`hostname` 作 message key | Phase 1 |
+| 029 | 双 Topic 响应 | `capture-agent-responses` 写回结果，`request_id` correlation，`hostname` 作 message key | Phase 1 |
 | 030 | Task 持久化 | 每 Task 独立 JSON 文件，原子 `CreateTemp→Rename` 写，重启时自动 Restore | Phase 1 |
 | 031 | 历史 GC 策略 | systemd-tmpfiles.d `e` 指令（7d age-prune）为主，进程内 GC goroutine（`max_task_history`）为辅 | Phase 1 |
 
@@ -2553,4 +2553,4 @@ otus_plugin_health{name="kafka_reporter",status="healthy"} 1
 
 **文档版本**: v0.3.0  
 **更新日期**: 2026-02-22  
-**作者**: Otus Team
+**作者**: capture-agent Team

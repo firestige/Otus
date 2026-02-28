@@ -1,15 +1,15 @@
-# Otus 实施计划
+# capture-agent 实施计划
 
-> 本文档是从零重建 Otus 项目的"交接文档"。每个后续工作会话应基于本文档定位自己的任务块，无需重新阅读旧代码。
+> 本文档是从零重建 capture-agent 项目的"交接文档"。每个后续工作会话应基于本文档定位自己的任务块，无需重新阅读旧代码。
 
 ## 1. 项目元信息
 
 | 项 | 值 |
 |---|---|
 | Go 版本 | ≥ 1.24 |
-| Module path | `firestige.xyz/otus` |
+| Module path | `icc.tech/capture-agent` |
 | 仓库路径 | `/workspaces/Otus` |
-| 二进制名称 | `otus`（单二进制，daemon / CLI 共用） |
+| 二进制名称 | `capture-agent`（单二进制，daemon / CLI 共用） |
 | 许可证 | MIT |
 
 ---
@@ -55,20 +55,20 @@
 ## 3. 目标包结构
 
 ```
-firestige.xyz/otus
+icc.tech/capture-agent
 ├── main.go                          // 入口，仅调用 cmd.Execute()
 ├── go.mod
 ├── go.sum
 ├── Makefile
 ├── configs/
 │   ├── config.yml                   // 全局静态配置模板
-│   └── otus.service                 // systemd unit file
+│   └── capture-agent.service                 // systemd unit file
 ├── cmd/                             // CLI 命令定义（cobra）
 │   ├── root.go                      // root command + 全局 flags
-│   ├── daemon.go                    // `otus daemon` — 启动守护进程
-│   ├── task.go                      // `otus task {create|delete|list|status}`
-│   ├── stop.go                      // `otus stop` — 停止守护进程
-│   └── reload.go                    // `otus reload` — 重载配置
+│   ├── daemon.go                    // `capture-agent daemon` — 启动守护进程
+│   ├── task.go                      // `capture-agent task {create|delete|list|status}`
+│   ├── stop.go                      // `capture-agent stop` — 停止守护进程
+│   └── reload.go                    // `capture-agent reload` — 重载配置
 ├── internal/
 │   ├── config/                      // 全局配置加载（viper）
 │   │   ├── config.go                // GlobalConfig 结构体 + Load()
@@ -254,18 +254,18 @@ const (
 // internal/core/errors.go
 
 var (
-    ErrTaskNotFound      = errors.New("otus: task not found")
-    ErrTaskAlreadyExists = errors.New("otus: task already exists")
-    ErrTaskStartFailed   = errors.New("otus: task start failed")
-    ErrPipelineStopped   = errors.New("otus: pipeline stopped")
-    ErrPacketTooShort    = errors.New("otus: packet too short")
-    ErrUnsupportedProto  = errors.New("otus: unsupported protocol")
-    ErrReassemblyTimeout = errors.New("otus: fragment reassembly timeout")
-    ErrReassemblyLimit   = errors.New("otus: fragment reassembly limit exceeded")
-    ErrPluginNotFound    = errors.New("otus: plugin not found")
-    ErrPluginInitFailed  = errors.New("otus: plugin init failed")
-    ErrConfigInvalid     = errors.New("otus: invalid configuration")
-    ErrDaemonNotRunning  = errors.New("otus: daemon not running")
+    ErrTaskNotFound      = errors.New("capture-agent: task not found")
+    ErrTaskAlreadyExists = errors.New("capture-agent: task already exists")
+    ErrTaskStartFailed   = errors.New("capture-agent: task start failed")
+    ErrPipelineStopped   = errors.New("capture-agent: pipeline stopped")
+    ErrPacketTooShort    = errors.New("capture-agent: packet too short")
+    ErrUnsupportedProto  = errors.New("capture-agent: unsupported protocol")
+    ErrReassemblyTimeout = errors.New("capture-agent: fragment reassembly timeout")
+    ErrReassemblyLimit   = errors.New("capture-agent: fragment reassembly limit exceeded")
+    ErrPluginNotFound    = errors.New("capture-agent: plugin not found")
+    ErrPluginInitFailed  = errors.New("capture-agent: plugin init failed")
+    ErrConfigInvalid     = errors.New("capture-agent: invalid configuration")
+    ErrDaemonNotRunning  = errors.New("capture-agent: daemon not running")
 )
 ```
 
@@ -340,7 +340,7 @@ type Reporter interface {
 > 完整 YAML 层级、Go 结构体映射和设计决策详见 [config-design.md](config-design.md)。以下为精简示例。
 
 ```yaml
-otus:
+capture-agent:
   node:
     ip: ""                       # 空 = 自动探测（ADR-023: env > auto-detect > error）
     hostname: edge-beijing-01
@@ -349,8 +349,8 @@ otus:
       environment: production
 
   control:
-    socket: /var/run/otus.sock
-    pid_file: /var/run/otus.pid
+    socket: /var/run/capture-agent.sock
+    pid_file: /var/run/capture-agent.pid
 
   # Kafka 全局默认（ADR-024: command_channel 和 reporters 继承）
   kafka:
@@ -367,15 +367,15 @@ otus:
     enabled: true
     type: kafka
     kafka:
-      # brokers/sasl/tls 继承自 otus.kafka
-      topic: otus-commands
-      response_topic: otus-responses   # ADR-029: 响应回写 topic，空字符串禁用
-      group_id: "otus-${node.hostname}"
+      # brokers/sasl/tls 继承自 capture-agent.kafka
+      topic: capture-agent-commands
+      response_topic: capture-agent-responses   # ADR-029: 响应回写 topic，空字符串禁用
+      group_id: "capture-agent-${node.hostname}"
       auto_offset_reset: latest
 
   reporters:
     kafka:
-      # brokers/sasl/tls 继承自 otus.kafka
+      # brokers/sasl/tls 继承自 capture-agent.kafka
       compression: snappy
       max_message_bytes: 1048576
 
@@ -417,7 +417,7 @@ otus:
     outputs:
       file:
         enabled: true
-        path: /var/log/otus/otus.log
+        path: /var/log/capture-agent/capture-agent.log
         rotation:
           max_size_mb: 100       # ADR-025: 数值字段
           max_age_days: 30
@@ -427,7 +427,7 @@ otus:
         enabled: false
         endpoint: http://loki:3100/loki/api/v1/push
         labels:
-          app: otus
+          app: capture-agent
           env: production
         batch_size: 100
         batch_timeout: 1s
@@ -464,7 +464,7 @@ otus:
       {
         "type": "kafka",
         "config": {
-          "topic": "otus-sip-data",
+          "topic": "capture-agent-sip-data",
           "batch_size": 500,
           "flush_interval": "1s"
         }
@@ -487,7 +487,7 @@ otus:
 
 ### 7.2 版本兼容
 
-**不保留向后兼容。** Otus 目前没有外部使用者依赖其 API，不存在兼容义务。Module path 保持 `firestige.xyz/otus` 不变，但接口全部重新定义。API 稳定性承诺从新接口的 v1.0 开始。
+**不保留向后兼容。** capture-agent 目前没有外部使用者依赖其 API，不存在兼容义务。Module path 保持 `icc.tech/capture-agent` 不变，但接口全部重新定义。API 稳定性承诺从新接口的 v1.0 开始。
 
 ### 7.3 测试策略
 
@@ -544,7 +544,7 @@ otus:
 **任务清单**:
 1. 备份/归档旧代码（`git tag v0-legacy`）
 2. 删除所有旧源代码文件（保留 `doc/`, `configs/`, `LICENSE`, `README.md`, `Makefile`）
-3. 重写 `go.mod`（确认 module path `firestige.xyz/otus`，Go 1.24）
+3. 重写 `go.mod`（确认 module path `icc.tech/capture-agent`，Go 1.24）
 4. 创建完整目录结构（按第 3 节）
 5. 创建空的占位文件（`package xxx` 声明 + 简短 doc comment）
 6. 验证 `go build ./...` 通过
@@ -880,7 +880,7 @@ otus:
 `processMessage()` 调用 `handler.Handle()` 后得到 `Response` 对象，当前该对象被直接丢弃。
 所有需要返回数据的命令（`task_list`, `task_status`, `daemon_status`, `daemon_stats`）
 均无法将结果送达远端调用方。本步骤在 `KafkaCommandConsumer` 中新增 Kafka Producer，
-在命令执行后将响应写入 `otus-responses` topic（见 [ADR-029](decisions.md#adr-029-kafka-命令响应通道)）。
+在命令执行后将响应写入 `capture-agent-responses` topic（见 [ADR-029](decisions.md#adr-029-kafka-命令响应通道)）。
 
 #### 任务清单
 
@@ -1019,7 +1019,7 @@ func (c *KafkaCommandConsumer) Stop() error {
 # 近端 consumer 日志应出现：
 # "kafka response written" request_id=req-001 source=edge-beijing-01
 
-# 远端可从 otus-responses 消费到：
+# 远端可从 capture-agent-responses 消费到：
 {
   "version": "v1",
   "source": "edge-beijing-01",
@@ -1031,7 +1031,7 @@ func (c *KafkaCommandConsumer) Stop() error {
 ```
 
 **交付物**: `task_list`/`task_status`/`daemon_status`/`daemon_stats` 的执行结果可从
-`otus-responses` topic 消费；所有现有测试继续通过
+`capture-agent-responses` topic 消费；所有现有测试继续通过
 
 ---
 
@@ -1091,17 +1091,17 @@ func (c *KafkaCommandConsumer) Stop() error {
 
 **任务清单**:
 1. `cmd/root.go` — root command + 全局 flags（`--config`, `--socket`）
-2. `cmd/daemon.go` — `otus daemon` 子命令
+2. `cmd/daemon.go` — `capture-agent daemon` 子命令
    - 前台启动（默认）或后台 daemon 化
    - PID file 管理
    - 信号处理（SIGTERM graceful shutdown, SIGHUP reload）
-3. `cmd/task.go` — `otus task` 子命令组
-   - `otus task create -f task.json`
-   - `otus task delete <task-id>`
-   - `otus task list`
-   - `otus task status <task-id>`
-4. `cmd/stop.go` — `otus stop`（发送 shutdown 命令到 daemon）
-5. `cmd/reload.go` — `otus reload`（发送 reload 命令到 daemon）
+3. `cmd/task.go` — `capture-agent task` 子命令组
+   - `capture-agent task create -f task.json`
+   - `capture-agent task delete <task-id>`
+   - `capture-agent task list`
+   - `capture-agent task status <task-id>`
+4. `cmd/stop.go` — `capture-agent stop`（发送 shutdown 命令到 daemon）
+5. `cmd/reload.go` — `capture-agent reload`（发送 reload 命令到 daemon）
 6. `main.go` — 调用 `cmd.Execute()`
 
 **交付物**: CLI 可完整控制 daemon 和 Task
@@ -1115,21 +1115,21 @@ func (c *KafkaCommandConsumer) Stop() error {
 **任务清单**:
 
 #### A. CLI 补全
-1. CLI 支持 YAML 格式 task 文件：`otus task create -f task.yaml`
+1. CLI 支持 YAML 格式 task 文件：`capture-agent task create -f task.yaml`
    - 自动检测 JSON/YAML（基于扩展名或内容探测）
    - 内部统一转换为 `TaskConfig` 结构
-2. `cmd/status.go` — `otus status`：查询 daemon 整体状态（版本、运行时间、Task 数量）
-3. `cmd/stats.go` — `otus stats`：查询运行时统计（抓包速率、丢包数）
-4. `cmd/validate.go` — `otus validate -f task.yaml`：预校验 task 配置文件（不创建 Task）
-5. 补充 `daemon_shutdown` 命令到 CommandHandler（当前 `otus stop` 直接 os.Kill，应改为命令优雅停止）
+2. `cmd/status.go` — `capture-agent status`：查询 daemon 整体状态（版本、运行时间、Task 数量）
+3. `cmd/stats.go` — `capture-agent stats`：查询运行时统计（抓包速率、丢包数）
+4. `cmd/validate.go` — `capture-agent validate -f task.yaml`：预校验 task 配置文件（不创建 Task）
+5. 补充 `daemon_shutdown` 命令到 CommandHandler（当前 `capture-agent stop` 直接 os.Kill，应改为命令优雅停止）
 
 #### B. 全局配置重构（ADR-023/024/025）
 6. `internal/config/config.go` — 重构 GlobalConfig 结构体
    - 结构体对齐 [config-design.md](config-design.md) 附录 A（含 `GlobalKafkaConfig`）
-   - `validateAndApplyDefaults()` 实现 Kafka 继承逻辑（ADR-024: `otus.kafka` → `command_channel.kafka` / `reporters.kafka`）
+   - `validateAndApplyDefaults()` 实现 Kafka 继承逻辑（ADR-024: `capture-agent.kafka` → `command_channel.kafka` / `reporters.kafka`）
    - `resolveNodeIP()` 实现 Node IP 解析（ADR-023: env > auto-detect > error）
    - 日志滚动字段改为 `MaxSizeMB` / `MaxAgeDays`（ADR-025）
-7. `configs/config.yml` — 更新为 `otus:` 嵌套格式（对齐 config-design.md §2）
+7. `configs/config.yml` — 更新为 `capture-agent:` 嵌套格式（对齐 config-design.md §2）
 8. 单元测试：Kafka 继承合并、Node IP 解析、配置加载
 
 #### C. Kafka 命令格式升级（ADR-026）
@@ -1138,7 +1138,7 @@ func (c *KafkaCommandConsumer) Stop() error {
    - 增加 target 过滤（匹配 `node.hostname` 或 `"*"`）
    - 增加 timestamp TTL 检查（可配置 `command_ttl`，默认 5m）
    - 转换为内部 `Command{Method, Params, ID}` 后调用 handler
-10. 使用新的 `CommandChannelConfig`（继承 `otus.kafka` 全局默认）
+10. 使用新的 `CommandChannelConfig`（继承 `capture-agent.kafka` 全局默认）
 11. 单元测试：target 过滤、TTL 拒绝过期命令、KafkaCommand 解析
 
 #### D. Kafka Reporter 增强（ADR-027/028）
@@ -1146,7 +1146,7 @@ func (c *KafkaCommandConsumer) Stop() error {
     - `TopicPrefix` 配置 + `resolveTopic()` 方法（`topic_prefix` 与 `topic` 互斥）
     - Envelope 信息迁移到 Kafka Headers（task_id, agent_id, payload_type, src_ip, dst_ip, timestamp, l.* labels）
     - 可配置 `serialization: json | binary`（Phase 1 默认 json）
-13. 连接配置从 `otus.reporters.kafka`（继承 `otus.kafka`）读取
+13. 连接配置从 `capture-agent.reporters.kafka`（继承 `capture-agent.kafka`）读取
 14. 单元测试：动态路由、Headers 序列化、serialization 切换
 
 **交付物**: CLI 功能完整覆盖日常运维操作；全局配置/Kafka 命令/Kafka Reporter 对齐设计文档
@@ -1163,8 +1163,8 @@ func (c *KafkaCommandConsumer) Stop() error {
 #### A. 全局配置扩展
 1. `internal/config/config.go` — 新增 `DataDir` 和 `TaskPersistence` 字段
    ```yaml
-   otus:
-     data_dir: /var/lib/otus
+   capture-agent:
+     data_dir: /var/lib/capture-agent
      task_persistence:
        enabled: true
        auto_restart: true
@@ -1206,15 +1206,15 @@ func (c *KafkaCommandConsumer) Stop() error {
    - 启动后台 GC goroutine（`task_persistence.gc_interval`，`max_task_history`）
 
 #### E. systemd-tmpfiles.d 集成
-9. `configs/tmpfiles.d/otus.conf` — 新增文件
+9. `configs/tmpfiles.d/capture-agent.conf` — 新增文件
    ```
-   D /var/lib/otus             0750 root root -
-   d /var/lib/otus/tasks       0750 root root -
-   e /var/lib/otus/tasks       -    -    -    7d
+   D /var/lib/capture-agent             0750 root root -
+   d /var/lib/capture-agent/tasks       0750 root root -
+   e /var/lib/capture-agent/tasks       -    -    -    7d
    ```
-10. 更新 `configs/otus.service` — 新增 `ExecStartPre`
+10. 更新 `configs/capture-agent.service` — 新增 `ExecStartPre`
     ```ini
-    ExecStartPre=systemd-tmpfiles --create /etc/tmpfiles.d/otus.conf
+    ExecStartPre=systemd-tmpfiles --create /etc/tmpfiles.d/capture-agent.conf
     ```
 
 **交付物**: 守护进程重启后自动恢复 running 任务；任务历史文件由 systemd-tmpfiles.d + 程序内 GC 双重保障清理；`task_list` / `task_status` 可查询历史记录
@@ -1234,10 +1234,10 @@ func (c *KafkaCommandConsumer) Stop() error {
    - PID file 管理
 2. `internal/command/handler.go` — 新增 `daemon_shutdown` 命令
    - 触发优雅停止流程（通过 channel 或 context 取消传播给 daemon）
-   - `otus stop` 通过 UDS 发送 `daemon_shutdown` 命令而非直接 kill
+   - `capture-agent stop` 通过 UDS 发送 `daemon_shutdown` 命令而非直接 kill
 3. 集成测试：启动 → 创建 Task → 停止
 
-**交付物**: `otus daemon` 可完整运行
+**交付物**: `capture-agent daemon` 可完整运行
 
 ---
 
@@ -1248,12 +1248,12 @@ func (c *KafkaCommandConsumer) Stop() error {
 
 **任务清单**:
 1. `internal/metrics/metrics.go` — 全局指标注册
-   - `otus_capture_packets_total` (counter, labels: task, interface)
-   - `otus_capture_drops_total` (counter, labels: task, stage)  
-   - `otus_pipeline_packets_total` (counter, labels: task, pipeline, stage)
-   - `otus_pipeline_latency_seconds` (histogram, labels: task, stage)
-   - `otus_task_status` (gauge, labels: task, status)
-   - `otus_reassembly_active_fragments` (gauge)
+   - `capture_agent_capture_packets_total` (counter, labels: task, interface)
+   - `capture_agent_capture_drops_total` (counter, labels: task, stage)  
+   - `capture_agent_pipeline_packets_total` (counter, labels: task, pipeline, stage)
+   - `capture_agent_pipeline_latency_seconds` (histogram, labels: task, stage)
+   - `capture_agent_task_status` (gauge, labels: task, status)
+   - `capture_agent_reassembly_active_fragments` (gauge)
 2. `internal/metrics/server.go` — HTTP server
 3. 验证 Prometheus scrape
 
@@ -1264,10 +1264,10 @@ func (c *KafkaCommandConsumer) Stop() error {
 ### ✅ Step 18: systemd 集成 + 部署
 **前置**: Step 16  
 **目标**: 生产就绪的部署配置  
-**状态**: ✅ 已完成（`configs/otus.service` + `Makefile` + `scripts/build.sh` + `doc/DEPLOYMENT.md`；README 待补充）
+**状态**: ✅ 已完成（`configs/capture-agent.service` + `Makefile` + `scripts/build.sh` + `doc/DEPLOYMENT.md`；README 待补充）
 
 **任务清单**:
-1. 更新 `configs/otus.service` — systemd unit file
+1. 更新 `configs/capture-agent.service` — systemd unit file
 2. 更新 `Makefile` — build / install / clean targets
 3. 编写 `scripts/build.sh` — 多架构交叉编译（amd64 / arm64）
 4. 更新 `README.md` — 安装和使用说明
@@ -1284,27 +1284,27 @@ func (c *KafkaCommandConsumer) Stop() error {
 | 旧文件路径 | 参考价值 | 新代码对应位置 |
 |------------|---------|---------------|
 | `internal/utils/bpf.go` | BPF 过滤器编译逻辑 | `plugins/capture/afpacket/` |
-| `internal/otus/module/capture/handle/handle_afpacket.go` | AF_PACKET TPacket V3 配置（ring buffer 参数、fanout 模式） | `plugins/capture/afpacket/` |
-| `internal/otus/module/capture/codec/assembly_ipv4.go` | IPv4 分片重组算法思路 | `internal/core/decoder/reassembly.go` |
+| `internal/capture-agent/module/capture/handle/handle_afpacket.go` | AF_PACKET TPacket V3 配置（ring buffer 参数、fanout 模式） | `plugins/capture/afpacket/` |
+| `internal/capture-agent/module/capture/codec/assembly_ipv4.go` | IPv4 分片重组算法思路 | `internal/core/decoder/reassembly.go` |
 | `plugins/parser/sip/sip_parser.go` | SIP 协议检测和完整解析逻辑 | `plugins/parser/sip/` |
 | `internal/daemon/manager.go` | daemon 进程管理模式（PID file, signal） | `internal/daemon/daemon.go` |
 | `cmd/*.go` | cobra 命令结构和 UDS 通信模式 | `cmd/` |
-| `internal/otus/module/pipeline/pipeline.go` | Pipeline 连接模型参考 | `internal/pipeline/pipeline.go` |
+| `internal/capture-agent/module/pipeline/pipeline.go` | Pipeline 连接模型参考 | `internal/pipeline/pipeline.go` |
 | `plugins/reporter/consolelog/reporter.go` | 控制台输出 Reporter 格式 | `plugins/reporter/console/` |
 
 ---
 
 ## 10. 验收标准（Phase 1 完成时）
 
-- [x] `otus daemon` 可以前台启动，加载配置，监听 UDS
-- [x] `otus task create -f task.json` 可以通过 UDS 创建 SIP 抓包任务
+- [x] `capture-agent daemon` 可以前台启动，加载配置，监听 UDS
+- [x] `capture-agent task create -f task.json` 可以通过 UDS 创建 SIP 抓包任务
 - [x] AF_PACKET 捕获 → L2-L4 解码 → SIP 解析 → Kafka 上报 全链路跑通
 - [x] Kafka 命令 topic 可以远程创建/删除 Task
-- [x] 交互式命令（`task_list`, `task_status`, `daemon_status`, `daemon_stats`）执行结果可从 `otus-responses` topic 消费（ADR-029）
+- [x] 交互式命令（`task_list`, `task_status`, `daemon_status`, `daemon_stats`）执行结果可从 `capture-agent-responses` topic 消费（ADR-029）
 - [x] IP 分片重组正常工作，有硬上限保护
 - [x] 日志输出到文件（lumberjack 滚动）和 Loki
 - [x] Prometheus `/metrics` 端点返回各层指标
-- [x] `otus stop` 可以 graceful shutdown
+- [x] `capture-agent stop` 可以 graceful shutdown
 - [ ] 性能：单核 ≥200K pps (SIP 完整解析)（待集成测试验证）
 - [x] 静态编译二进制，支持 amd64 / arm64
 - [x] systemd service 可正常运行
@@ -1313,4 +1313,4 @@ func (c *KafkaCommandConsumer) Stop() error {
 
 **文档版本**: v0.4.0  
 **更新日期**: 2026-02-22  
-**作者**: Otus Team
+**作者**: capture-agent Team

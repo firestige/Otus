@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"firestige.xyz/otus/internal/config"
+	"icc.tech/capture-agent/internal/config"
 )
 
 // TaskStore is the persistence interface for task state (ADR-030).

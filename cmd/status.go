@@ -9,13 +9,13 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"firestige.xyz/otus/internal/command"
+	"icc.tech/capture-agent/internal/command"
 )
 
 var statusCmd = &cobra.Command{
 	Use:   "status",
 	Short: "Show daemon status",
-	Long: `Query the Otus daemon for its overall status.
+	Long: `Query the capture-agent daemon for its overall status.
 
 Shows: version, uptime, number of running tasks, and their IDs.`,
 	Run: func(cmd *cobra.Command, args []string) {

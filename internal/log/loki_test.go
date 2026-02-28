@@ -65,8 +65,8 @@ func TestNewLokiWriterDefaultLabels(t *testing.T) {
 	}
 	defer lw.Close()
 
-	if lw.labels["job"] != "otus" {
-		t.Errorf("Expected default job label 'otus', got %s", lw.labels["job"])
+	if lw.labels["job"] != "capture-agent" {
+		t.Errorf("Expected default job label 'capture-agent', got %s", lw.labels["job"])
 	}
 }
 

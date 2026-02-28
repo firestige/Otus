@@ -1,12 +1,12 @@
-// Package main is the entry point for the Otus edge packet capture agent.
+// Package main is the entry point for the capture-agent edge packet capture agent.
 package main
 
 import (
 	"fmt"
 	"os"
 
-	"firestige.xyz/otus/cmd"
-	_ "firestige.xyz/otus/plugins" // 触发所有内置插件 init() 注册
+	"icc.tech/capture-agent/cmd"
+	_ "icc.tech/capture-agent/plugins" // 触发所有内置插件 init() 注册
 )
 
 func main() {

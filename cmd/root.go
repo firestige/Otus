@@ -16,9 +16,9 @@ var (
 
 // rootCmd represents the base command when called without any subcommands
 var rootCmd = &cobra.Command{
-	Use:   "otus",
-	Short: "Otus - High-performance edge packet capture and observability system",
-	Long: `Otus is a high-performance, low-resource edge network packet capture and observability system.
+	Use:   "capture-agent",
+	Short: "capture-agent - High-performance edge packet capture and observability system",
+	Long: `capture-agent is a high-performance, low-resource edge network packet capture and observability system.
 It captures network traffic, decodes protocols (L2-L4), parses application protocols (SIP, RTP, etc.),
 and reports data to Kafka or other backends.
 
@@ -39,9 +39,9 @@ func Execute() error {
 
 func init() {
 	// Global flags
-	rootCmd.PersistentFlags().StringVarP(&configFile, "config", "c", "/etc/otus/config.yml",
+	rootCmd.PersistentFlags().StringVarP(&configFile, "config", "c", "/etc/capture-agent/config.yml",
 		"config file path")
-	rootCmd.PersistentFlags().StringVarP(&socketPath, "socket", "s", "/var/run/otus.sock",
+	rootCmd.PersistentFlags().StringVarP(&socketPath, "socket", "s", "/var/run/capture-agent.sock",
 		"daemon socket path")
 
 	// Add subcommands

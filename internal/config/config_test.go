@@ -22,7 +22,7 @@ func writeTmpConfig(t *testing.T, content string) string {
 
 func TestLoadValidConfig(t *testing.T) {
 	cfg, err := Load(writeTmpConfig(t, `
-otus:
+capture-agent:
   node:
     ip: "10.0.0.1"
     hostname: "test-host"
@@ -88,7 +88,7 @@ otus:
 
 func TestLoadInvalidLogLevel(t *testing.T) {
 	_, err := Load(writeTmpConfig(t, `
-otus:
+capture-agent:
   node:
     ip: "10.0.0.1"
   log:
@@ -105,7 +105,7 @@ otus:
 
 func TestLoadInvalidLogFormat(t *testing.T) {
 	_, err := Load(writeTmpConfig(t, `
-otus:
+capture-agent:
   node:
     ip: "10.0.0.1"
   log:
@@ -121,7 +121,7 @@ otus:
 
 func TestAutoDetectHostname(t *testing.T) {
 	cfg, err := Load(writeTmpConfig(t, `
-otus:
+capture-agent:
   node:
     ip: "10.0.0.1"
   log:
@@ -144,7 +144,7 @@ otus:
 
 func TestNodeIPExplicit(t *testing.T) {
 	cfg, err := Load(writeTmpConfig(t, `
-otus:
+capture-agent:
   node:
     ip: "192.168.1.100"
   log:
@@ -162,7 +162,7 @@ otus:
 func TestNodeIPAutoDetect(t *testing.T) {
 	// No explicit IP → auto-detect should find something on CI / dev containers
 	cfg, err := Load(writeTmpConfig(t, `
-otus:
+capture-agent:
   log:
     level: "info"
     format: "json"
@@ -179,7 +179,7 @@ otus:
 
 func TestKafkaInheritanceSameCluster(t *testing.T) {
 	cfg, err := Load(writeTmpConfig(t, `
-otus:
+capture-agent:
   node:
     ip: "10.0.0.1"
   kafka:
@@ -222,7 +222,7 @@ otus:
 
 func TestKafkaInheritanceDifferentCluster(t *testing.T) {
 	cfg, err := Load(writeTmpConfig(t, `
-otus:
+capture-agent:
   node:
     ip: "10.0.0.1"
   kafka:
@@ -259,7 +259,7 @@ otus:
 func TestKafkaInheritanceNoGlobal(t *testing.T) {
 	// No global kafka, no command channel → should be fine
 	cfg, err := Load(writeTmpConfig(t, `
-otus:
+capture-agent:
   node:
     ip: "10.0.0.1"
   log:
@@ -278,7 +278,7 @@ otus:
 
 func TestCommandChannelEnabledWithoutBrokers(t *testing.T) {
 	_, err := Load(writeTmpConfig(t, `
-otus:
+capture-agent:
   node:
     ip: "10.0.0.1"
   command_channel:
@@ -300,7 +300,7 @@ otus:
 
 func TestCommandChannelEnabledWithoutTopic(t *testing.T) {
 	_, err := Load(writeTmpConfig(t, `
-otus:
+capture-agent:
   node:
     ip: "10.0.0.1"
   kafka:
@@ -324,7 +324,7 @@ otus:
 
 func TestCommandChannelAutoGroupID(t *testing.T) {
 	cfg, err := Load(writeTmpConfig(t, `
-otus:
+capture-agent:
   node:
     ip: "10.0.0.1"
     hostname: "myhost"
@@ -342,8 +342,8 @@ otus:
 	if err != nil {
 		t.Fatalf("Load failed: %v", err)
 	}
-	if cfg.CommandChannel.Kafka.GroupID != "otus-myhost" {
-		t.Errorf("GroupID = %q, want otus-myhost", cfg.CommandChannel.Kafka.GroupID)
+	if cfg.CommandChannel.Kafka.GroupID != "capture-agent-myhost" {
+		t.Errorf("GroupID = %q, want capture-agent-myhost", cfg.CommandChannel.Kafka.GroupID)
 	}
 }
 
@@ -351,7 +351,7 @@ otus:
 
 func TestLoadDefaults(t *testing.T) {
 	cfg, err := Load(writeTmpConfig(t, `
-otus:
+capture-agent:
   node:
     ip: "10.0.0.1"
 `))
@@ -360,11 +360,11 @@ otus:
 	}
 
 	// Control defaults
-	if cfg.Control.PIDFile != "/var/run/otus.pid" {
-		t.Errorf("Control.PIDFile = %q, want /var/run/otus.pid", cfg.Control.PIDFile)
+	if cfg.Control.PIDFile != "/var/run/capture-agent.pid" {
+		t.Errorf("Control.PIDFile = %q, want /var/run/capture-agent.pid", cfg.Control.PIDFile)
 	}
-	if cfg.Control.Socket != "/var/run/otus.sock" {
-		t.Errorf("Control.Socket = %q, want /var/run/otus.sock", cfg.Control.Socket)
+	if cfg.Control.Socket != "/var/run/capture-agent.sock" {
+		t.Errorf("Control.Socket = %q, want /var/run/capture-agent.sock", cfg.Control.Socket)
 	}
 
 	// Log defaults
@@ -400,10 +400,10 @@ otus:
 // ── Env Override ──
 
 func TestLoadEnvOverride(t *testing.T) {
-	t.Setenv("OTUS_LOG_LEVEL", "debug")
+	t.Setenv("CAPTURE_AGENT_LOG_LEVEL", "debug")
 
 	cfg, err := Load(writeTmpConfig(t, `
-otus:
+capture-agent:
   node:
     ip: "10.0.0.1"
   log:
@@ -422,7 +422,7 @@ otus:
 
 func TestKafkaOptional(t *testing.T) {
 	cfg, err := Load(writeTmpConfig(t, `
-otus:
+capture-agent:
   node:
     ip: "10.0.0.1"
   log:

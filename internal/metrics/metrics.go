@@ -10,7 +10,7 @@ var (
 	// CapturePacketsTotal counts total packets captured by interface
 	CapturePacketsTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{
-			Name: "otus_capture_packets_total",
+			Name: "capture_agent_capture_packets_total",
 			Help: "Total number of packets captured",
 		},
 		[]string{"task", "interface"},
@@ -19,7 +19,7 @@ var (
 	// CaptureDropsTotal counts total packets dropped during capture
 	CaptureDropsTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{
-			Name: "otus_capture_drops_total",
+			Name: "capture_agent_capture_drops_total",
 			Help: "Total number of packets dropped during capture",
 		},
 		[]string{"task", "stage"},
@@ -28,7 +28,7 @@ var (
 	// PipelinePacketsTotal counts total packets processed in pipeline
 	PipelinePacketsTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{
-			Name: "otus_pipeline_packets_total",
+			Name: "capture_agent_pipeline_packets_total",
 			Help: "Total number of packets processed in pipeline",
 		},
 		[]string{"task", "pipeline", "stage"},
@@ -37,7 +37,7 @@ var (
 	// PipelineLatencySeconds measures pipeline stage latency
 	PipelineLatencySeconds = promauto.NewHistogramVec(
 		prometheus.HistogramOpts{
-			Name:    "otus_pipeline_latency_seconds",
+			Name:    "capture_agent_pipeline_latency_seconds",
 			Help:    "Latency of pipeline processing stages in seconds",
 			Buckets: prometheus.ExponentialBuckets(0.000001, 2, 20), // 1µs to ~1s
 		},
@@ -47,7 +47,7 @@ var (
 	// TaskStatus tracks current task status
 	TaskStatus = promauto.NewGaugeVec(
 		prometheus.GaugeOpts{
-			Name: "otus_task_status",
+			Name: "capture_agent_task_status",
 			Help: "Current status of tasks (0=stopped, 1=running, 2=error)",
 		},
 		[]string{"task", "status"},
@@ -56,7 +56,7 @@ var (
 	// ReassemblyActiveFragments tracks active IP fragments awaiting reassembly
 	ReassemblyActiveFragments = promauto.NewGauge(
 		prometheus.GaugeOpts{
-			Name: "otus_reassembly_active_fragments",
+			Name: "capture_agent_reassembly_active_fragments",
 			Help: "Number of active IP fragments in reassembly queue",
 		},
 	)
@@ -64,7 +64,7 @@ var (
 	// ReporterBatchSize tracks Kafka batch size distribution (for ReporterWrapper)
 	ReporterBatchSize = promauto.NewHistogramVec(
 		prometheus.HistogramOpts{
-			Name:    "otus_reporter_batch_size",
+			Name:    "capture_agent_reporter_batch_size",
 			Help:    "Number of packets sent per reporter batch",
 			Buckets: prometheus.ExponentialBuckets(1, 2, 12), // 1, 2, 4, ..., 2048
 		},
@@ -74,7 +74,7 @@ var (
 	// ReporterErrorsTotal counts reporter errors by name and error type
 	ReporterErrorsTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{
-			Name: "otus_reporter_errors_total",
+			Name: "capture_agent_reporter_errors_total",
 			Help: "Total number of reporter errors",
 		},
 		[]string{"task", "reporter", "error_type"},
@@ -83,7 +83,7 @@ var (
 	// FlowRegistrySize tracks the current number of flows in a task's FlowRegistry
 	FlowRegistrySize = promauto.NewGaugeVec(
 		prometheus.GaugeOpts{
-			Name: "otus_flow_registry_size",
+			Name: "capture_agent_flow_registry_size",
 			Help: "Current number of flows tracked in the flow registry",
 		},
 		[]string{"task"},

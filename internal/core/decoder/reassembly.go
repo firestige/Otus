@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"firestige.xyz/otus/internal/metrics"
+	"icc.tech/capture-agent/internal/metrics"
 )
 
 // Reassembly constants ported from BSD-Right algorithm (RFC 791).

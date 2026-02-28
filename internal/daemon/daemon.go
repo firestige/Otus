@@ -12,14 +12,14 @@ import (
 	"syscall"
 	"time"
 
-	"firestige.xyz/otus/internal/command"
-	"firestige.xyz/otus/internal/config"
-	logpkg "firestige.xyz/otus/internal/log"
-	"firestige.xyz/otus/internal/metrics"
-	"firestige.xyz/otus/internal/task"
+	"icc.tech/capture-agent/internal/command"
+	"icc.tech/capture-agent/internal/config"
+	logpkg "icc.tech/capture-agent/internal/log"
+	"icc.tech/capture-agent/internal/metrics"
+	"icc.tech/capture-agent/internal/task"
 )
 
-// Daemon manages the otus daemon process lifecycle.
+// Daemon manages the capture-agent daemon process lifecycle.
 type Daemon struct {
 	// Configuration
 	config     *config.GlobalConfig
@@ -66,7 +66,7 @@ func New(configPath, socketPath, pidFile string) (*Daemon, error) {
 
 // Start initializes and starts all daemon components.
 func (d *Daemon) Start() error {
-	slog.Info("starting otus daemon",
+	slog.Info("starting capture-agent daemon",
 		"version", "0.1.0",
 		"hostname", d.config.Node.Hostname,
 		"config", d.configPath,

@@ -11,11 +11,11 @@ import (
 	"sync/atomic"
 	"time"
 
-	"firestige.xyz/otus/internal/config"
-	"firestige.xyz/otus/internal/core"
-	"firestige.xyz/otus/internal/metrics"
-	"firestige.xyz/otus/internal/pipeline"
-	"firestige.xyz/otus/pkg/plugin"
+	"icc.tech/capture-agent/internal/config"
+	"icc.tech/capture-agent/internal/core"
+	"icc.tech/capture-agent/internal/metrics"
+	"icc.tech/capture-agent/internal/pipeline"
+	"icc.tech/capture-agent/pkg/plugin"
 )
 
 // TaskState represents the state of a task in its lifecycle.

@@ -1,6 +1,6 @@
-# Otus
+# capture-agent
 
-**O**ptimized **T**raffic **U**nveiling **S**uite
+
 
 高性能网络数据包捕获、解析和上报系统，专为边缘部署和 SIP 协议分析设计。
 
@@ -31,15 +31,15 @@ sudo apt-get install -y libpcap-dev  # Debian/Ubuntu
 # sudo dnf install libpcap-devel      # Fedora/RHEL
 
 # 克隆仓库
-git clone https://github.com/firestige/otus.git
-cd otus
+git clone https://github.com/firestige/capture-agent.git
+cd capture-agent
 
 # 构建静态二进制（当前架构）
 make build-static
 
 # 或构建所有架构（需要交叉编译工具）
 make build-all
-# 输出: dist/otus-linux-amd64, dist/otus-linux-arm64
+# 输出: dist/capture-agent-linux-amd64, dist/capture-agent-linux-arm64
 ```
 
 #### 方式 B: Docker 构建
@@ -50,35 +50,35 @@ make docker-build
 
 # 提取静态二进制
 make docker-extract
-# 输出: ./otus-static
+# 输出: ./capture-agent-static
 ```
 
 ### 2. 安装
 
 ```bash
 # 安装二进制
-sudo install -m 755 otus /usr/local/bin/
+sudo install -m 755 capture-agent /usr/local/bin/
 
 # 创建目录
-sudo mkdir -p /etc/otus /var/lib/otus /var/log/otus
+sudo mkdir -p /etc/capture-agent /var/lib/capture-agent /var/log/capture-agent
 
 # 部署配置文件
-sudo cp configs/config.yml /etc/otus/
+sudo cp configs/config.yml /etc/capture-agent/
 
 # 安装 systemd 服务
-sudo cp configs/otus.service /etc/systemd/system/
+sudo cp configs/capture-agent.service /etc/systemd/system/
 sudo systemctl daemon-reload
-sudo systemctl enable otus
+sudo systemctl enable capture-agent
 ```
 
 ### 3. 配置
 
-编辑 `/etc/otus/config.yml`：
+编辑 `/etc/capture-agent/config.yml`：
 
 ```yaml
-otus:
+capture-agent:
   control:
-    socket: /var/run/otus.sock
+    socket: /var/run/capture-agent.sock
 
   metrics:
     enabled: true
@@ -100,20 +100,20 @@ otus:
     enabled: true
     type: kafka
     kafka:
-      topic: otus-commands
+      topic: capture-agent-commands
 ```
 
 ### 4. 启动
 
 ```bash
 # 启动服务
-sudo systemctl start otus
+sudo systemctl start capture-agent
 
 # 查看状态
-sudo systemctl status otus
+sudo systemctl status capture-agent
 
 # 查看日志
-sudo journalctl -u otus -f
+sudo journalctl -u capture-agent -f
 ```
 
 ### 5. 创建抓包任务
@@ -129,16 +129,16 @@ bpf_filter: "udp port 5060"
 EOF
 
 # 通过 UDS 创建任务
-otus task create -f sip-capture.yaml
+capture-agent task create -f sip-capture.yaml
 
 # 查看任务列表
-otus task list
+capture-agent task list
 
 # 查看任务状态
-otus task status sip-capture
+capture-agent task status sip-capture
 
 # 删除任务
-otus task delete sip-capture
+capture-agent task delete sip-capture
 ```
 
 ---
@@ -156,7 +156,7 @@ otus task delete sip-capture
 kubectl apply -f docs/kubernetes/daemonset.yaml
 
 # 查看运行状态
-kubectl get pods -n monitoring -l app=otus
+kubectl get pods -n monitoring -l app=capture-agent
 ```
 
 详见[K8s 部署指南](doc/DEPLOYMENT.md#kubernetes-部署)
@@ -171,7 +171,7 @@ kubectl get pods -n monitoring -l app=otus
 
 ```
 ┌─────────────────────────────────────────────────────┐
-│                   Otus Daemon                       │
+│                   capture-agent Daemon                       │
 ├─────────────────────────────────────────────────────┤
 │  Task Manager                                       │
 │  ├── Task 1 (SIP Capture)                          │
@@ -185,8 +185,8 @@ kubectl get pods -n monitoring -l app=otus
 │  └── Task 2 (...)                                   │
 ├─────────────────────────────────────────────────────┤
 │  Command Handler                                    │
-│  ├── UDS Server (/var/run/otus.sock)               │
-│  └── Kafka Consumer (otus-commands)                │
+│  ├── UDS Server (/var/run/capture-agent.sock)               │
+│  └── Kafka Consumer (capture-agent-commands)                │
 ├─────────────────────────────────────────────────────┤
 │  Metrics Server (:9091/metrics)                     │
 └─────────────────────────────────────────────────────┘
@@ -199,7 +199,7 @@ kubectl get pods -n monitoring -l app=otus
 ## 目录结构
 
 ```
-otus/
+capture-agent/
 ├── cmd/                      # CLI 命令实现
 │   ├── root.go              # root command + 全局 flags
 │   ├── daemon.go            # daemon 命令
@@ -211,7 +211,7 @@ otus/
 │   └── validate.go          # validate 命令
 ├── configs/                  # 配置文件
 │   ├── config.yml           # 默认配置
-│   └── otus.service         # systemd unit file
+│   └── capture-agent.service         # systemd unit file
 ├── internal/                 # 内部实现
 │   ├── core/                # 核心解码器
 │   │   ├── decoder/         # L2-L4 解码 + IP 重组
@@ -248,7 +248,7 @@ otus/
 │   ├── docker-compose.yml   # 编排所有服务
 │   ├── uas/                 # SIPp UAS（被叫方）
 │   ├── uac/                 # SIPp UAC（主叫方）
-│   ├── otus/                # Otus sidecar 容器
+│   ├── otus/                # capture-agent sidecar 容器
 │   └── console/             # Web 控制台（任务下发 + 实时查看）
 ├── Dockerfile               # 静态构建镜像
 ├── Makefile                 # 构建任务
@@ -260,7 +260,7 @@ otus/
 
 ## VoIP Simulator（端到端验证）
 
-`voip-simulator/` 目录提供了一套基于 **SIPp** 的 VoIP 通话模拟环境，用于端到端验证 Otus 的抓包、解析和上报能力。
+`voip-simulator/` 目录提供了一套基于 **SIPp** 的 VoIP 通话模拟环境，用于端到端验证 capture-agent 的抓包、解析和上报能力。
 
 ### 架构概览
 
@@ -271,7 +271,7 @@ otus/
 └──────┬───────┘            └──────┬───────┘
        │ network_mode:container          │ network_mode:container
 ┌──────┴───────┐            ┌──────┴───────┐
-│  Otus (UAC)  │            │  Otus (UAS)  │
+│  capture-agent (UAC)  │            │  capture-agent (UAS)  │
 │  sidecar     │            │  sidecar     │
 └──────┬───────┘            └──────┬───────┘
        │                           │
@@ -296,8 +296,8 @@ otus/
 |------|------|
 | **UAS** | SIPp 被叫方，监听 UDP 5060，接听呼叫并回送 RTP |
 | **UAC** | SIPp 主叫方，按配置速率发起呼叫（默认 1 cps） |
-| **Otus sidecar** | 以 `network_mode: container` 方式挂载到 UAC/UAS，共享网络命名空间进行抓包 |
-| **Kafka** | KRaft 单节点，接收 Otus 上报的 SIP/RTP 解析结果 |
+| **capture-agent sidecar** | 以 `network_mode: container` 方式挂载到 UAC/UAS，共享网络命名空间进行抓包 |
+| **Kafka** | KRaft 单节点，接收 capture-agent 上报的 SIP/RTP 解析结果 |
 | **Redpanda Console** | Kafka Web UI，查看 topic 数据（http://localhost:8081） |
 | **Web Console** | 任务下发与实时数据包查看界面（http://localhost:8080） |
 
@@ -312,8 +312,8 @@ docker compose up -d --build
 # 查看服务状态
 docker compose ps
 
-# 查看 Otus 抓包日志
-docker logs -f otus-uas
+# 查看 capture-agent 抓包日志
+docker logs -f capture-agent-uas
 
 # 打开 Web Console 查看实时数据
 # http://localhost:8080
@@ -328,7 +328,7 @@ docker compose down -v
 ### 验证流程
 
 1. 启动环境后，UAC 自动向 UAS 发起 SIP 呼叫
-2. Otus sidecar 实时捕获 SIP 信令和 RTP 媒体流
+2. capture-agent sidecar 实时捕获 SIP 信令和 RTP 媒体流
 3. 解析结果通过 Kafka 上报
 4. 在 Web Console 或 Redpanda Console 中查看抓包数据，验证解析正确性
 
@@ -373,18 +373,18 @@ go run main.go daemon
 
 ```
 # Capture metrics
-otus_capture_packets_total{task="sip-capture", interface="eth0"}
-otus_capture_drops_total{task="sip-capture", stage="kernel"}
+capture_agent_capture_packets_total{task="sip-capture", interface="eth0"}
+capture_agent_capture_drops_total{task="sip-capture", stage="kernel"}
 
 # Pipeline metrics
-otus_pipeline_packets_total{task="sip-capture", pipeline="1", stage="parsed"}
-otus_pipeline_latency_seconds{task="sip-capture", stage="decode"}
+capture_agent_pipeline_packets_total{task="sip-capture", pipeline="1", stage="parsed"}
+capture_agent_pipeline_latency_seconds{task="sip-capture", stage="decode"}
 
 # Task status
-otus_task_status{task="sip-capture", status="running"}
+capture_agent_task_status{task="sip-capture", status="running"}
 
 # Reassembly
-otus_reassembly_active_fragments
+capture_agent_reassembly_active_fragments
 ```
 
 ---
@@ -396,9 +396,9 @@ otus_reassembly_active_fragments
 ```bash
 # 错误: socket: operation not permitted
 # 解决:
-sudo systemctl restart otus
+sudo systemctl restart capture-agent
 # 或添加 capabilities
-sudo setcap cap_net_raw,cap_net_admin+eip /usr/local/bin/otus
+sudo setcap cap_net_raw,cap_net_admin+eip /usr/local/bin/capture-agent
 ```
 
 ### 2. 无法抓到流量
@@ -418,7 +418,7 @@ sudo tcpdump -i eth0 -n -c 10
 telnet kafka-broker 9092
 
 # 查看日志
-sudo journalctl -u otus -e | grep -i kafka
+sudo journalctl -u capture-agent -e | grep -i kafka
 ```
 
 更多问题参见[故障排查](doc/DEPLOYMENT.md#故障排查)
@@ -449,7 +449,7 @@ sudo journalctl -u otus -e | grep -i kafka
 
 ## 联系方式
 
-- **Issues**: [GitHub Issues](https://github.com/firestige/otus/issues)
+- **Issues**: [GitHub Issues](https://github.com/firestige/capture-agent/issues)
 - **Docs**: [doc/](doc/)
 - **Architecture**: [doc/architecture.md](doc/architecture.md)
 

@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"testing"
 
-	"firestige.xyz/otus/internal/config"
-	"firestige.xyz/otus/internal/task"
+	"icc.tech/capture-agent/internal/config"
+	"icc.tech/capture-agent/internal/task"
 )
 
 // mockConfigReloader is a mock implementation of ConfigReloader.

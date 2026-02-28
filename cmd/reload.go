@@ -8,14 +8,14 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"firestige.xyz/otus/internal/command"
+	"icc.tech/capture-agent/internal/command"
 )
 
 // reloadCmd represents the reload command
 var reloadCmd = &cobra.Command{
 	Use:   "reload",
-	Short: "Reload the Otus daemon configuration",
-	Long: `Reload the global configuration of the Otus daemon.
+	Short: "Reload the capture-agent daemon configuration",
+	Long: `Reload the global configuration of the capture-agent daemon.
 
 This command sends a config.reload signal to the running daemon via Unix Domain Socket.
 The daemon will reload its global configuration file without restarting.

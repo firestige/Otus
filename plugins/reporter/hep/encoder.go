@@ -44,7 +44,7 @@ import (
 	"fmt"
 	"time"
 
-	"firestige.xyz/otus/internal/core"
+	"icc.tech/capture-agent/internal/core"
 )
 
 // ─── HEPv3 constants ───────────────────────────────────────────────────────

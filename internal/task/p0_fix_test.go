@@ -8,11 +8,11 @@ import (
 	"testing"
 	"time"
 
-	"firestige.xyz/otus/internal/config"
-	"firestige.xyz/otus/internal/core"
-	"firestige.xyz/otus/internal/core/decoder"
-	"firestige.xyz/otus/internal/pipeline"
-	"firestige.xyz/otus/pkg/plugin"
+	"icc.tech/capture-agent/internal/config"
+	"icc.tech/capture-agent/internal/core"
+	"icc.tech/capture-agent/internal/core/decoder"
+	"icc.tech/capture-agent/internal/pipeline"
+	"icc.tech/capture-agent/pkg/plugin"
 )
 
 // ---------------------------------------------------------------------------

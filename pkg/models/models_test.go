@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"firestige.xyz/otus/internal/core"
+	"icc.tech/capture-agent/internal/core"
 )
 
 // Test that re-exported types match core types

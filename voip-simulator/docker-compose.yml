@@ -109,26 +109,26 @@ services:
     restart: unless-stopped
 
   # ──────────────────────────────────────────
-  # Otus sidecar for UAS
+  # capture-agent sidecar for UAS
   # Shares sipp-uas network namespace to capture its traffic
   # ──────────────────────────────────────────
-  otus-uas:
+  capture-agent-uas:
     build:
-      context: ./otus
+      context: ./capture
       dockerfile: Dockerfile
-    image: voip-simulator/otus:latest
-    container_name: otus-uas
+    image: voip-simulator/capture-agent:latest
+    container_name: capture-agent-uas
     # Share network namespace with sipp-uas — required to see its interfaces
     network_mode: "container:sipp-uas"
     cap_add:
       - NET_RAW
       - NET_ADMIN
     environment:
-      CONFIG_FILE: /etc/otus/config.yml
+      CONFIG_FILE: /etc/capture-agent/config.yml
     volumes:
-      - ./otus/configs/uas-config.yml:/etc/otus/config.yml:ro
-      - otus-uas-data:/var/lib/otus
-      - otus-uas-logs:/var/log/otus
+      - ./otus/configs/uas-config.yml:/etc/capture-agent/config.yml:ro
+      - capture-agent-uas-data:/var/lib/capture-agent
+      - capture-agent-uas-logs:/var/log/capture-agent
     depends_on:
       uas:
         condition: service_healthy
@@ -137,24 +137,24 @@ services:
     restart: unless-stopped
 
   # ──────────────────────────────────────────
-  # Otus sidecar for UAC
+  # capture-agent sidecar for UAC
   # Shares sipp-uac network namespace to capture its traffic
   # ──────────────────────────────────────────
-  otus-uac:
+  capture-agent-uac:
     build:
-      context: ./otus
+      context: ./capture
       dockerfile: Dockerfile
-    container_name: otus-uac
+    container_name: capture-agent-uac
     network_mode: "container:sipp-uac"
     cap_add:
       - NET_RAW
       - NET_ADMIN
     environment:
-      CONFIG_FILE: /etc/otus/config.yml
+      CONFIG_FILE: /etc/capture-agent/config.yml
     volumes:
-      - ./otus/configs/uac-config.yml:/etc/otus/config.yml:ro
-      - otus-uac-data:/var/lib/otus
-      - otus-uac-logs:/var/log/otus
+      - ./otus/configs/uac-config.yml:/etc/capture-agent/config.yml:ro
+      - capture-agent-uac-data:/var/lib/capture-agent
+      - capture-agent-uac-logs:/var/log/capture-agent
     depends_on:
       uac:
         condition: service_started
@@ -207,7 +207,7 @@ volumes:
   uas-logs:
   uac-logs:
   kafka-data:
-  otus-uas-data:
-  otus-uas-logs:
-  otus-uac-data:
-  otus-uac-logs:
+  capture-agent-uas-data:
+  capture-agent-uas-logs:
+  capture-agent-uac-data:
+  capture-agent-uac-logs:

@@ -4,7 +4,7 @@ package plugin
 import (
 	"context"
 
-	"firestige.xyz/otus/internal/core"
+	"icc.tech/capture-agent/internal/core"
 )
 
 // Reporter sends output packets to external systems.

@@ -8,10 +8,10 @@ import (
 	"sync/atomic"
 	"time"
 
-	"firestige.xyz/otus/internal/core"
-	"firestige.xyz/otus/internal/core/decoder"
-	"firestige.xyz/otus/internal/metrics"
-	"firestige.xyz/otus/pkg/plugin"
+	"icc.tech/capture-agent/internal/core"
+	"icc.tech/capture-agent/internal/core/decoder"
+	"icc.tech/capture-agent/internal/metrics"
+	"icc.tech/capture-agent/pkg/plugin"
 )
 
 // Pipeline represents a single-threaded packet processing chain.

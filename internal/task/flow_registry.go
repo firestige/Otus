@@ -5,7 +5,7 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"firestige.xyz/otus/pkg/plugin"
+	"icc.tech/capture-agent/pkg/plugin"
 )
 
 // FlowRegistry provides per-Task flow state storage.

@@ -5,7 +5,7 @@ import (
 	"encoding/binary"
 	"net/netip"
 
-	"firestige.xyz/otus/internal/core"
+	"icc.tech/capture-agent/internal/core"
 )
 
 const (

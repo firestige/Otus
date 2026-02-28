@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"firestige.xyz/otus/internal/task"
+	"icc.tech/capture-agent/internal/task"
 )
 
 func TestUDSServerClient_Integration(t *testing.T) {

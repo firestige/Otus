@@ -76,7 +76,7 @@ func NewLokiWriter(cfg LokiConfig) (*LokiWriter, error) {
 		labels = make(map[string]string)
 	}
 	if _, ok := labels["job"]; !ok {
-		labels["job"] = "otus"
+		labels["job"] = "capture-agent"
 	}
 
 	lw := &LokiWriter{

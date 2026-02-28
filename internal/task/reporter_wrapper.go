@@ -6,9 +6,9 @@ import (
 	"log/slog"
 	"time"
 
-	"firestige.xyz/otus/internal/core"
-	"firestige.xyz/otus/internal/metrics"
-	"firestige.xyz/otus/pkg/plugin"
+	"icc.tech/capture-agent/internal/core"
+	"icc.tech/capture-agent/internal/metrics"
+	"icc.tech/capture-agent/pkg/plugin"
 )
 
 const (

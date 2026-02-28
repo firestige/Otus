@@ -1,8 +1,8 @@
-# Otus Global Configuration
-# All settings live under the `otus:` root key.
+# capture-agent Global Configuration
+# All settings live under the `capture-agent:` root key.
 # See doc/config-design.md for full hierarchy and design rationale.
 
-otus:
+capture-agent:
   # ────────────── Node Identity ──────────────
   node:
     ip: ""                            # Empty = auto-detect (ADR-023: env > auto-detect > error)
@@ -13,8 +13,8 @@ otus:
 
   # ────────────── Local Control ──────────────
   control:
-    socket: "/var/run/otus.sock"
-    pid_file: "/var/run/otus.pid"
+    socket: "/var/run/capture-agent.sock"
+    pid_file: "/var/run/capture-agent.pid"
 
   # ────────────── Kafka Global Default (ADR-024) ──────────────
   # command_channel.kafka and reporters.kafka inherit brokers/sasl/tls from here.
@@ -35,17 +35,17 @@ otus:
     enabled: false                    # Set true to enable Kafka command subscription
     type: "kafka"
     kafka:
-      # brokers/sasl/tls inherited from otus.kafka; override here if needed
-      topic: "otus-commands"
-      response_topic: "otus-responses"  # Write command results here (ADR-029); empty = disabled
-      group_id: ""                    # Empty = "otus-${hostname}"
+      # brokers/sasl/tls inherited from capture-agent.kafka; override here if needed
+      topic: "capture-agent-commands"
+      response_topic: "capture-agent-responses"  # Write command results here (ADR-029); empty = disabled
+      group_id: ""                    # Empty = "capture-agent-${hostname}"
       auto_offset_reset: "latest"
     command_ttl: "5m"                 # Reject commands older than this (ADR-026)
 
   # ────────────── Shared Reporter Connections ──────────────
   reporters:
     kafka:
-      # brokers/sasl/tls inherited from otus.kafka; override here if needed
+      # brokers/sasl/tls inherited from capture-agent.kafka; override here if needed
       compression: "snappy"           # none | gzip | snappy | lz4 | zstd
       max_message_bytes: 1048576
 
@@ -104,7 +104,7 @@ otus:
     outputs:
       file:
         enabled: true
-        path: "/var/log/otus/otus.log"
+        path: "/var/log/capture-agent/capture-agent.log"
         rotation:
           max_size_mb: 100            # ADR-025: numeric, unit in field name
           max_age_days: 30
@@ -114,7 +114,7 @@ otus:
         enabled: false
         endpoint: "http://loki:3100/loki/api/v1/push"
         labels:
-          app: "otus"
+          app: "capture-agent"
           env: "production"
         batch_size: 100
         batch_timeout: "1s"
