@@ -359,6 +359,84 @@ func TestBuilder_FluentAPI(t *testing.T) {
 	}
 }
 
+// TestPipeline_PayloadTypeOverride verifies that a parser can override the
+// default PayloadType via core.LabelPayloadType and that the label is stripped.
+func TestPipeline_PayloadTypeOverride(t *testing.T) {
+	inputChan := make(chan core.RawPacket, 10)
+	outputChan := make(chan core.OutputPacket, 10)
+
+	// A mock parser that sets LabelPayloadType = "rtcp".
+	parser := NewMockParser("rtp", true)
+	origHandle := parser.Handle
+	_ = origHandle
+
+	overrideParser := &payloadTypeOverrideParser{name: "rtp"}
+
+	pipeline := New(Config{
+		ID:      10,
+		TaskID:  "test-task",
+		AgentID: "test-agent",
+		Decoder: NewMockDecoder(),
+		Parsers: []plugin.Parser{overrideParser},
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		pipeline.Run(ctx, inputChan, outputChan)
+	}()
+
+	inputChan <- core.RawPacket{
+		Timestamp:  time.Now(),
+		Data:       []byte("rtcp-data"),
+		CaptureLen: 9,
+		OrigLen:    9,
+	}
+
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+	close(inputChan)
+	wg.Wait()
+
+	close(outputChan)
+	var outputs []core.OutputPacket
+	for out := range outputChan {
+		outputs = append(outputs, out)
+	}
+
+	if len(outputs) != 1 {
+		t.Fatalf("Expected 1 output packet, got %d", len(outputs))
+	}
+	if outputs[0].PayloadType != "rtcp" {
+		t.Errorf("PayloadType = %q, want %q", outputs[0].PayloadType, "rtcp")
+	}
+	// The internal label must be stripped from the output.
+	if _, ok := outputs[0].Labels[core.LabelPayloadType]; ok {
+		t.Error("LabelPayloadType should be removed from output labels")
+	}
+}
+
+// payloadTypeOverrideParser is a mock parser that sets LabelPayloadType.
+type payloadTypeOverrideParser struct {
+	name string
+}
+
+func (p *payloadTypeOverrideParser) Name() string                         { return p.name }
+func (p *payloadTypeOverrideParser) Init(_ map[string]any) error          { return nil }
+func (p *payloadTypeOverrideParser) Start(_ context.Context) error        { return nil }
+func (p *payloadTypeOverrideParser) Stop(_ context.Context) error         { return nil }
+func (p *payloadTypeOverrideParser) CanHandle(_ *core.DecodedPacket) bool { return true }
+func (p *payloadTypeOverrideParser) Handle(_ *core.DecodedPacket) (any, core.Labels, error) {
+	return nil, core.Labels{
+		core.LabelPayloadType:     "rtcp",
+		core.LabelRTCPPayloadType: "200",
+	}, nil
+}
+
 func TestPipeline_NoParser(t *testing.T) {
 	// Test pipeline without parsers (should still work, uses "raw" payload)
 	inputChan := make(chan core.RawPacket, 10)

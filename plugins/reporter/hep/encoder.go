@@ -239,12 +239,15 @@ func resolveTo(pkt *core.OutputPacket) string {
 }
 
 // resolveCorrelationID returns a call/session correlation string for chunk 17.
-// Prefers SIP call-id, then RTP call-id, then TaskID.
+// Prefers SIP call-id, then RTP call-id, then RTCP call-id, then TaskID.
 func resolveCorrelationID(pkt *core.OutputPacket) string {
 	if v := pkt.Labels[core.LabelSIPCallID]; v != "" {
 		return v
 	}
 	if v := pkt.Labels[core.LabelRTPCallID]; v != "" {
+		return v
+	}
+	if v := pkt.Labels[core.LabelRTCPCallID]; v != "" {
 		return v
 	}
 	return pkt.TaskID

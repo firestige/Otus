@@ -274,6 +274,22 @@ func TestEncode_CorrID_SIPCallID(t *testing.T) {
 	}
 }
 
+func TestEncode_CorrID_RTCPCallID(t *testing.T) {
+	pkt := makePacket()
+	delete(pkt.Labels, core.LabelSIPCallID)
+	delete(pkt.Labels, core.LabelSIPFromURI)
+	delete(pkt.Labels, core.LabelSIPToURI)
+	pkt.Labels[core.LabelRTCPCallID] = "rtcp-corr-456@host"
+	pkt.PayloadType = "rtcp"
+
+	frame, _ := Encode(pkt, EncodeOptions{})
+	pf := parseFrame(t, frame)
+
+	if got := string(pf.chunks[chunkCorrID]); got != "rtcp-corr-456@host" {
+		t.Errorf("corr ID = %q, want %q", got, "rtcp-corr-456@host")
+	}
+}
+
 func TestEncode_CorrID_FallsBackToTaskID(t *testing.T) {
 	pkt := makePacket()
 	delete(pkt.Labels, core.LabelSIPCallID)

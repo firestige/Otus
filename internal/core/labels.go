@@ -29,5 +29,12 @@ const (
 	LabelRTCPCallID      = "rtcp.call_id"      // Correlated SIP call-id
 	LabelRTCPSSRC        = "rtcp.ssrc"         // Sender/source SSRC (hex)
 	LabelRTCPCodec       = "rtcp.codec"        // Codec from SDP for this RTCP flow
+
+	// LabelPayloadType is an internal label that parsers may set to override
+	// the default PayloadType (parser.Name()). The pipeline consumes and
+	// removes it before forwarding the packet. This allows a single parser
+	// (e.g. "rtp") to distinguish sub-protocols such as "rtcp".
+	LabelPayloadType = "_payload_type"
+
 	// More labels will be added as protocols are implemented
 )

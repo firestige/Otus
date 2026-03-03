@@ -26,10 +26,10 @@ func (m *mockFlowRegistry) Get(key plugin.FlowKey) (any, bool) {
 	v, ok := m.flows[key]
 	return v, ok
 }
-func (m *mockFlowRegistry) Set(key plugin.FlowKey, value any)  { m.flows[key] = value }
-func (m *mockFlowRegistry) Delete(key plugin.FlowKey)           { delete(m.flows, key) }
-func (m *mockFlowRegistry) Count() int                          { return len(m.flows) }
-func (m *mockFlowRegistry) Clear()                              { m.flows = make(map[plugin.FlowKey]any) }
+func (m *mockFlowRegistry) Set(key plugin.FlowKey, value any) { m.flows[key] = value }
+func (m *mockFlowRegistry) Delete(key plugin.FlowKey)         { delete(m.flows, key) }
+func (m *mockFlowRegistry) Count() int                        { return len(m.flows) }
+func (m *mockFlowRegistry) Clear()                            { m.flows = make(map[plugin.FlowKey]any) }
 func (m *mockFlowRegistry) Range(f func(plugin.FlowKey, any) bool) {
 	for k, v := range m.flows {
 		if !f(k, v) {
@@ -200,7 +200,6 @@ func TestCanHandle_WrongVersion(t *testing.T) {
 	}
 }
 
-
 // ---------------------------------------------------------------------------
 // Handle — RTP parsing tests
 // ---------------------------------------------------------------------------
@@ -316,6 +315,38 @@ func TestHandle_RTCP_SR_Labels(t *testing.T) {
 	}
 	if got := labels[core.LabelRTCPSSRC]; got != "0xAABBCCDD" {
 		t.Errorf("LabelRTCPSSRC = %q; want %q", got, "0xAABBCCDD")
+	}
+}
+
+// TestHandle_RTCP_SetsPayloadType verifies that RTCP packets include
+// LabelPayloadType = "rtcp" so the pipeline can set OutputPacket.PayloadType correctly.
+func TestHandle_RTCP_SetsPayloadType(t *testing.T) {
+	p := NewRTPParser()
+	payload := makeRTCPPayload(200, 0x12345678)
+	pkt := makeDecodedPacket("10.0.0.1", "10.0.0.2", 6001, 7001, payload)
+
+	_, labels, err := p.Handle(pkt)
+	if err != nil {
+		t.Fatalf("Handle() error: %v", err)
+	}
+	if got := labels[core.LabelPayloadType]; got != "rtcp" {
+		t.Errorf("LabelPayloadType = %q; want %q", got, "rtcp")
+	}
+}
+
+// TestHandle_RTP_NoPayloadTypeOverride verifies that RTP packets do NOT set
+// LabelPayloadType (only RTCP does).
+func TestHandle_RTP_NoPayloadTypeOverride(t *testing.T) {
+	p := NewRTPParser()
+	payload := makeRTPPayload(0, 1, 100, 0xDEADBEEF, false, false)
+	pkt := makeDecodedPacket("10.0.0.1", "10.0.0.2", 6000, 7000, payload)
+
+	_, labels, err := p.Handle(pkt)
+	if err != nil {
+		t.Fatalf("Handle() error: %v", err)
+	}
+	if _, ok := labels[core.LabelPayloadType]; ok {
+		t.Error("LabelPayloadType should not be set for RTP packets")
 	}
 }
 

@@ -142,6 +142,15 @@ func (p *Pipeline) processPacket(raw core.RawPacket) (core.OutputPacket, bool) {
 			parsedPayload = payload
 			parsedLabels = labels
 			payloadType = parser.Name()
+
+			// Allow the parser to override PayloadType via an internal label.
+			// Example: the "rtp" parser sets LabelPayloadType = "rtcp" for RTCP packets
+			// so the HEP encoder can emit the correct protocol-type chunk (8 instead of 5).
+			if override, ok := parsedLabels[core.LabelPayloadType]; ok {
+				payloadType = override
+				delete(parsedLabels, core.LabelPayloadType)
+			}
+
 			parserMatched = true
 			p.metrics.Parsed.Add(1)
 			metrics.PipelinePacketsTotal.WithLabelValues(p.taskID, pipelineID, "parsed").Inc()

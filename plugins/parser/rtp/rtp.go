@@ -180,7 +180,8 @@ func (p *RTPParser) handleRTCP(pkt *core.DecodedPacket, pt uint8) (any, core.Lab
 
 	labels := core.Labels{
 		core.LabelRTCPPayloadType: fmt.Sprintf("%d", pt),
-		core.LabelRTCPSSRC:       fmt.Sprintf("0x%08X", ssrc),
+		core.LabelRTCPSSRC:        fmt.Sprintf("0x%08X", ssrc),
+		core.LabelPayloadType:     "rtcp", // Override PayloadType so pipeline/HEP uses protoTypeRTCP.
 	}
 
 	// Enrich with SIP call context from FlowRegistry.
