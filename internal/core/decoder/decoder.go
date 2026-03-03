@@ -133,8 +133,8 @@ func (sd *StandardDecoder) Decode(raw core.RawPacket) (core.DecodedPacket, error
 		}
 	}
 
-	// L4 Transport decoding
-	if ip.Protocol == 6 || ip.Protocol == 17 { // TCP or UDP
+	// L4 Transport decoding (UDP only — TCP is not supported in this branch)
+	if ip.Protocol == 17 {
 		transport, payload, err := decodeTransport(data, ip.Protocol)
 		if err != nil {
 			return decoded, fmt.Errorf("transport decode failed: %w", err)

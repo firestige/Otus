@@ -136,7 +136,6 @@ capture-agent:
           bpf_filter: ""              # Auto-generated from protocols + port_range if empty
       decoder:
         ip_defrag: true
-        tcp_reassembly: true
         transport:
           ipip: false
         ip_reassembly:

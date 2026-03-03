@@ -24,13 +24,9 @@ type IPHeader struct {
 	InnerDstIP netip.Addr
 }
 
-// TransportHeader represents L4 transport layer header (TCP/UDP).
+// TransportHeader represents L4 transport layer header (UDP only).
 type TransportHeader struct {
 	SrcPort  uint16
 	DstPort  uint16
 	Protocol uint8 // Redundant storage for convenience
-	// TCP-specific fields (only populated for TCP)
-	TCPFlags uint8
-	SeqNum   uint32
-	AckNum   uint32
 }

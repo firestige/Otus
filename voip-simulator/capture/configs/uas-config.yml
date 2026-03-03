@@ -54,7 +54,6 @@ capture-agent:
           bpf_filter: ""   # auto-generated from portRange + protocol
       decoder:
         ip_defrag: true
-        tcp_reassembly: true
         transport:
           ipip: false
         ip_reassembly:
