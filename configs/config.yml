@@ -135,12 +135,11 @@ capture-agent:
           buffer_size_mb: 64
           bpf_filter: ""              # Auto-generated from protocols + port_range if empty
       decoder:
-        ip_defrag: true
-        transport:
-          ipip: false
-        ip_reassembly:
-          timeout: "30s"
-          max_fragments: 10000
+        # ip_reassembly: enable/disable IP fragment reassembly (bool).
+        # Detailed options (timeout, max_fragments) live under
+        # capture-agent.core.decoder.ip_reassembly in the global section.
+        ip_reassembly: true
+        tunnels: []
       parsers:
         - name: "sip"
           config:

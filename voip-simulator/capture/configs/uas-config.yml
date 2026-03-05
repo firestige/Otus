@@ -53,12 +53,8 @@ capture-agent:
           buffer_size_mb: 16
           bpf_filter: ""   # auto-generated from portRange + protocol
       decoder:
-        ip_defrag: true
-        transport:
-          ipip: false
-        ip_reassembly:
-          timeout: 30s
-          max_fragments: 5000
+        ip_reassembly: true
+        tunnels: []
       parsers:
         - name: sip
           config: {}
