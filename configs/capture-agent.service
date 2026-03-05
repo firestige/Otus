@@ -10,8 +10,6 @@ Type=simple
 User=root
 Group=root
 
-# Ensure data directories exist with correct permissions (ADR-031)
-ExecStartPre=systemd-tmpfiles --create /etc/tmpfiles.d/capture-agent.conf
 # Daemon mode (foreground for systemd)
 ExecStart=/usr/local/bin/capture-agent daemon
 ExecReload=/bin/kill -HUP $MAINPID
@@ -29,13 +27,21 @@ RestartSec=5s
 LimitNOFILE=65536
 LimitNPROC=512
 
+# Directory management — systemd creates these BEFORE namespace setup,
+# avoiding the NAMESPACE/226 failure caused by bind-mounting non-existent paths.
+# StateDirectory       → /var/lib/capture-agent   (persistent state)
+# LogsDirectory        → /var/log/capture-agent   (log files)
+# ConfigurationDirectory → /etc/capture-agent     (config files, read-write overlay)
+StateDirectory=capture-agent
+LogsDirectory=capture-agent
+ConfigurationDirectory=capture-agent
+
 # Security hardening (compatible with packet capture)
 # Note: Some restrictions are relaxed due to raw socket requirements
 NoNewPrivileges=false
 PrivateTmp=true
 ProtectSystem=full
 ProtectHome=true
-ReadWritePaths=/var/lib/capture-agent /var/log/capture-agent /etc/capture-agent
 
 # Required capabilities for packet capture
 AmbientCapabilities=CAP_NET_RAW CAP_NET_ADMIN
