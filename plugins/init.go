@@ -6,6 +6,7 @@ import (
 	"icc.tech/capture-agent/plugins/capture/afpacket"
 	"icc.tech/capture-agent/plugins/parser/rtp"
 	"icc.tech/capture-agent/plugins/parser/sip"
+	"icc.tech/capture-agent/plugins/processor/filter"
 	"icc.tech/capture-agent/plugins/reporter/console"
 	"icc.tech/capture-agent/plugins/reporter/hep"
 	"icc.tech/capture-agent/plugins/reporter/kafka"
@@ -26,4 +27,5 @@ func init() {
 
 	// More plugins will be registered here as they are implemented
 	// processor plugins
+	plugin.RegisterProcessor("filter", filter.NewFilterProcessor)
 }

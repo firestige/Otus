@@ -141,15 +141,12 @@ func (d *Daemon) Start() error {
 	})
 
 	// Wire role info so SimpleCommand handlers know which role this agent plays.
+	// Roles map keys are normalized to upper-case by config.ValidateAndApplyDefaults.
 	if d.config.Node.Role != "" {
-		// Map lookup is case-sensitive; try exact key first, then upper-case fallback
-		// so config.yml authors may write "fs" or "FS" interchangeably (ADR comment).
-		roleConfig, ok := d.config.Roles[d.config.Node.Role]
-		if !ok {
-			roleConfig = d.config.Roles[strings.ToUpper(d.config.Node.Role)]
-		}
-		d.cmdHandler.SetAgentInfo(strings.ToUpper(d.config.Node.Role), roleConfig)
-		slog.Info("agent role configured", "role", d.config.Node.Role)
+		roleKey := strings.ToUpper(d.config.Node.Role)
+		roleConfig := d.config.Roles[roleKey]
+		d.cmdHandler.SetAgentInfo(roleKey, roleConfig)
+		slog.Info("agent role configured", "role", roleKey)
 	} else {
 		slog.Warn("capture-agent.node.role is not set; task_start/task_stop commands will be unavailable")
 	}

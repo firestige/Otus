@@ -63,6 +63,10 @@ type Config struct {
 	// "json" = JSON envelope (Phase 1 default)
 	// "binary" = future binary format via Payload interface (Phase 2)
 	Serialization string `json:"serialization"` // default "json"
+
+	// MaxMessageBytes caps the maximum size of a single Kafka message in bytes.
+	// 0 means no limit (kafka-go Writer default).
+	MaxMessageBytes int `json:"max_message_bytes"`
 }
 
 // NewKafkaReporter creates a new Kafka reporter.
@@ -148,6 +152,11 @@ func (r *KafkaReporter) Init(config map[string]any) error {
 		cfg.MaxAttempts = int(maxAttempts)
 	}
 
+	// Optional: max_message_bytes
+	if maxBytes, ok := config["max_message_bytes"].(float64); ok && maxBytes > 0 {
+		cfg.MaxMessageBytes = int(maxBytes)
+	}
+
 	// Optional: serialization (ADR-028)
 	if ser, ok := config["serialization"].(string); ok {
 		switch ser {
@@ -220,7 +229,7 @@ func (r *KafkaReporter) Init(config map[string]any) error {
 	// Topic is always set per-message in Report()/ReportBatch() via resolveTopic() (ADR-027).
 	// Setting a topic on the writer AND on the message simultaneously is rejected by kafka-go,
 	// so we never set writer-level Topic — resolveTopic() handles both fixed and prefix modes.
-	r.writer = &kafka.Writer{
+	w := &kafka.Writer{
 		Addr:         kafka.TCP(cfg.Brokers...),
 		Balancer:     &kafka.Hash{},
 		BatchSize:    cfg.BatchSize,
@@ -233,6 +242,10 @@ func (r *KafkaReporter) Init(config map[string]any) error {
 			TLS:  dialer.TLS,
 		},
 	}
+	if cfg.MaxMessageBytes > 0 {
+		w.BatchBytes = int64(cfg.MaxMessageBytes)
+	}
+	r.writer = w
 
 	return nil
 }

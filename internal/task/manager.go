@@ -525,6 +525,16 @@ func (m *TaskManager) mergeKafkaDefaults(reporterName string, cfg map[string]any
 		merged["brokers"] = m.kafkaConnCfg.Brokers
 	}
 
+	// Inject compression if absent and a non-empty global value is set
+	if _, ok := merged["compression"]; !ok && m.kafkaConnCfg.Compression != "" {
+		merged["compression"] = m.kafkaConnCfg.Compression
+	}
+
+	// Inject max_message_bytes if absent and a non-zero global value is set
+	if _, ok := merged["max_message_bytes"]; !ok && m.kafkaConnCfg.MaxMessageBytes > 0 {
+		merged["max_message_bytes"] = float64(m.kafkaConnCfg.MaxMessageBytes)
+	}
+
 	// Inject sasl if absent and enabled in global config
 	if _, ok := merged["sasl"]; !ok && m.kafkaConnCfg.SASL.Enabled {
 		merged["sasl"] = map[string]any{

@@ -49,18 +49,8 @@ capture-agent:
       # brokers/sasl/tls inherited from capture-agent.kafka; override here if needed
       compression: "snappy"           # none | gzip | snappy | lz4 | zstd
       max_message_bytes: 1048576
-
-    # HEPv3 UDP reporter — forwards packets to Homer/Sipcapture collectors.
-    # Flow-stable routing: same 5-tuple always reaches the same server.
-    # Chunk 48 = "from" identity (SIP From-URI or srcIP:port fallback).
-    # Chunk 49 = "to"   identity (SIP To-URI   or dstIP:port fallback).
-    hep:
-      servers:
-        - "10.0.0.1:9060"
-        - "10.0.0.2:9060"
-      capture_id: 2001                # uint32 placed in HEP chunk 12
-      auth_key: ""                    # optional auth token in HEP chunk 14
-      node_name: ""                   # optional node label in HEP chunk 19 (e.g. hostname)
+    # NOTE: HEP reporter has no global shared-connection config.
+    # Configure HEP servers directly in the per-role reporter list under roles.<ROLE>.reporters.
 
   # ────────────── Global Resources ──────────────
   resources:
@@ -130,10 +120,11 @@ capture-agent:
       workers: 2
       capture:
         name: "afpacket"
+        interface: "eth0"
         config:
-          iface: "eth0"
-          buffer_size_mb: 64
-          bpf_filter: ""              # Auto-generated from protocols + port_range if empty
+          block_size: 4194304         # ring-buffer block size in bytes (default 4MB)
+          num_blocks: 128             # number of ring-buffer blocks (total buffer = block_size * num_blocks = 512MB)
+          fanout_type: "hash"         # hash | cpu | lb  (default hash; used when workers > 1)
       decoder:
         # ip_reassembly: enable/disable IP fragment reassembly (bool).
         # Detailed options (timeout, max_fragments) live under

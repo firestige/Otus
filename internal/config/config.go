@@ -379,6 +379,17 @@ func (cfg *GlobalConfig) ValidateAndApplyDefaults() error {
 	// ── Kafka inheritance (ADR-024) ──
 	applyKafkaInheritance(cfg)
 
+	// ── Normalize Roles map keys to upper-case ──
+	// Viper lower-cases all YAML keys during Unmarshal, so “FS” becomes “fs”.
+	// Re-key to upper-case here so callers can always look up by upper-case role name.
+	if len(cfg.Roles) > 0 {
+		normalized := make(map[string]RoleConfig, len(cfg.Roles))
+		for k, v := range cfg.Roles {
+			normalized[strings.ToUpper(k)] = v
+		}
+		cfg.Roles = normalized
+	}
+
 	// ── Command channel validation ──
 	if cfg.CommandChannel.Enabled {
 		if cfg.CommandChannel.Type != "kafka" {
