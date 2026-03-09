@@ -9,7 +9,6 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strconv"
-	"strings"
 	"syscall"
 	"time"
 
@@ -103,6 +102,7 @@ func (d *Daemon) Start() error {
 	}
 	d.taskManager = task.NewTaskManager(d.config.Node.Hostname, taskStore)
 	d.taskManager.SetKafkaConnConfig(d.config.Reporters.Kafka)
+	d.taskManager.SetHEPConnConfig(d.config.Reporters.Hep)
 
 	// Restore previously active tasks from the persistent store.
 	if d.config.TaskPersistence.Enabled && taskStore != nil {
@@ -143,10 +143,11 @@ func (d *Daemon) Start() error {
 	// Wire role info so SimpleCommand handlers know which role this agent plays.
 	// Roles map keys are normalized to upper-case by config.ValidateAndApplyDefaults.
 	if d.config.Node.Role != "" {
-		roleKey := strings.ToUpper(d.config.Node.Role)
-		roleConfig := d.config.Roles[roleKey]
-		d.cmdHandler.SetAgentInfo(roleKey, roleConfig)
-		slog.Info("agent role configured", "role", roleKey)
+		// Node.Role is normalized to upper-case by config.ValidateAndApplyDefaults;
+		// Roles map keys are likewise normalized, so a direct lookup is safe.
+		roleConfig := d.config.Roles[d.config.Node.Role]
+		d.cmdHandler.SetAgentInfo(d.config.Node.Role, roleConfig)
+		slog.Info("agent role configured", "role", d.config.Node.Role)
 	} else {
 		slog.Warn("capture-agent.node.role is not set; task_start/task_stop commands will be unavailable")
 	}

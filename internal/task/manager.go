@@ -22,6 +22,7 @@ type TaskManager struct {
 	// Global configuration
 	agentID      string
 	kafkaConnCfg config.KafkaReporterConnectionConfig // shared Kafka connection defaults (ADR-024)
+	hepConnCfg   config.HEPReporterConnectionConfig   // shared HEP reporter connection defaults
 
 	// store is the persistence backend (noopStore when disabled).
 	store TaskStore
@@ -44,6 +45,12 @@ func NewTaskManager(agentID string, store TaskStore) *TaskManager {
 // Must be called before the first task is created to take effect.
 func (m *TaskManager) SetKafkaConnConfig(cfg config.KafkaReporterConnectionConfig) {
 	m.kafkaConnCfg = cfg
+}
+
+// SetHEPConnConfig stores the global HEP reporter connection config.
+// Must be called before the first task is created to take effect.
+func (m *TaskManager) SetHEPConnConfig(cfg config.HEPReporterConnectionConfig) {
+	m.hepConnCfg = cfg
 }
 
 // Create creates and starts a new task from configuration.
@@ -174,7 +181,7 @@ func (m *TaskManager) Create(cfg config.TaskConfig) error {
 
 	// Init Reporters
 	for i, rep := range task.Reporters {
-		repCfg := m.mergeKafkaDefaults(cfg.Reporters[i].Name, cfg.Reporters[i].Config)
+		repCfg := m.mergeReporterDefaults(cfg.Reporters[i].Name, cfg.Reporters[i].Config)
 		if err := rep.Init(repCfg); err != nil {
 			return fmt.Errorf("reporter %q init failed: %w", cfg.Reporters[i].Name, err)
 		}
@@ -508,53 +515,74 @@ func (m *TaskManager) GCOldTasks(maxHistory int) {
 	}
 }
 
-// mergeKafkaDefaults returns a reporter config map with global Kafka connection defaults
-// injected for fields not already present. Only applies when reporterName == "kafka".
-func (m *TaskManager) mergeKafkaDefaults(reporterName string, cfg map[string]any) map[string]any {
-	if reporterName != "kafka" || cfg == nil {
+// mergeReporterDefaults returns a reporter config map with global connection defaults
+// injected for fields not already present in the per-task config.
+//
+//   - "kafka": injects brokers/compression/max_message_bytes/sasl/tls from kafkaConnCfg.
+//   - "hep":   injects servers/capture_id/auth_key/node_name from hepConnCfg.
+//
+// Fields already present in cfg take precedence; global values are only used as fallback.
+func (m *TaskManager) mergeReporterDefaults(reporterName string, cfg map[string]any) map[string]any {
+	if cfg == nil {
 		return cfg
 	}
 
-	merged := make(map[string]any, len(cfg))
-	for k, v := range cfg {
-		merged[k] = v
-	}
-
-	// Inject brokers if absent
-	if _, ok := merged["brokers"]; !ok && len(m.kafkaConnCfg.Brokers) > 0 {
-		merged["brokers"] = m.kafkaConnCfg.Brokers
-	}
-
-	// Inject compression if absent and a non-empty global value is set
-	if _, ok := merged["compression"]; !ok && m.kafkaConnCfg.Compression != "" {
-		merged["compression"] = m.kafkaConnCfg.Compression
-	}
-
-	// Inject max_message_bytes if absent and a non-zero global value is set
-	if _, ok := merged["max_message_bytes"]; !ok && m.kafkaConnCfg.MaxMessageBytes > 0 {
-		merged["max_message_bytes"] = float64(m.kafkaConnCfg.MaxMessageBytes)
-	}
-
-	// Inject sasl if absent and enabled in global config
-	if _, ok := merged["sasl"]; !ok && m.kafkaConnCfg.SASL.Enabled {
-		merged["sasl"] = map[string]any{
-			"enabled":   m.kafkaConnCfg.SASL.Enabled,
-			"mechanism": m.kafkaConnCfg.SASL.Mechanism,
-			"username":  m.kafkaConnCfg.SASL.Username,
-			"password":  m.kafkaConnCfg.SASL.Password,
+	switch reporterName {
+	case "kafka":
+		merged := make(map[string]any, len(cfg))
+		for k, v := range cfg {
+			merged[k] = v
 		}
-	}
 
-	// Inject tls if absent and enabled in global config
-	if _, ok := merged["tls"]; !ok && m.kafkaConnCfg.TLS.Enabled {
-		merged["tls"] = map[string]any{
-			"enabled":              m.kafkaConnCfg.TLS.Enabled,
-			"ca_cert":              m.kafkaConnCfg.TLS.CACert,
-			"client_cert":          m.kafkaConnCfg.TLS.ClientCert,
-			"client_key":           m.kafkaConnCfg.TLS.ClientKey,
-			"insecure_skip_verify": m.kafkaConnCfg.TLS.InsecureSkipVerify,
+		if _, ok := merged["brokers"]; !ok && len(m.kafkaConnCfg.Brokers) > 0 {
+			merged["brokers"] = m.kafkaConnCfg.Brokers
 		}
+		if _, ok := merged["compression"]; !ok && m.kafkaConnCfg.Compression != "" {
+			merged["compression"] = m.kafkaConnCfg.Compression
+		}
+		if _, ok := merged["max_message_bytes"]; !ok && m.kafkaConnCfg.MaxMessageBytes > 0 {
+			merged["max_message_bytes"] = float64(m.kafkaConnCfg.MaxMessageBytes)
+		}
+		if _, ok := merged["sasl"]; !ok && m.kafkaConnCfg.SASL.Enabled {
+			merged["sasl"] = map[string]any{
+				"enabled":   m.kafkaConnCfg.SASL.Enabled,
+				"mechanism": m.kafkaConnCfg.SASL.Mechanism,
+				"username":  m.kafkaConnCfg.SASL.Username,
+				"password":  m.kafkaConnCfg.SASL.Password,
+			}
+		}
+		if _, ok := merged["tls"]; !ok && m.kafkaConnCfg.TLS.Enabled {
+			merged["tls"] = map[string]any{
+				"enabled":              m.kafkaConnCfg.TLS.Enabled,
+				"ca_cert":              m.kafkaConnCfg.TLS.CACert,
+				"client_cert":          m.kafkaConnCfg.TLS.ClientCert,
+				"client_key":           m.kafkaConnCfg.TLS.ClientKey,
+				"insecure_skip_verify": m.kafkaConnCfg.TLS.InsecureSkipVerify,
+			}
+		}
+		return merged
+
+	case "hep":
+		merged := make(map[string]any, len(cfg))
+		for k, v := range cfg {
+			merged[k] = v
+		}
+
+		if _, ok := merged["servers"]; !ok && len(m.hepConnCfg.Servers) > 0 {
+			merged["servers"] = m.hepConnCfg.Servers
+		}
+		if _, ok := merged["capture_id"]; !ok && m.hepConnCfg.CaptureID != 0 {
+			merged["capture_id"] = float64(m.hepConnCfg.CaptureID)
+		}
+		if _, ok := merged["auth_key"]; !ok && m.hepConnCfg.AuthKey != "" {
+			merged["auth_key"] = m.hepConnCfg.AuthKey
+		}
+		if _, ok := merged["node_name"]; !ok && m.hepConnCfg.NodeName != "" {
+			merged["node_name"] = m.hepConnCfg.NodeName
+		}
+		return merged
 	}
 
-	return merged
+	// Unknown reporter type: return config unmodified.
+	return cfg
 }

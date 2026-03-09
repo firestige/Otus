@@ -28,6 +28,27 @@ const (
 	defaultFanoutType = "hash"
 )
 
+// alignBlockSize returns the smallest power of two that is >= n and >= 4096 (PAGE_SIZE).
+// Linux TPACKET_V3 validates tp_block_size with is_power_of_2(); passing any other value
+// causes setsockopt(PACKET_RX_RING) to return EINVAL and the handle creation to fail.
+func alignBlockSize(n int) int {
+	const pageSize = 4096
+	if n < pageSize {
+		n = pageSize
+	}
+	if n&(n-1) == 0 { // already a power of two
+		return n
+	}
+	// Round up to the next power of two via bit-smearing.
+	n--
+	n |= n >> 1
+	n |= n >> 2
+	n |= n >> 4
+	n |= n >> 8
+	n |= n >> 16
+	return n + 1
+}
+
 // Config represents afpacket-specific configuration.
 type Config struct {
 	Interface   string `json:"interface"`   // required
@@ -95,7 +116,13 @@ func (c *AFPacketCapturer) Init(cfg map[string]any) error {
 	}
 
 	if blockSize, ok := cfg["block_size"].(float64); ok {
-		c.config.BlockSize = int(blockSize)
+		requested := int(blockSize)
+		aligned := alignBlockSize(requested)
+		if aligned != requested {
+			slog.Warn("afpacket: block_size adjusted to nearest power-of-two",
+				"requested", requested, "aligned", aligned)
+		}
+		c.config.BlockSize = aligned
 	}
 
 	if numBlocks, ok := cfg["num_blocks"].(float64); ok {

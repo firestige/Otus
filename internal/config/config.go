@@ -13,19 +13,19 @@ import (
 // GlobalConfig represents the top-level global static configuration.
 // Maps to the `capture-agent:` root key in YAML (see config-design.md §2).
 type GlobalConfig struct {
-	Node             NodeConfig             `mapstructure:"node"`
-	Control          ControlConfig          `mapstructure:"control"`
-	Kafka            GlobalKafkaConfig      `mapstructure:"kafka"`
-	CommandChannel   CommandChannelConfig   `mapstructure:"command_channel"`
-	Reporters        ReportersConfig        `mapstructure:"reporters"`
-	Resources        ResourcesConfig        `mapstructure:"resources"`
-	Backpressure     BackpressureConfig     `mapstructure:"backpressure"`
-	Core             CoreConfig             `mapstructure:"core"`
-	Metrics          MetricsConfig          `mapstructure:"metrics"`
-	Log              LogConfig              `mapstructure:"log"`
-	DataDir          string                 `mapstructure:"data_dir"`           // ADR-030: /var/lib/capture-agent
-	TaskPersistence  TaskPersistenceConfig  `mapstructure:"task_persistence"`   // ADR-030/031
-	Roles            map[string]RoleConfig  `mapstructure:"roles"`              // Per-role TaskConfig templates for SimpleCommand
+	Node            NodeConfig            `mapstructure:"node"`
+	Control         ControlConfig         `mapstructure:"control"`
+	Kafka           GlobalKafkaConfig     `mapstructure:"kafka"`
+	CommandChannel  CommandChannelConfig  `mapstructure:"command_channel"`
+	Reporters       ReportersConfig       `mapstructure:"reporters"`
+	Resources       ResourcesConfig       `mapstructure:"resources"`
+	Backpressure    BackpressureConfig    `mapstructure:"backpressure"`
+	Core            CoreConfig            `mapstructure:"core"`
+	Metrics         MetricsConfig         `mapstructure:"metrics"`
+	Log             LogConfig             `mapstructure:"log"`
+	DataDir         string                `mapstructure:"data_dir"`         // ADR-030: /var/lib/capture-agent
+	TaskPersistence TaskPersistenceConfig `mapstructure:"task_persistence"` // ADR-030/031
+	Roles           map[string]RoleConfig `mapstructure:"roles"`            // Per-role TaskConfig templates for SimpleCommand
 }
 
 // ─── Role Configuration ───
@@ -37,12 +37,12 @@ type GlobalConfig struct {
 // The interface, workers, reporters etc. must be configured here since
 // SimpleCommand only carries portRange and protocol.
 type RoleConfig struct {
-	Workers    int                 `mapstructure:"workers"`
-	Capture    CaptureConfig       `mapstructure:"capture"`
-	Decoder    DecoderConfig       `mapstructure:"decoder"`
-	Parsers    []ParserConfig      `mapstructure:"parsers"`
-	Processors []ProcessorConfig   `mapstructure:"processors"`
-	Reporters  []ReporterConfig    `mapstructure:"reporters"`
+	Workers    int               `mapstructure:"workers"`
+	Capture    CaptureConfig     `mapstructure:"capture"`
+	Decoder    DecoderConfig     `mapstructure:"decoder"`
+	Parsers    []ParserConfig    `mapstructure:"parsers"`
+	Processors []ProcessorConfig `mapstructure:"processors"`
+	Reporters  []ReporterConfig  `mapstructure:"reporters"`
 }
 
 // ─── Node Identity ───
@@ -117,6 +117,17 @@ type CommandKafkaConfig struct {
 // ReportersConfig holds shared reporter connection configurations.
 type ReportersConfig struct {
 	Kafka KafkaReporterConnectionConfig `mapstructure:"kafka"`
+	Hep   HEPReporterConnectionConfig   `mapstructure:"hep"`
+}
+
+// HEPReporterConnectionConfig is the shared HEP reporter connection config.
+// Fields are injected into per-task HEP reporter configs when the task does not
+// specify them, providing a centrally managed fallback.
+type HEPReporterConnectionConfig struct {
+	Servers   []string `mapstructure:"servers"`
+	CaptureID uint32   `mapstructure:"capture_id"`
+	AuthKey   string   `mapstructure:"auth_key"`
+	NodeName  string   `mapstructure:"node_name"`
 }
 
 // KafkaReporterConnectionConfig is the shared Kafka reporter connection config.
@@ -243,10 +254,10 @@ type LokiOutputConfig struct {
 
 // TaskPersistenceConfig controls task state persistence and history GC.
 type TaskPersistenceConfig struct {
-	Enabled          bool   `mapstructure:"enabled"`           // false = disable (dev/test)
-	AutoRestart      bool   `mapstructure:"auto_restart"`      // true = auto-restart running tasks on startup
-	GCInterval       string `mapstructure:"gc_interval"`       // default "1h"
-	MaxTaskHistory   int    `mapstructure:"max_task_history"`  // 0 = disable in-process GC
+	Enabled        bool   `mapstructure:"enabled"`          // false = disable (dev/test)
+	AutoRestart    bool   `mapstructure:"auto_restart"`     // true = auto-restart running tasks on startup
+	GCInterval     string `mapstructure:"gc_interval"`      // default "1h"
+	MaxTaskHistory int    `mapstructure:"max_task_history"` // 0 = disable in-process GC
 }
 
 // ─── Loading ───
@@ -379,9 +390,12 @@ func (cfg *GlobalConfig) ValidateAndApplyDefaults() error {
 	// ── Kafka inheritance (ADR-024) ──
 	applyKafkaInheritance(cfg)
 
-	// ── Normalize Roles map keys to upper-case ──
-	// Viper lower-cases all YAML keys during Unmarshal, so “FS” becomes “fs”.
-	// Re-key to upper-case here so callers can always look up by upper-case role name.
+	// ── Normalize Role names to upper-case ──
+	// Viper lower-cases all YAML map keys during Unmarshal, so roles["FS"] becomes
+	// roles["fs"].  Node.Role is a value (not a key) so Viper preserves its case,
+	// but users may write it in any case ("fs", "Fs", "FS").
+	// Normalize both to upper-case here so all callers use a single canonical form.
+	cfg.Node.Role = strings.ToUpper(cfg.Node.Role)
 	if len(cfg.Roles) > 0 {
 		normalized := make(map[string]RoleConfig, len(cfg.Roles))
 		for k, v := range cfg.Roles {

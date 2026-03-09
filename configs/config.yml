@@ -49,8 +49,16 @@ capture-agent:
       # brokers/sasl/tls inherited from capture-agent.kafka; override here if needed
       compression: "snappy"           # none | gzip | snappy | lz4 | zstd
       max_message_bytes: 1048576
-    # NOTE: HEP reporter has no global shared-connection config.
-    # Configure HEP servers directly in the per-role reporter list under roles.<ROLE>.reporters.
+
+    # HEPv3 UDP reporter — global fallback injected into any task reporter named "hep"
+    # that does not supply these fields itself.  Task-level config takes precedence.
+    hep:
+      servers:
+        - "10.0.0.1:9060"
+        - "10.0.0.2:9060"
+      capture_id: 2001                # uint32 placed in HEP chunk 12
+      auth_key: ""                    # optional auth token in HEP chunk 14
+      node_name: ""                   # optional node label in HEP chunk 19 (e.g. hostname)
 
   # ────────────── Global Resources ──────────────
   resources:
