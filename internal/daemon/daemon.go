@@ -101,6 +101,7 @@ func (d *Daemon) Start() error {
 		}
 	}
 	d.taskManager = task.NewTaskManager(d.config.Node.Hostname, taskStore)
+	d.taskManager.SetKafkaConnConfig(d.config.Reporters.Kafka)
 
 	// Restore previously active tasks from the persistent store.
 	if d.config.TaskPersistence.Enabled && taskStore != nil {

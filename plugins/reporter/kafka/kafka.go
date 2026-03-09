@@ -14,9 +14,10 @@ import (
 	"time"
 
 	"github.com/segmentio/kafka-go"
-	"github.com/segmentio/kafka-go/compress"
 
+	"icc.tech/capture-agent/internal/config"
 	"icc.tech/capture-agent/internal/core"
+	"icc.tech/capture-agent/internal/kafkautil"
 	"icc.tech/capture-agent/pkg/plugin"
 )
 
@@ -42,10 +43,12 @@ type KafkaReporter struct {
 
 // Config represents Kafka reporter configuration.
 type Config struct {
-	// Connection — may come from capture-agent.reporters.kafka (ADR-028) or per-reporter config.
-	Brokers     []string `json:"brokers"`
-	Compression string   `json:"compression"`  // none|gzip|snappy|lz4, default snappy
-	MaxAttempts int      `json:"max_attempts"` // default 3
+	// Connection — may come from capture-agent.reporters.kafka (ADR-024) or per-reporter config.
+	Brokers     []string          `json:"brokers"`
+	Compression string            `json:"compression"`  // none|gzip|snappy|lz4, default snappy
+	MaxAttempts int               `json:"max_attempts"` // default 3
+	SASL        config.SASLConfig `json:"sasl"`
+	TLS         config.TLSConfig  `json:"tls"`
 
 	// Topic routing (ADR-027): topic and topic_prefix are mutually exclusive.
 	// When topic_prefix is set, actual topic = "{prefix}-{protocol}" (e.g. "capture-agent-sip").
@@ -155,36 +158,81 @@ func (r *KafkaReporter) Init(config map[string]any) error {
 		}
 	}
 
+	// Parse SASL from config map
+	if saslMap, ok := config["sasl"].(map[string]any); ok {
+		if v, ok := saslMap["enabled"].(bool); ok {
+			cfg.SASL.Enabled = v
+		}
+		if v, ok := saslMap["mechanism"].(string); ok {
+			cfg.SASL.Mechanism = v
+		}
+		if v, ok := saslMap["username"].(string); ok {
+			cfg.SASL.Username = v
+		}
+		if v, ok := saslMap["password"].(string); ok {
+			cfg.SASL.Password = v
+		}
+	}
+
+	// Parse TLS from config map
+	if tlsMap, ok := config["tls"].(map[string]any); ok {
+		if v, ok := tlsMap["enabled"].(bool); ok {
+			cfg.TLS.Enabled = v
+		}
+		if v, ok := tlsMap["ca_cert"].(string); ok {
+			cfg.TLS.CACert = v
+		}
+		if v, ok := tlsMap["client_cert"].(string); ok {
+			cfg.TLS.ClientCert = v
+		}
+		if v, ok := tlsMap["client_key"].(string); ok {
+			cfg.TLS.ClientKey = v
+		}
+		if v, ok := tlsMap["insecure_skip_verify"].(bool); ok {
+			cfg.TLS.InsecureSkipVerify = v
+		}
+	}
+
 	r.config = cfg
+
+	// Build dialer for SASL/TLS
+	dialer, err := kafkautil.BuildDialer(cfg.SASL, cfg.TLS)
+	if err != nil {
+		return fmt.Errorf("build kafka dialer: %w", err)
+	}
+
+	// Resolve compression
+	var compression kafka.Compression
+	switch cfg.Compression {
+	case "none", "":
+		compression = kafka.Compression(0)
+	case "gzip":
+		compression = kafka.Gzip
+	case "snappy":
+		compression = kafka.Snappy
+	case "lz4":
+		compression = kafka.Lz4
+	default:
+		return fmt.Errorf("invalid compression type: %s", cfg.Compression)
+	}
 
 	// Create Kafka writer.
 	// Topic is always set per-message in Report()/ReportBatch() via resolveTopic() (ADR-027).
 	// Setting a topic on the writer AND on the message simultaneously is rejected by kafka-go,
 	// so we never set writer-level Topic — resolveTopic() handles both fixed and prefix modes.
-	writerConfig := kafka.WriterConfig{
-		Brokers:      cfg.Brokers,
+	r.writer = &kafka.Writer{
+		Addr:         kafka.TCP(cfg.Brokers...),
 		Balancer:     &kafka.Hash{},
 		BatchSize:    cfg.BatchSize,
 		BatchTimeout: cfg.BatchTimeout,
 		MaxAttempts:  cfg.MaxAttempts,
 		Async:        false,
+		Compression:  compression,
+		Transport: &kafka.Transport{
+			SASL: dialer.SASLMechanism,
+			TLS:  dialer.TLS,
+		},
 	}
-
-	// Compression codec
-	switch cfg.Compression {
-	case "none", "":
-		writerConfig.CompressionCodec = nil
-	case "gzip":
-		writerConfig.CompressionCodec = compress.Gzip.Codec()
-	case "snappy":
-		writerConfig.CompressionCodec = compress.Snappy.Codec()
-	case "lz4":
-		writerConfig.CompressionCodec = compress.Lz4.Codec()
-	default:
-		return fmt.Errorf("invalid compression type: %s", cfg.Compression)
-	}
-
-	r.writer = kafka.NewWriter(writerConfig)
 
 	return nil
 }

@@ -20,7 +20,8 @@ type TaskManager struct {
 	tasks map[string]*Task // task_id → Task
 
 	// Global configuration
-	agentID string
+	agentID      string
+	kafkaConnCfg config.KafkaReporterConnectionConfig // shared Kafka connection defaults (ADR-024)
 
 	// store is the persistence backend (noopStore when disabled).
 	store TaskStore
@@ -37,6 +38,12 @@ func NewTaskManager(agentID string, store TaskStore) *TaskManager {
 		agentID: agentID,
 		store:   store,
 	}
+}
+
+// SetKafkaConnConfig stores the global Kafka reporter connection config (ADR-024).
+// Must be called before the first task is created to take effect.
+func (m *TaskManager) SetKafkaConnConfig(cfg config.KafkaReporterConnectionConfig) {
+	m.kafkaConnCfg = cfg
 }
 
 // Create creates and starts a new task from configuration.
@@ -167,7 +174,8 @@ func (m *TaskManager) Create(cfg config.TaskConfig) error {
 
 	// Init Reporters
 	for i, rep := range task.Reporters {
-		if err := rep.Init(cfg.Reporters[i].Config); err != nil {
+		repCfg := m.mergeKafkaDefaults(cfg.Reporters[i].Name, cfg.Reporters[i].Config)
+		if err := rep.Init(repCfg); err != nil {
 			return fmt.Errorf("reporter %q init failed: %w", cfg.Reporters[i].Name, err)
 		}
 	}
@@ -498,4 +506,45 @@ func (m *TaskManager) GCOldTasks(maxHistory int) {
 			slog.Info("task GC: removed old task record", "task_id", id)
 		}
 	}
+}
+
+// mergeKafkaDefaults returns a reporter config map with global Kafka connection defaults
+// injected for fields not already present. Only applies when reporterName == "kafka".
+func (m *TaskManager) mergeKafkaDefaults(reporterName string, cfg map[string]any) map[string]any {
+	if reporterName != "kafka" || cfg == nil {
+		return cfg
+	}
+
+	merged := make(map[string]any, len(cfg))
+	for k, v := range cfg {
+		merged[k] = v
+	}
+
+	// Inject brokers if absent
+	if _, ok := merged["brokers"]; !ok && len(m.kafkaConnCfg.Brokers) > 0 {
+		merged["brokers"] = m.kafkaConnCfg.Brokers
+	}
+
+	// Inject sasl if absent and enabled in global config
+	if _, ok := merged["sasl"]; !ok && m.kafkaConnCfg.SASL.Enabled {
+		merged["sasl"] = map[string]any{
+			"enabled":   m.kafkaConnCfg.SASL.Enabled,
+			"mechanism": m.kafkaConnCfg.SASL.Mechanism,
+			"username":  m.kafkaConnCfg.SASL.Username,
+			"password":  m.kafkaConnCfg.SASL.Password,
+		}
+	}
+
+	// Inject tls if absent and enabled in global config
+	if _, ok := merged["tls"]; !ok && m.kafkaConnCfg.TLS.Enabled {
+		merged["tls"] = map[string]any{
+			"enabled":              m.kafkaConnCfg.TLS.Enabled,
+			"ca_cert":              m.kafkaConnCfg.TLS.CACert,
+			"client_cert":          m.kafkaConnCfg.TLS.ClientCert,
+			"client_key":           m.kafkaConnCfg.TLS.ClientKey,
+			"insecure_skip_verify": m.kafkaConnCfg.TLS.InsecureSkipVerify,
+		}
+	}
+
+	return merged
 }

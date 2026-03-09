@@ -13,6 +13,7 @@ import (
 	"github.com/segmentio/kafka-go"
 
 	"icc.tech/capture-agent/internal/config"
+	"icc.tech/capture-agent/internal/kafkautil"
 )
 
 // KafkaCommand is the wire format for commands received via Kafka (ADR-026).
@@ -133,6 +134,12 @@ func NewKafkaCommandConsumer(ccConfig config.CommandChannelConfig, hostname, age
 		startOffset = kafka.LastOffset
 	}
 
+	// Build dialer with optional SASL/TLS
+	dialer, err := kafkautil.BuildDialer(kc.SASL, kc.TLS)
+	if err != nil {
+		return nil, fmt.Errorf("build kafka dialer: %w", err)
+	}
+
 	// Create Kafka reader (consumer)
 	reader := kafka.NewReader(kafka.ReaderConfig{
 		Brokers:        kc.Brokers,
@@ -143,6 +150,7 @@ func NewKafkaCommandConsumer(ccConfig config.CommandChannelConfig, hostname, age
 		MaxBytes:       10 << 20,
 		CommitInterval: time.Second,
 		MaxWait:        1 * time.Second,
+		Dialer:         dialer,
 	})
 
 	// Create Kafka writer (producer) for response channel — only when response_topic is set (ADR-029)
@@ -154,6 +162,7 @@ func NewKafkaCommandConsumer(ccConfig config.CommandChannelConfig, hostname, age
 			Balancer:     &kafka.Hash{}, // hostname as key → consistent partition routing
 			RequiredAcks: kafka.RequireOne,
 			Async:        false, // synchronous write so failures are observable
+			Transport:    &kafka.Transport{SASL: dialer.SASLMechanism, TLS: dialer.TLS},
 		}
 	}
 
