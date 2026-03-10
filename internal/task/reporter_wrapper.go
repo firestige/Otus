@@ -71,9 +71,14 @@ func (w *ReporterWrapper) Start(ctx context.Context) {
 	go w.batchLoop(ctx)
 }
 
-// Send enqueues a packet for batched delivery. Non-blocking with channel buffer.
+// Send enqueues a packet for batched delivery. Non-blocking: if the channel
+// is full the packet is dropped and counted in ReporterDropsTotal.
 func (w *ReporterWrapper) Send(pkt *core.OutputPacket) {
-	w.batchCh <- pkt
+	select {
+	case w.batchCh <- pkt:
+	default:
+		metrics.ReporterDropsTotal.WithLabelValues(w.taskID, w.primary.Name()).Inc()
+	}
 }
 
 // Close closes the batch channel and waits for all pending packets to flush.

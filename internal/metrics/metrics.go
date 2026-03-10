@@ -80,6 +80,15 @@ var (
 		[]string{"task", "reporter", "error_type"},
 	)
 
+	// ReporterDropsTotal counts packets dropped because the reporter wrapper channel was full
+	ReporterDropsTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "capture_agent_reporter_drops_total",
+			Help: "Total number of packets dropped due to full reporter wrapper channel",
+		},
+		[]string{"task", "reporter"},
+	)
+
 	// FlowRegistrySize tracks the current number of flows in a task's FlowRegistry
 	FlowRegistrySize = promauto.NewGaugeVec(
 		prometheus.GaugeOpts{
