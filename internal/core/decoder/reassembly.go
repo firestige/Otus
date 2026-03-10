@@ -294,6 +294,14 @@ func (r *Reassembler) insertBSDRight(fl *fragmentList, frag *fragment) {
 		}
 	}
 
+	// If the final fragment has already been received, fl.highest marks the
+	// end of the reassembled datagram.  Any fragment data beyond that boundary
+	// is outside the original datagram (malformed/stale packet) and must be
+	// dropped here so build() never writes past the end of its result slice.
+	if fl.finalReceived && endAt > fl.highest {
+		endAt = fl.highest
+	}
+
 	// After trimming, check if anything remains
 	if startAt >= endAt {
 		return // Fully overlapped by existing fragments — discard
@@ -330,7 +338,17 @@ func (r *Reassembler) build(fl *fragmentList) ([]byte, error) {
 	result := make([]byte, totalSize)
 	for e := fl.list.Front(); e != nil; e = e.Next() {
 		frag := e.Value.(*fragment)
-		copy(result[frag.offset:frag.offset+frag.length], frag.payload)
+		start := int(frag.offset)
+		end := start + int(frag.length)
+		if start >= totalSize {
+			continue // fragment starts beyond datagram end — skip
+		}
+		if end > totalSize {
+			// Defensive clamp: should have been trimmed in insertBSDRight,
+			// but guard here to prevent a panic on any path that bypasses it.
+			end = totalSize
+		}
+		copy(result[start:end], frag.payload[:end-start])
 	}
 
 	return result, nil

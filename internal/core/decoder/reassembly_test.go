@@ -457,3 +457,57 @@ func TestReassembler_FlowEvictionAfterComplete(t *testing.T) {
 		t.Fatal("flow should be evicted after successful reassembly")
 	}
 }
+
+// TestReassembler_FinalFragFirstThenOversizedNonFinal reproduces the panic
+// reported in production: final fragment arrives first establishing fl.highest,
+// then a non-final fragment arrives whose raw end position exceeds fl.highest.
+//
+// Without the fix, insertBSDRight would store the oversized fragment unclipped
+// and build() would panic with "slice bounds out of range".
+func TestReassembler_FinalFragFirstThenOversizedNonFinal(t *testing.T) {
+	r := NewReassembler(ReassemblyConfig{})
+	now := time.Now()
+
+	src := [4]byte{10, 0, 0, 1}
+	dst := [4]byte{10, 0, 0, 2}
+	fragID := uint16(0xABCD)
+
+	// Fragment 2 (final, MF=0): offset=50 units (=400 bytes), payload 200 bytes
+	// → fl.highest = 600
+	finalFrag := buildIPv4Fragment(src, dst, 17, fragID, 50, false, bytes.Repeat([]byte{0xFF}, 200))
+	_, complete, err := r.Process(finalFrag, now)
+	if err != nil {
+		t.Fatalf("final frag: unexpected error: %v", err)
+	}
+	if complete {
+		t.Fatal("should not be complete yet (first fragment missing)")
+	}
+
+	// Fragment 1 (non-final, MF=1): offset=0, payload 1100 bytes
+	// Raw end = 0 + 1100 = 1100 > fl.highest (600).
+	// Before fix: insertBSDRight would insert at end with endAt=1100;
+	// build() would then panic on copy(result[:1100]) with len(result)=600.
+	// After fix: endAt is clamped to fl.highest=600; only bytes [0:600] kept.
+	bigFrag := buildIPv4Fragment(src, dst, 17, fragID, 0, true, bytes.Repeat([]byte{0xAA}, 1100))
+	result, complete, err := r.Process(bigFrag, now)
+	if err != nil {
+		t.Fatalf("non-final oversized frag: unexpected error: %v", err)
+	}
+	if !complete {
+		t.Fatal("reassembly should be complete after both fragments")
+	}
+	if len(result) != 600 {
+		t.Fatalf("reassembled length = %d, want 600", len(result))
+	}
+	// Bytes [0:400] come from the oversized non-final frag (clamped), [400:600] from final frag.
+	for i := 0; i < 400; i++ {
+		if result[i] != 0xAA {
+			t.Fatalf("result[%d] = %#x, want 0xAA", i, result[i])
+		}
+	}
+	for i := 400; i < 600; i++ {
+		if result[i] != 0xFF {
+			t.Fatalf("result[%d] = %#x, want 0xFF", i, result[i])
+		}
+	}
+}
