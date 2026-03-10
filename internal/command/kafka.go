@@ -244,10 +244,17 @@ func (c *KafkaCommandConsumer) processMessage(ctx context.Context, msg kafka.Mes
 
 	// SimpleCommand path: "data" field is a non-null JSON array.
 	if len(probe.Data) > 0 && probe.Data[0] == '[' {
+		slog.Debug("kafka message received: SimpleCommand format",
+			"topic", msg.Topic, "partition", msg.Partition, "offset", msg.Offset,
+			"payload_len", len(msg.Value))
 		return c.processSimpleCommand(ctx, msg.Value)
 	}
 
 	// Legacy KafkaCommand path.
+	slog.Debug("kafka message received: legacy KafkaCommand format",
+		"topic", msg.Topic, "partition", msg.Partition, "offset", msg.Offset,
+		"command", probe.Command,
+		"payload_len", len(msg.Value))
 	return c.processKafkaCommand(ctx, msg)
 }
 

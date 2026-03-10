@@ -46,6 +46,12 @@ TARGET_ROLES = {
     "uas": "UAS",
     "uac": "UAC",
 }
+# Actual agent hostnames — used as the `target` field in legacy KafkaCommands
+# so processKafkaCommand hostname-matching accepts them (hostname="uas-hep" etc.).
+COMMAND_HOSTNAMES = {
+    "uas": "uas-hep",
+    "uac": "uac-hep",
+}
 
 # Commands that use the simplified SimpleCommand Kafka format (role-based start/stop).
 # All other commands use the legacy KafkaCommand format.
@@ -453,9 +459,12 @@ def api_command():
                      command, target, request_id, wait)
         else:
             # ── Legacy KafkaCommand path ──
+            # Use the real agent hostname (e.g. "uas-hep") so processKafkaCommand
+            # hostname-matching accepts it.  Broadcast stays as "*".
+            cmd_target = "*" if target == "*" else COMMAND_HOSTNAMES.get(target, target)
             msg = {
                 "version": "v1",
-                "target": target,
+                "target": cmd_target,
                 "command": command,
                 "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
                 "request_id": request_id,
@@ -463,10 +472,10 @@ def api_command():
             }
             if target == "*":
                 for t in COMMAND_TOPICS.values():
-                    get_producer().send(t, key=target, value=msg)
+                    get_producer().send(t, key="*", value=msg)
             else:
                 topic = COMMAND_TOPICS.get(target, COMMAND_TOPICS["uas"])
-                get_producer().send(topic, key=target, value=msg)
+                get_producer().send(topic, key=cmd_target, value=msg)
             get_producer().flush()
             log.info("command=%s target=%s request_id=%s wait=%s",
                      command, target, request_id, wait)

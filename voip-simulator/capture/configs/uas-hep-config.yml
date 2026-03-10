@@ -43,7 +43,7 @@ capture-agent:
       node_name: "uas-hep"
 
   log:
-    level: info
+    level: debug
     format: text
 
   # ── Role-based task defaults ───────────────────────────────────────────────
