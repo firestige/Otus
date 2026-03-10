@@ -91,6 +91,7 @@ type ReporterConfig struct {
 	BatchSize    int            `json:"batch_size" yaml:"batch_size" mapstructure:"batch_size"`             // Wrapper batch size (default 100)
 	BatchTimeout string         `json:"batch_timeout" yaml:"batch_timeout" mapstructure:"batch_timeout"`   // Wrapper batch timeout (default 50ms)
 	Fallback     string         `json:"fallback" yaml:"fallback" mapstructure:"fallback"`                   // Fallback reporter name (optional)
+	NoBatch      bool           `json:"no_batch" yaml:"no_batch" mapstructure:"no_batch"`                   // Disable batching; each packet is sent immediately (for HEP collectors that do not support batch)
 }
 
 // Validate validates task configuration.

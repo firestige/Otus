@@ -41,12 +41,16 @@ type WrapperConfig struct {
 	TaskID       string          // task ID for Prometheus labels
 	BatchSize    int
 	BatchTimeout time.Duration
+	NoBatch      bool            // if true, each packet is flushed immediately (batchSize forced to 1)
 }
 
 // NewReporterWrapper creates a new wrapper around a Reporter.
 func NewReporterWrapper(cfg WrapperConfig) *ReporterWrapper {
 	batchSize := cfg.BatchSize
-	if batchSize <= 0 {
+	if cfg.NoBatch {
+		// Force batchSize=1 so every packet is flushed immediately by batchLoop.
+		batchSize = 1
+	} else if batchSize <= 0 {
 		batchSize = defaultWrapperBatchSize
 	}
 	batchTimeout := cfg.BatchTimeout

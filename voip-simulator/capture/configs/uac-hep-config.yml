@@ -65,4 +65,5 @@ capture-agent:
       processors: []
       reporters:
         - name: hep
+          no_batch: true    # send each packet immediately; HEP collectors do not support batch
           config: {}        # inherits global reporters.hep settings above

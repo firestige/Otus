@@ -268,6 +268,7 @@ func (m *TaskManager) Create(cfg config.TaskConfig) error {
 			TaskID:       cfg.ID,
 			BatchSize:    rcfg.BatchSize,
 			BatchTimeout: batchTimeout,
+			NoBatch:      rcfg.NoBatch,
 		})
 		task.ReporterWrappers = append(task.ReporterWrappers, w)
 	}

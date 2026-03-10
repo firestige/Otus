@@ -275,3 +275,36 @@ func TestReporterWrapper_ErrorMetricsRecorded(t *testing.T) {
 		t.Error("expected primary batch call")
 	}
 }
+
+// TestReporterWrapper_NoBatch verifies that when NoBatch=true the wrapper
+// forces batchSize=1, so each packet triggers an individual flush and no
+// packet is held until a timeout.
+func TestReporterWrapper_NoBatch(t *testing.T) {
+	br := &mockBatchReporter{mockReporter: mockReporter{name: "hep"}}
+	w := NewReporterWrapper(WrapperConfig{
+		Primary:      br,
+		BatchTimeout: 10 * time.Second, // would normally hold packets for 10s
+		BatchSize:    100,              // would normally batch 100 packets
+		NoBatch:      true,             // override: send immediately
+	})
+
+	ctx := context.Background()
+	w.Start(ctx)
+
+	const n = 5
+	for i := 0; i < n; i++ {
+		w.Send(&core.OutputPacket{SrcPort: uint16(i)})
+	}
+	w.Close()
+
+	calls := br.getBatchCalls()
+	// Each packet must have been sent as its own batch of 1.
+	if len(calls) != n {
+		t.Errorf("expected %d batch calls (one per packet), got %d: %v", n, len(calls), calls)
+	}
+	for i, c := range calls {
+		if c != 1 {
+			t.Errorf("batch call %d: expected size 1, got %d", i, c)
+		}
+	}
+}
