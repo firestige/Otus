@@ -43,7 +43,7 @@ RUN chmod +x /usr/local/bin/capture-agent && \
     # Grant packet-capture capabilities so the process doesn't need full root
     setcap cap_net_raw,cap_net_admin+eip /usr/local/bin/capture-agent
 
-COPY entrypoint.sh /entrypoint.sh
+COPY voip-simulator/capture/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
 # Directories expected by capture-agent
