@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"os"
 	"sync/atomic"
 	"time"
 
@@ -20,33 +21,45 @@ import (
 const (
 	pluginName = "afpacket"
 
-	// Default configuration values
-	defaultSnapLen    = 65535
-	defaultBlockSize  = 4 * 1024 * 1024 // 4MB
+	// Default configuration values.
+	// snap_len is 65536 (= 2^16 = 16 × 4096) rather than the common-but-problematic
+	// 65535: gopacket requires block_size % frame_size == 0 AND block_size % pageSize == 0.
+	// 65535 is odd so gcd(65535, 4096)=1 → lcm ≈ 256 MB, making any practical block_size
+	// impossible to align.  65536 is page-aligned so the two constraints collapse to one.
+	defaultSnapLen    = 65536
+	defaultBlockSize  = 4 * 1024 * 1024 // 4MB = 64 × 65536, satisfies default alignment
 	defaultNumBlocks  = 128
 	defaultFanoutID   = 42
 	defaultFanoutType = "hash"
 )
 
-// alignBlockSize returns the smallest power of two that is >= n and >= 4096 (PAGE_SIZE).
-// Linux TPACKET_V3 validates tp_block_size with is_power_of_2(); passing any other value
-// causes setsockopt(PACKET_RX_RING) to return EINVAL and the handle creation to fail.
-func alignBlockSize(n int) int {
-	const pageSize = 4096
-	if n < pageSize {
+// alignSnapLen rounds n up to the nearest multiple of pageSize.
+// The result becomes TPacket's frame_size.  Because gopacket enforces both
+//
+//	block_size % frame_size == 0
+//	block_size % pageSize  == 0
+//
+// making frame_size a multiple of pageSize collapses both constraints into a
+// single one (block_size % frame_size == 0), which is easy to satisfy.
+func alignSnapLen(n, pageSize int) int {
+	if n <= 0 {
 		n = pageSize
 	}
-	if n&(n-1) == 0 { // already a power of two
-		return n
+	// Ceiling division: ((n - 1) / pageSize + 1) * pageSize
+	return ((n + pageSize - 1) / pageSize) * pageSize
+}
+
+// alignBlockSize rounds requested up to the nearest multiple of frameSize.
+// frameSize must already be page-aligned (call alignSnapLen first); that
+// guarantees the result also satisfies the pageSize divisibility requirement.
+func alignBlockSize(requested, frameSize int) int {
+	if frameSize <= 0 {
+		frameSize = os.Getpagesize()
 	}
-	// Round up to the next power of two via bit-smearing.
-	n--
-	n |= n >> 1
-	n |= n >> 2
-	n |= n >> 4
-	n |= n >> 8
-	n |= n >> 16
-	return n + 1
+	if requested <= 0 {
+		return frameSize
+	}
+	return ((requested + frameSize - 1) / frameSize) * frameSize
 }
 
 // Config represents afpacket-specific configuration.
@@ -111,18 +124,33 @@ func (c *AFPacketCapturer) Init(cfg map[string]any) error {
 		c.config.BPFFilter = filter
 	}
 
+	// ── snap_len (= TPacket frame_size) must be resolved and page-aligned BEFORE
+	//    block_size, because block_size alignment depends on the final snap_len value.
 	if snapLen, ok := cfg["snap_len"].(float64); ok {
 		c.config.SnapLen = int(snapLen)
 	}
+	page := os.Getpagesize()
+	alignedSnap := alignSnapLen(c.config.SnapLen, page)
+	if alignedSnap != c.config.SnapLen {
+		slog.Warn("afpacket: snap_len rounded up to page boundary to satisfy TPacket alignment",
+			"requested", c.config.SnapLen, "aligned", alignedSnap, "page_size", page)
+		c.config.SnapLen = alignedSnap
+	}
 
+	// ── block_size must be divisible by both snap_len and pageSize.
+	//    Since snap_len is now page-aligned, rounding block_size up to the nearest
+	//    multiple of snap_len satisfies both constraints simultaneously.
 	if blockSize, ok := cfg["block_size"].(float64); ok {
 		requested := int(blockSize)
-		aligned := alignBlockSize(requested)
+		aligned := alignBlockSize(requested, c.config.SnapLen)
 		if aligned != requested {
-			slog.Warn("afpacket: block_size adjusted to nearest power-of-two",
-				"requested", requested, "aligned", aligned)
+			slog.Warn("afpacket: block_size rounded up to nearest multiple of snap_len",
+				"requested", requested, "aligned", aligned, "snap_len", c.config.SnapLen)
 		}
 		c.config.BlockSize = aligned
+	} else {
+		// Re-align the default block_size for the (possibly user-adjusted) snap_len.
+		c.config.BlockSize = alignBlockSize(c.config.BlockSize, c.config.SnapLen)
 	}
 
 	if numBlocks, ok := cfg["num_blocks"].(float64); ok {
