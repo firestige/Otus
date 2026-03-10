@@ -62,8 +62,9 @@ var protocolToParser = map[string]string{
 //   - matches the L4 protocol(s) + portRange for the configured protocols
 //   - always appends an IP-fragment rule so reassembly works correctly
 //
-// SIP uses both TCP and UDP; RTP uses UDP only.
-// If both SIP and RTP are present, the TCP+UDP range covers all traffic.
+// Only UDP is matched — the decoder supports UDP only; TCP packets would
+// arrive with an empty Transport layer and raw payload, so they are dropped
+// at the BPF level before entering the pipeline.
 //
 // The IP-fragment rule `ip[6:2] & 0x3fff != 0` matches:
 //   - bit 13 (MF flag = 1) → first and middle fragment
@@ -86,9 +87,10 @@ func buildBPFFilter(protocols []string, portRange string) string {
 	var l4expr string
 	switch {
 	case hasSIP:
-		// SIP runs over TCP and UDP; the portrange covers both SIP and any
-		// co-located RTP when both protocols are requested.
-		l4expr = fmt.Sprintf("tcp portrange %s or udp portrange %s", portRange, portRange)
+		// Decoder only supports UDP; TCP is not decoded in this branch.
+		// SIP-over-TCP packets would arrive with an empty Transport layer and
+		// raw TCP payload, confusing the SIP parser.  Drop TCP at the BPF level.
+		l4expr = fmt.Sprintf("udp portrange %s", portRange)
 	case hasRTP:
 		l4expr = fmt.Sprintf("udp portrange %s", portRange)
 	default:
