@@ -48,10 +48,9 @@ capture-agent:
       workers: 1
       capture:
         name: afpacket
+        interface: eth0
         config:
-          iface: eth0
           buffer_size_mb: 16
-          bpf_filter: ""   # auto-generated from portRange + protocol
       decoder:
         ip_reassembly: true
         tunnels: []
