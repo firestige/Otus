@@ -146,15 +146,18 @@ simulator-build:
 	DOCKER_BUILDKIT=1 docker compose -f voip-simulator/docker-compose.yml build
 
 # Build the capture-agent binary and install it as 'otus' in voip-simulator/capture/
-# so the simulator sidecar image can pick it up with: COPY otus /usr/local/bin/capture-agent
+# Useful inside the dev container for local testing; NOT needed for 'make simulator'
+# because the capture Dockerfile is a multi-stage build that compiles Go itself.
 simulator-binary: build
 	@echo "Installing binary as voip-simulator/capture/otus..."
 	@cp $(BINARY_NAME) voip-simulator/capture/otus
 	@chmod +x voip-simulator/capture/otus
-	@echo "✓  voip-simulator/capture/otus ready  ($(shell du -sh voip-simulator/capture/otus | cut -f1))"
+	@echo "✓  voip-simulator/capture/otus ready  ($(shell du -sh voip-simulator/capture/otus 2>/dev/null | cut -f1))"
 
-# Build binary AND rebuild all simulator images in one shot
-simulator: simulator-binary simulator-build
+# Build the entire voip-simulator stack.
+# The capture Dockerfile is multi-stage: Go is compiled inside Docker (Linux),
+# so this works from macOS, Windows, and Linux without needing Go on the host.
+simulator: simulator-build
 
 # 构建插件
 build-plugins:

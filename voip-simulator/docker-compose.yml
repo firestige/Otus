@@ -114,8 +114,8 @@ services:
   # ──────────────────────────────────────────
   capture-agent-uas:
     build:
-      context: ./capture
-      dockerfile: Dockerfile
+      context: ..
+      dockerfile: voip-simulator/capture/Dockerfile
     image: voip-simulator/capture-agent:latest
     container_name: capture-agent-uas
     # Share network namespace with sipp-uas — required to see its interfaces
@@ -142,8 +142,8 @@ services:
   # ──────────────────────────────────────────
   capture-agent-uac:
     build:
-      context: ./capture
-      dockerfile: Dockerfile
+      context: ..
+      dockerfile: voip-simulator/capture/Dockerfile
     container_name: capture-agent-uac
     network_mode: "container:sipp-uac"
     cap_add:
@@ -214,8 +214,8 @@ services:
   # ──────────────────────────────────────────
   capture-agent-uas-hep:
     build:
-      context: ./capture
-      dockerfile: Dockerfile
+      context: ..
+      dockerfile: voip-simulator/capture/Dockerfile
     image: voip-simulator/capture-agent:latest
     container_name: capture-agent-uas-hep
     network_mode: "container:sipp-uas"
@@ -243,8 +243,8 @@ services:
   # ──────────────────────────────────────────
   capture-agent-uac-hep:
     build:
-      context: ./capture
-      dockerfile: Dockerfile
+      context: ..
+      dockerfile: voip-simulator/capture/Dockerfile
     container_name: capture-agent-uac-hep
     network_mode: "container:sipp-uac"
     cap_add:
