@@ -111,6 +111,14 @@ func (p *Pipeline) processPacket(raw core.RawPacket) (core.OutputPacket, bool) {
 		metrics.PipelinePacketsTotal.WithLabelValues(p.taskID, pipelineID, "decode_error").Inc()
 		return core.OutputPacket{}, false
 	}
+
+	// Drop non-IP packets (ARP, LLDP, etc.) — they have no SrcIP/DstIP and
+	// cannot be forwarded to reporters that require IP addressing (e.g. HEP).
+	if !decoded.IP.SrcIP.IsValid() {
+		metrics.PipelinePacketsTotal.WithLabelValues(p.taskID, pipelineID, "non_ip").Inc()
+		return core.OutputPacket{}, false
+	}
+
 	p.metrics.Decoded.Add(1)
 	metrics.PipelinePacketsTotal.WithLabelValues(p.taskID, pipelineID, "decoded").Inc()
 

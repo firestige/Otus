@@ -121,8 +121,15 @@ func Encode(pkt *core.OutputPacket, opts EncodeOptions) ([]byte, error) {
 	buf = append(buf, 0, 0) // bytes [4:6] — total length
 
 	// ── Chunk 1: IP family ──────────────────────────────────────────────────
+	// Use Is4()/Is4In6() to detect IPv4, Is6() for pure IPv6.
+	// A zero-value netip.Addr satisfies none of these — treat it as IPv4 and
+	// write a zeroed address rather than panicking inside As4()/As16().
+	srcIP := pkt.SrcIP
+	dstIP := pkt.DstIP
+	isV6 := srcIP.Is6() && !srcIP.Is4In6()
+
 	ipFamily := ipFamilyV4
-	if pkt.SrcIP.Is6() {
+	if isV6 {
 		ipFamily = ipFamilyV6
 	}
 	buf = appendUint8(buf, chunkIPFamily, ipFamily)
@@ -132,13 +139,22 @@ func Encode(pkt *core.OutputPacket, opts EncodeOptions) ([]byte, error) {
 
 	// ── Chunks 3/4 or 5/6: IP addresses ────────────────────────────────────
 	if ipFamily == ipFamilyV4 {
-		src4 := pkt.SrcIP.As4()
-		dst4 := pkt.DstIP.As4()
+		// As4() panics on zero value or pure-IPv6; use Unmap() first to
+		// normalise IPv4-mapped-IPv6, then guard with Is4().
+		srcU := srcIP.Unmap()
+		dstU := dstIP.Unmap()
+		var src4, dst4 [4]byte
+		if srcU.Is4() {
+			src4 = srcU.As4()
+		}
+		if dstU.Is4() {
+			dst4 = dstU.As4()
+		}
 		buf = appendBytes(buf, chunkSrcIPv4, src4[:])
 		buf = appendBytes(buf, chunkDstIPv4, dst4[:])
 	} else {
-		src6 := pkt.SrcIP.As16()
-		dst6 := pkt.DstIP.As16()
+		src6 := srcIP.As16()
+		dst6 := dstIP.As16()
 		buf = appendBytes(buf, chunkSrcIPv6, src6[:])
 		buf = appendBytes(buf, chunkDstIPv6, dst6[:])
 	}
