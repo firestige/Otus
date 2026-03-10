@@ -265,6 +265,36 @@ func TestEncode_NoPayload(t *testing.T) {
 	}
 }
 
+// TestEncode_OversizePayload verifies that a payload which would push the HEP
+// frame past the uint16 limit (65535) is silently truncated so that the frame
+// encodes successfully and its total length stays within the protocol limit.
+func TestEncode_OversizePayload(t *testing.T) {
+	pkt := makePacket()
+	pkt.RawPayload = make([]byte, 65500) // near-max payload
+	for i := range pkt.RawPayload {
+		pkt.RawPayload[i] = 0xAB
+	}
+
+	frame, err := Encode(pkt, EncodeOptions{NodeName: "test-node"})
+	if err != nil {
+		t.Fatalf("Encode returned error for oversize payload: %v", err)
+	}
+	if len(frame) > 0xFFFF {
+		t.Errorf("frame length %d exceeds uint16 max 65535", len(frame))
+	}
+	// Sanity: frame length field must match actual slice length.
+	declared := int(binary.BigEndian.Uint16(frame[4:6]))
+	if declared != len(frame) {
+		t.Errorf("declared length %d != actual length %d", declared, len(frame))
+	}
+	// Payload chunk must be present and truncated (not absent).
+	pf := parseFrame(t, frame)
+	if _, ok := pf.chunks[chunkPayload]; !ok {
+		t.Error("payload chunk should be present even when truncated")
+	}
+}
+
+
 func TestEncode_CorrID_SIPCallID(t *testing.T) {
 	frame, _ := Encode(makePacket(), EncodeOptions{})
 	pf := parseFrame(t, frame)

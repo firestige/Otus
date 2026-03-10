@@ -184,11 +184,6 @@ func Encode(pkt *core.OutputPacket, opts EncodeOptions) ([]byte, error) {
 		buf = appendBytes(buf, chunkAuthKey, []byte(opts.AuthKey))
 	}
 
-	// ── Chunk 15: raw payload ────────────────────────────────────────────────
-	if len(pkt.RawPayload) > 0 {
-		buf = appendBytes(buf, chunkPayload, pkt.RawPayload)
-	}
-
 	// ── Chunk 17: correlation ID ─────────────────────────────────────────────
 	if cid := resolveCorrelationID(pkt); cid != "" {
 		buf = appendBytes(buf, chunkCorrID, []byte(cid))
@@ -209,10 +204,25 @@ func Encode(pkt *core.OutputPacket, opts EncodeOptions) ([]byte, error) {
 		buf = appendBytes(buf, chunkTo, []byte(to))
 	}
 
-	// Back-fill total frame length.
-	if len(buf) > 0xFFFF {
-		return nil, fmt.Errorf("hep: frame too large (%d bytes, max 65535)", len(buf))
+	// ── Chunk 15: raw payload (last — so we can fit it exactly) ────────────
+	// HEP total-length field is uint16, max 65535.  All metadata chunks are
+	// already in buf; compute the space remaining for the payload value bytes
+	// (the chunk header itself costs chunkHeaderLen more bytes).
+	if len(pkt.RawPayload) > 0 {
+		available := 0xFFFF - len(buf) - chunkHeaderLen
+		payload := pkt.RawPayload
+		if available <= 0 {
+			// Metadata alone already fills the frame; drop payload entirely.
+			payload = nil
+		} else if len(payload) > available {
+			payload = payload[:available]
+		}
+		if len(payload) > 0 {
+			buf = appendBytes(buf, chunkPayload, payload)
+		}
 	}
+
+	// Back-fill total frame length (guaranteed ≤ 65535 after payload clamp).
 	binary.BigEndian.PutUint16(buf[4:6], uint16(len(buf)))
 
 	return buf, nil
