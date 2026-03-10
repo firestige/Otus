@@ -1,0 +1,70 @@
+# capture-agent UAS sidecar — HEP reporter variant
+# Reports captured packets via HEPv3 UDP to hep-collector instead of Kafka directly.
+# Command channel still uses Kafka so the web console can start/stop the task.
+
+capture-agent:
+  node:
+    hostname: uas-hep
+    role: UAS
+    tags:
+      datacenter: voip-simulator
+      environment: dev
+      reporter: hep
+
+  control:
+    socket: /tmp/capture-agent.sock
+    pid_file: /tmp/capture-agent.pid
+
+  metrics:
+    enabled: true
+    listen: :9092           # offset from :9091 to avoid collision with the kafka-reporter sidecar
+
+  kafka:
+    brokers:
+      - 172.20.0.30:9092
+
+  command_channel:
+    enabled: true
+    type: kafka
+    command_ttl: 5m
+    kafka:
+      topic: capture-agent-uas-commands
+      response_topic: "capture-agent-responses"
+      group_id: capture-agent-uas-hep    # unique group_id for this instance
+      auto_offset_reset: earliest
+
+  # Global HEP reporter connection defaults (merged into per-task reporter configs
+  # via mergeReporterDefaults when reporters[].name == "hep")
+  reporters:
+    hep:
+      servers:
+        - "172.20.0.60:9060"
+      capture_id: 101
+      node_name: "uas-hep"
+
+  log:
+    level: info
+    format: text
+
+  # ── Role-based task defaults ───────────────────────────────────────────────
+  roles:
+    UAS:
+      workers: 1
+      capture:
+        name: afpacket
+        config:
+          iface: eth0
+          buffer_size_mb: 16
+          bpf_filter: ""
+      decoder:
+        ip_reassembly: true
+        tunnels: []
+      parsers:
+        - name: sip
+          config: {}
+        - name: rtp
+          config: {}
+      processors: []
+      reporters:
+        - name: hep
+          config: {}        # inherits global reporters.hep settings above

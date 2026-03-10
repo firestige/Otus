@@ -32,6 +32,8 @@ COMMAND_TOPICS = {
 DATA_TOPICS = {
     "uas": "capture-agent-uas-logs",
     "uac": "capture-agent-uac-logs",
+    # HEP path: packets received via HEPv3 → hep-collector → Kafka
+    "hep": "capture-agent-hep-logs",
 }
 
 # ADR-029: all nodes write command responses to a single shared topic.
@@ -78,12 +80,14 @@ app = Flask(__name__)
 packet_queues: dict[str, queue.Queue] = {
     "uas": queue.Queue(maxsize=MAX_QUEUE_SIZE),
     "uac": queue.Queue(maxsize=MAX_QUEUE_SIZE),
+    "hep": queue.Queue(maxsize=MAX_QUEUE_SIZE),
 }
 
 # SSE subscriber lists — each subscriber gets its own queue
 sse_subscribers: dict[str, list[queue.Queue]] = {
     "uas": [],
     "uac": [],
+    "hep": [],
 }
 
 # SSE subscribers for command responses (ADR-029)

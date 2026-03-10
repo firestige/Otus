@@ -182,6 +182,90 @@ services:
     restart: unless-stopped
 
   # ──────────────────────────────────────────
+  # HEP Collector
+  # Receives HEPv3 UDP frames from capture-agent HEP reporter,
+  # decodes them, and publishes JSON to capture-agent-hep-logs Kafka topic.
+  # Access: udp://172.20.0.60:9060
+  # ──────────────────────────────────────────
+  hep-collector:
+    build:
+      context: ./hep-collector
+      dockerfile: Dockerfile
+    image: voip-simulator/hep-collector:latest
+    container_name: hep-collector
+    networks:
+      voip-net:
+        ipv4_address: 172.20.0.60
+    ports:
+      - "9060:9060/udp"
+    environment:
+      KAFKA_BROKERS: "kafka:9092"
+      HEP_TOPIC: "capture-agent-hep-logs"
+      HEP_PORT: "9060"
+      LOG_LEVEL: "INFO"
+    depends_on:
+      kafka:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ──────────────────────────────────────────
+  # capture-agent sidecar for UAS — HEP reporter variant
+  # Shares network namespace with sipp-uas, reports via HEPv3 to hep-collector
+  # ──────────────────────────────────────────
+  capture-agent-uas-hep:
+    build:
+      context: ./capture
+      dockerfile: Dockerfile
+    image: voip-simulator/capture-agent:latest
+    container_name: capture-agent-uas-hep
+    network_mode: "container:sipp-uas"
+    cap_add:
+      - NET_RAW
+      - NET_ADMIN
+    environment:
+      CONFIG_FILE: /etc/capture-agent/config.yml
+    volumes:
+      - ./capture/configs/uas-hep-config.yml:/etc/capture-agent/config.yml:ro
+      - capture-agent-uas-hep-data:/var/lib/capture-agent
+      - capture-agent-uas-hep-logs:/var/log/capture-agent
+    depends_on:
+      uas:
+        condition: service_healthy
+      hep-collector:
+        condition: service_started
+      kafka:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ──────────────────────────────────────────
+  # capture-agent sidecar for UAC — HEP reporter variant
+  # Shares network namespace with sipp-uac, reports via HEPv3 to hep-collector
+  # ──────────────────────────────────────────
+  capture-agent-uac-hep:
+    build:
+      context: ./capture
+      dockerfile: Dockerfile
+    container_name: capture-agent-uac-hep
+    network_mode: "container:sipp-uac"
+    cap_add:
+      - NET_RAW
+      - NET_ADMIN
+    environment:
+      CONFIG_FILE: /etc/capture-agent/config.yml
+    volumes:
+      - ./capture/configs/uac-hep-config.yml:/etc/capture-agent/config.yml:ro
+      - capture-agent-uac-hep-data:/var/lib/capture-agent
+      - capture-agent-uac-hep-logs:/var/log/capture-agent
+    depends_on:
+      uac:
+        condition: service_started
+      hep-collector:
+        condition: service_started
+      kafka:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ──────────────────────────────────────────
   # Web Console
   # Provides task dispatch UI and live packet viewer
   # ──────────────────────────────────────────
@@ -211,3 +295,7 @@ volumes:
   capture-agent-uas-logs:
   capture-agent-uac-data:
   capture-agent-uac-logs:
+  capture-agent-uas-hep-data:
+  capture-agent-uas-hep-logs:
+  capture-agent-uac-hep-data:
+  capture-agent-uac-hep-logs:

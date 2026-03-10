@@ -1,5 +1,5 @@
 .PHONY: all build build-static build-all proto clean install install-systemd uninstall test run \
-        docker-build dist sidecar-build simulator-build \
+        docker-build dist sidecar-build simulator-build simulator-binary simulator \
         k8s-apply-dev k8s-apply-prod k8s-render-dev k8s-render-prod k8s-delete-dev k8s-delete-prod
 
 # Variables
@@ -144,6 +144,17 @@ k8s-delete-prod:
 simulator-build:
 	@echo "Building voip-simulator images..."
 	DOCKER_BUILDKIT=1 docker compose -f voip-simulator/docker-compose.yml build
+
+# Build the capture-agent binary and install it as 'otus' in voip-simulator/capture/
+# so the simulator sidecar image can pick it up with: COPY otus /usr/local/bin/capture-agent
+simulator-binary: build
+	@echo "Installing binary as voip-simulator/capture/otus..."
+	@cp $(BINARY_NAME) voip-simulator/capture/otus
+	@chmod +x voip-simulator/capture/otus
+	@echo "✓  voip-simulator/capture/otus ready  ($(shell du -sh voip-simulator/capture/otus | cut -f1))"
+
+# Build binary AND rebuild all simulator images in one shot
+simulator: simulator-binary simulator-build
 
 # 构建插件
 build-plugins:
