@@ -109,60 +109,6 @@ services:
     restart: unless-stopped
 
   # ──────────────────────────────────────────
-  # capture-agent sidecar for UAS
-  # Shares sipp-uas network namespace to capture its traffic
-  # ──────────────────────────────────────────
-  capture-agent-uas:
-    build:
-      context: ..
-      dockerfile: voip-simulator/capture/Dockerfile
-    image: voip-simulator/capture-agent:latest
-    container_name: capture-agent-uas
-    # Share network namespace with sipp-uas — required to see its interfaces
-    network_mode: "container:sipp-uas"
-    cap_add:
-      - NET_RAW
-      - NET_ADMIN
-    environment:
-      CONFIG_FILE: /etc/capture-agent/config.yml
-    volumes:
-      - ./capture/configs/uas-config.yml:/etc/capture-agent/config.yml:ro
-      - capture-agent-uas-data:/var/lib/capture-agent
-      - capture-agent-uas-logs:/var/log/capture-agent
-    depends_on:
-      uas:
-        condition: service_healthy
-      kafka:
-        condition: service_healthy
-    restart: unless-stopped
-
-  # ──────────────────────────────────────────
-  # capture-agent sidecar for UAC
-  # Shares sipp-uac network namespace to capture its traffic
-  # ──────────────────────────────────────────
-  capture-agent-uac:
-    build:
-      context: ..
-      dockerfile: voip-simulator/capture/Dockerfile
-    container_name: capture-agent-uac
-    network_mode: "container:sipp-uac"
-    cap_add:
-      - NET_RAW
-      - NET_ADMIN
-    environment:
-      CONFIG_FILE: /etc/capture-agent/config.yml
-    volumes:
-      - ./capture/configs/uac-config.yml:/etc/capture-agent/config.yml:ro
-      - capture-agent-uac-data:/var/lib/capture-agent
-      - capture-agent-uac-logs:/var/log/capture-agent
-    depends_on:
-      uac:
-        condition: service_started
-      kafka:
-        condition: service_healthy
-    restart: unless-stopped
-
-  # ──────────────────────────────────────────
   # Redpanda Console — Kafka UI
   # Access: http://localhost:8081
   # ──────────────────────────────────────────
@@ -291,10 +237,6 @@ volumes:
   uas-logs:
   uac-logs:
   kafka-data:
-  capture-agent-uas-data:
-  capture-agent-uas-logs:
-  capture-agent-uac-data:
-  capture-agent-uac-logs:
   capture-agent-uas-hep-data:
   capture-agent-uas-hep-logs:
   capture-agent-uac-hep-data:

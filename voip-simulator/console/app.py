@@ -29,12 +29,10 @@ COMMAND_TOPICS = {
     "uas": "capture-agent-uas-commands",
     "uac": "capture-agent-uac-commands",
 }
-DATA_TOPICS = {
-    "uas": "capture-agent-uas-logs",
-    "uac": "capture-agent-uac-logs",
-    # HEP path: packets received via HEPv3 → hep-collector → Kafka
-    "hep": "capture-agent-hep-logs",
-}
+# All captured packets now flow through hep-collector → capture-agent-hep-logs.
+# Per-agent Kafka-reporter topics (capture-agent-uas-logs, capture-agent-uac-logs)
+# are no longer used — the non-HEP capture-agent sidecars have been removed.
+HEP_DATA_TOPIC = "capture-agent-hep-logs"
 
 # ADR-029: all nodes write command responses to a single shared topic.
 RESPONSE_TOPIC = "capture-agent-responses"
@@ -257,14 +255,15 @@ def _handle_packet(channel: str, msg) -> None:
         pass
 
 
-def _start_packet_consumer(channel: str, topic: str) -> None:
+def _start_packet_consumer(channel: str, topic: str, handler=None) -> None:
     while True:
         consumer = None
         try:
             log.info("packet consumer connecting channel=%s topic=%s", channel, topic)
             consumer = _make_consumer(topic, f"console-{channel}")
             log.info("packet consumer ready channel=%s", channel)
-            _consumer_loop(consumer, lambda msg, ch=channel: _handle_packet(ch, msg))
+            msg_handler = handler if handler is not None else (lambda msg, ch=channel: _handle_packet(ch, msg))
+            _consumer_loop(consumer, msg_handler)
         except Exception as exc:
             log.error("packet consumer error channel=%s: %s — retry 5s", channel, exc)
             time.sleep(5)
@@ -274,6 +273,26 @@ def _start_packet_consumer(channel: str, topic: str) -> None:
                     consumer.close()
                 except Exception:
                     pass
+
+
+def _route_hep_packet(msg) -> None:
+    """Route a packet from capture-agent-hep-logs to the uas or uac channel.
+
+    hep-collector embeds the capture-agent node name in labels["node_name"]
+    (e.g. "uas-hep" or "uac-hep").  Packets from nodes whose name contains
+    "uac" are routed to the uac channel; everything else goes to uas.
+
+    The agent_id field is overridden with node_name so the frontend badge
+    colouring (source.includes('uas') / source.includes('uac')) works.
+    """
+    packet = msg.value if isinstance(msg.value, dict) else {}
+    labels = packet.get("labels") or {}
+    node_name = labels.get("node_name", "") if isinstance(labels, dict) else ""
+    ch = "uac" if "uac" in node_name.lower() else "uas"
+    # Promote node_name to agent_id so the UI badge shows the right colour.
+    if node_name:
+        packet["agent_id"] = node_name
+    _handle_packet(ch, msg)
 
 
 # ─────────────────────────────────────────────
@@ -340,13 +359,13 @@ def _start_response_consumer() -> None:
 
 
 def start_background_consumers() -> None:
-    for channel, topic in DATA_TOPICS.items():
-        threading.Thread(
-            target=_start_packet_consumer,
-            args=(channel, topic),
-            daemon=True,
-            name=f"pkt-{channel}",
-        ).start()
+    # Single HEP consumer: routes packets to uas/uac channels by node_name label.
+    threading.Thread(
+        target=_start_packet_consumer,
+        args=("hep", HEP_DATA_TOPIC, _route_hep_packet),
+        daemon=True,
+        name="pkt-hep",
+    ).start()
     threading.Thread(
         target=_start_response_consumer,
         daemon=True,
