@@ -265,7 +265,10 @@ func resolveTo(pkt *core.OutputPacket) string {
 }
 
 // resolveCorrelationID returns a call/session correlation string for chunk 17.
-// Prefers SIP call-id, then RTP call-id, then RTCP call-id, then TaskID.
+// Preference order: sip.call-id → rtp.call-id → rtcp.call-id.
+// Returns "" when none of the labels are present; callers must treat an empty
+// return as a signal to discard the packet rather than forward it without a
+// correlation ID.
 func resolveCorrelationID(pkt *core.OutputPacket) string {
 	if v := pkt.Labels[core.LabelSIPCallID]; v != "" {
 		return v
@@ -276,7 +279,7 @@ func resolveCorrelationID(pkt *core.OutputPacket) string {
 	if v := pkt.Labels[core.LabelRTCPCallID]; v != "" {
 		return v
 	}
-	return pkt.TaskID
+	return ""
 }
 
 // ─── Low-level chunk builders ──────────────────────────────────────────────

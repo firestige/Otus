@@ -201,9 +201,22 @@ func (r *HEPReporter) closeConns() {
 // ─── Reporter interface ────────────────────────────────────────────────────
 
 // Report encodes pkt as a HEPv3 frame and sends it to a flow-stable server.
+// Packets with no resolvable correlation ID (no sip.call-id, rtp.call-id, or
+// rtcp.call-id label) are silently dropped — forwarding them without a
+// call-ID would pollute the collector with uncorrelatable frames.
 func (r *HEPReporter) Report(_ context.Context, pkt *core.OutputPacket) error {
 	if pkt == nil {
 		return fmt.Errorf("hep reporter: nil packet")
+	}
+
+	if resolveCorrelationID(pkt) == "" {
+		slog.Debug("hep reporter: dropping packet with no correlation ID",
+			"task_id", pkt.TaskID,
+			"payload_type", pkt.PayloadType,
+			"src", fmt.Sprintf("%s:%d", pkt.SrcIP, pkt.SrcPort),
+			"dst", fmt.Sprintf("%s:%d", pkt.DstIP, pkt.DstPort),
+		)
+		return nil
 	}
 
 	frame, err := Encode(pkt, EncodeOptions{

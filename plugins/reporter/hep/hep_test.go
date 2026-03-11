@@ -319,16 +319,25 @@ func TestEncode_CorrID_RTCPCallID(t *testing.T) {
 	}
 }
 
-func TestEncode_CorrID_FallsBackToTaskID(t *testing.T) {
+func TestEncode_CorrID_EmptyWhenNoLabels(t *testing.T) {
 	pkt := makePacket()
 	delete(pkt.Labels, core.LabelSIPCallID)
 	delete(pkt.Labels, core.LabelRTPCallID)
+	delete(pkt.Labels, core.LabelRTCPCallID)
 
-	frame, _ := Encode(pkt, EncodeOptions{})
+	// resolveCorrelationID must return "" — no TaskID fallback.
+	if got := resolveCorrelationID(pkt); got != "" {
+		t.Errorf("resolveCorrelationID = %q, want empty string", got)
+	}
+
+	// Encode still succeeds but chunk 17 must be absent.
+	frame, err := Encode(pkt, EncodeOptions{})
+	if err != nil {
+		t.Fatalf("Encode error: %v", err)
+	}
 	pf := parseFrame(t, frame)
-
-	if got := string(pf.chunks[chunkCorrID]); got != pkt.TaskID {
-		t.Errorf("corr ID = %q, want TaskID=%q", got, pkt.TaskID)
+	if got := string(pf.chunks[chunkCorrID]); got != "" {
+		t.Errorf("chunk 17 present with value %q, want absent", got)
 	}
 }
 
