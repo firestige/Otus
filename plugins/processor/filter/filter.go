@@ -46,11 +46,11 @@ type FilterProcessor struct {
 	sipAllowSet map[string]struct{} // nil = disabled
 
 	// Stats counters — updated atomically by Process(), read by LogStats().
-	statPassed      atomic.Uint64
-	statDropHEP     atomic.Uint64
-	statDropRaw     atomic.Uint64
-	statDropDeny    atomic.Uint64 // dropped by sip_deny_methods
-	statDropAllow   atomic.Uint64 // dropped by sip_allow_methods (not in allowlist)
+	statPassed    atomic.Uint64
+	statDropHEP   atomic.Uint64
+	statDropRaw   atomic.Uint64
+	statDropDeny  atomic.Uint64 // dropped by sip_deny_methods
+	statDropAllow atomic.Uint64 // dropped by sip_allow_methods (not in allowlist)
 }
 
 // NewFilterProcessor creates a new FilterProcessor instance.
