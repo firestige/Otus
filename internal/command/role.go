@@ -180,5 +180,16 @@ func BuildTaskConfig(item SimpleCmdItem, localRole config.RoleConfig) (config.Ta
 	// Build parser list from protocol, merging local parser.Config entries.
 	tc.Parsers = buildParsers(protocols, localRole.Parsers)
 
+	// Prepend PF filter: drop self-generated HEP frames that the AF_PACKET
+	// socket sees on the same interface the HEP reporter writes to, and drop
+	// "raw" packets (unrecognised UDP traffic that passed the BPF port filter
+	// but was not parsed as SIP/RTP) — these are noise and must not be forwarded
+	// to reporters.
+	hepFilter := config.ProcessorConfig{
+		Name:   "filter",
+		Config: map[string]any{"drop_hep": true, "drop_raw": true},
+	}
+	tc.Processors = append([]config.ProcessorConfig{hepFilter}, tc.Processors...)
+
 	return tc, nil
 }

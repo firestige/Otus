@@ -176,7 +176,13 @@ func (d *Daemon) Start() error {
 func (d *Daemon) Stop() {
 	slog.Info("initiating graceful shutdown")
 
-	// 1. Stop Kafka command consumer first (no new commands)
+	// 1. Cancel context first — signals all background goroutines to stop.
+	// This must happen before closing any resources so that goroutines blocked
+	// on those resources (e.g. kafka.Reader.FetchMessage) receive the cancellation
+	// signal and exit cleanly rather than racing against a nil resource pointer.
+	d.cancel()
+
+	// 2. Stop Kafka command consumer (goroutines are now draining)
 	if d.kafkaConsumer != nil {
 		slog.Info("stopping kafka command consumer")
 		if err := d.kafkaConsumer.Stop(); err != nil {
@@ -185,17 +191,17 @@ func (d *Daemon) Stop() {
 		d.kafkaConsumer = nil // prevent double-stop on repeated calls
 	}
 
-	// 2. Stop all running tasks
+	// 3. Stop all running tasks
 	slog.Info("stopping all tasks")
 	if err := d.taskManager.StopAll(); err != nil {
 		slog.Error("error stopping tasks", "error", err)
 	}
 
-	// 3. Stop UDS server (no new CLI commands)
+	// 4. Stop UDS server (no new CLI commands)
 	slog.Info("stopping uds server")
 	d.udsServer.Stop()
 
-	// 4. Stop metrics server
+	// 5. Stop metrics server
 	if d.metricsServer != nil {
 		slog.Info("stopping metrics server")
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -204,9 +210,6 @@ func (d *Daemon) Stop() {
 			slog.Error("error stopping metrics server", "error", err)
 		}
 	}
-
-	// 5. Cancel context to signal all goroutines
-	d.cancel()
 
 	// 6. Unregister signal handler to prevent goroutine leak
 	if d.sigChan != nil {

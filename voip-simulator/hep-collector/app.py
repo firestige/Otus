@@ -201,8 +201,17 @@ def _connect_producer() -> KafkaProducer:
                 bootstrap_servers=KAFKA_BROKERS,
                 value_serializer=lambda v: json.dumps(v).encode("utf-8"),
                 key_serializer=lambda k: k.encode("utf-8") if k else None,
-                retries=5,
+                retries=3,
                 acks=1,
+                # 64 MB internal send buffer (default is 32 MB).
+                buffer_memory=64 * 1024 * 1024,
+                # Batch messages for up to 20 ms before sending — reduces the
+                # number of Kafka requests at high packet rates.
+                linger_ms=20,
+                # Compress with gzip to reduce Kafka broker write pressure.
+                # gzip is built into Python's standard library — no extra
+                # C extension (like python-snappy) required.
+                compression_type="gzip",
             )
             log.info("kafka producer connected brokers=%s topic=%s", KAFKA_BROKERS, HEP_TOPIC)
             return p
@@ -224,6 +233,11 @@ def publish(pkt: dict) -> None:
            f"-{pkt.get('dst_ip','0.0.0.0')}:{pkt.get('dst_port',0)}")
     try:
         get_producer().send(HEP_TOPIC, key=key, value=pkt)
+    except BufferError:
+        # Producer internal buffer full — drop this packet rather than blocking
+        # the UDP receive loop. Counted in stats as an error.
+        _stats["errors"] += 1
+        log.debug("kafka producer buffer full, dropping packet")
     except KafkaError as exc:
         log.warning("kafka send failed: %s", exc)
         # Reset producer so the next packet triggers a reconnect

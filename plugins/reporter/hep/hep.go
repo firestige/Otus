@@ -26,6 +26,7 @@ import (
 	"log/slog"
 	"net"
 	"sync/atomic"
+	"time"
 
 	"icc.tech/capture-agent/internal/core"
 	"icc.tech/capture-agent/pkg/plugin"
@@ -43,8 +44,9 @@ type HEPReporter struct {
 	conns []*net.UDPConn
 
 	// Statistics (exported via metrics if wired up in the future).
-	sentCount  atomic.Uint64
-	errorCount atomic.Uint64
+	sentCount    atomic.Uint64
+	errorCount   atomic.Uint64
+	timeoutCount atomic.Uint64
 }
 
 // Config holds HEP reporter configuration.
@@ -66,6 +68,12 @@ type Config struct {
 	// Typically set to the hostname or datacenter label of this agent.
 	// Leave empty to omit the chunk.
 	NodeName string `json:"node_name"`
+
+	// WriteTimeout is the maximum time allowed for a single UDP write.
+	// Prevents blocking if the kernel send buffer is full (e.g. hep-collector
+	// is overloaded). Accepts a Go duration string ("50ms") or a float64
+	// value in milliseconds. Default: 50ms.
+	WriteTimeout time.Duration `json:"write_timeout"`
 }
 
 // ─── Constructor ───────────────────────────────────────────────────────────
@@ -129,6 +137,19 @@ func (r *HEPReporter) Init(config map[string]any) error {
 		cfg.NodeName = v
 	}
 
+	// Optional: write_timeout (Go duration string or float64 milliseconds)
+	switch v := config["write_timeout"].(type) {
+	case string:
+		if d, err := time.ParseDuration(v); err == nil {
+			cfg.WriteTimeout = d
+		}
+	case float64:
+		cfg.WriteTimeout = time.Duration(v) * time.Millisecond
+	}
+	if cfg.WriteTimeout <= 0 {
+		cfg.WriteTimeout = 50 * time.Millisecond
+	}
+
 	r.config = cfg
 	return nil
 }
@@ -162,6 +183,7 @@ func (r *HEPReporter) Stop(_ context.Context) error {
 	slog.Info("hep reporter stopped",
 		"sent", r.sentCount.Load(),
 		"errors", r.errorCount.Load(),
+		"timeouts", r.timeoutCount.Load(),
 	)
 	return nil
 }
@@ -195,8 +217,20 @@ func (r *HEPReporter) Report(_ context.Context, pkt *core.OutputPacket) error {
 	}
 
 	conn := r.selectConn(pkt)
-	if _, err = conn.Write(frame); err != nil {
+	if err := conn.SetWriteDeadline(time.Now().Add(r.config.WriteTimeout)); err != nil {
+		slog.Warn("hep reporter: set write deadline failed", "error", err)
+	}
+	_, err = conn.Write(frame)
+	_ = conn.SetWriteDeadline(time.Time{}) // clear deadline regardless of outcome
+	if err != nil {
 		r.errorCount.Add(1)
+		if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+			r.timeoutCount.Add(1)
+			slog.Warn("hep reporter: write timeout — hep-collector may be overloaded",
+				"server", conn.RemoteAddr(),
+				"timeout", r.config.WriteTimeout,
+			)
+		}
 		return fmt.Errorf("hep reporter: send to %s: %w", conn.RemoteAddr(), err)
 	}
 

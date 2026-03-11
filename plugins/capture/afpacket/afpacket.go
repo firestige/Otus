@@ -1,3 +1,5 @@
+//go:build linux
+
 // Package afpacket implements AF_PACKET_V3 capture plugin.
 package afpacket
 
@@ -262,8 +264,10 @@ func (c *AFPacketCapturer) Capture(ctx context.Context, output chan<- core.RawPa
 	for {
 		// Check for shutdown before each blocking read so we react promptly
 		// when context is cancelled between poll timeouts.
+		// Use c.ctx (capturer-own context) so Stop() → c.cancel() exits this loop
+		// without waiting for the parent task context to be cancelled.
 		select {
-		case <-ctx.Done():
+		case <-c.ctx.Done():
 			slog.Info("afpacket capture stopped", "interface", c.config.Interface)
 			return nil
 		default:
@@ -272,7 +276,7 @@ func (c *AFPacketCapturer) Capture(ctx context.Context, output chan<- core.RawPa
 		data, ci, err := c.handle.ZeroCopyReadPacketData()
 		if err != nil {
 			// On any read error, check context first (covers poll timeout, EAGAIN, etc.).
-			if ctx.Err() != nil {
+			if c.ctx.Err() != nil {
 				slog.Info("afpacket capture stopped", "interface", c.config.Interface)
 				return nil
 			}
@@ -301,11 +305,11 @@ func (c *AFPacketCapturer) Capture(ctx context.Context, output chan<- core.RawPa
 		}
 
 		// Non-blocking send: prefer drop over blocking the read loop.
-		// ctx.Done() case guards against the channel being closed before we exit.
+		// c.ctx.Done() guards against the channel being closed before we exit.
 		select {
 		case output <- raw:
 			// Packet sent successfully
-		case <-ctx.Done():
+		case <-c.ctx.Done():
 			slog.Info("afpacket capture stopped", "interface", c.config.Interface)
 			return nil
 		default:

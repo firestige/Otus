@@ -188,6 +188,11 @@ func (c *KafkaCommandConsumer) Start(ctx context.Context) error {
 		"ttl", c.ttl,
 	)
 
+	// Capture reader locally. Stop() may set c.reader = nil concurrently during
+	// shutdown; using a local copy means that nil assignment can never reach this
+	// loop, which would otherwise cause a nil-pointer panic on FetchMessage.
+	reader := c.reader
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -197,7 +202,7 @@ func (c *KafkaCommandConsumer) Start(ctx context.Context) error {
 		}
 
 		// Fetch message with context
-		msg, err := c.reader.FetchMessage(ctx)
+		msg, err := reader.FetchMessage(ctx)
 		if err != nil {
 			if err == context.Canceled || err == context.DeadlineExceeded {
 				return err
@@ -222,7 +227,7 @@ func (c *KafkaCommandConsumer) Start(ctx context.Context) error {
 		}
 
 		// Commit the message
-		if err := c.reader.CommitMessages(ctx, msg); err != nil {
+		if err := reader.CommitMessages(ctx, msg); err != nil {
 			slog.Error("failed to commit message", "error", err)
 		}
 	}

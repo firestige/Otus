@@ -242,7 +242,7 @@ func resolveProtoType(payloadType string) uint8 {
 	case "json":
 		return protoTypeJSON
 	default:
-		return 0
+		return protoTypeJSON // chunk 11 = 100; rendered as "json" by collectors
 	}
 }
 

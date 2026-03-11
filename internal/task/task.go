@@ -233,11 +233,20 @@ func (t *Task) Start() error {
 		}(i, p)
 	}
 
-	// Step 4: Start Capturers (data sources)
+	// Step 4: Start Capturers (data sources).
+	// cap.Start() must be called here (in the main goroutine, under the task lock)
+	// so that c.cancel is initialised before task.Stop() can call cap.Stop().
+	// captureLoop then calls cap.Capture() which uses c.ctx.Done() to exit;
+	// cap.Stop() cancels c.ctx, unblocking captureWg.Wait() in task.Stop().
 	if t.Config.Capture.DispatchMode == "binding" {
 		// Binding mode: each capturer writes directly to its pipeline's rawStream
 		for i, cap := range t.Capturers {
 			slog.Debug("starting capturer (binding)", "task_id", t.Config.ID, "capturer_id", i, "name", cap.Name())
+			if err := cap.Start(t.ctx); err != nil {
+				t.setState(StateFailed)
+				t.failureReason = fmt.Sprintf("capturer[%d] start failed: %v", i, err)
+				return fmt.Errorf("capturer[%d] start failed: %w", i, err)
+			}
 			t.captureWg.Add(1)
 			go func(c plugin.Capturer, stream chan<- core.RawPacket) {
 				defer t.captureWg.Done()
@@ -246,11 +255,17 @@ func (t *Task) Start() error {
 		}
 	} else {
 		// Dispatch mode: single capturer → dispatcher → rawStreams
-		slog.Debug("starting capturer (dispatch)", "task_id", t.Config.ID, "name", t.Capturers[0].Name())
+		cap0 := t.Capturers[0]
+		slog.Debug("starting capturer (dispatch)", "task_id", t.Config.ID, "name", cap0.Name())
+		if err := cap0.Start(t.ctx); err != nil {
+			t.setState(StateFailed)
+			t.failureReason = fmt.Sprintf("capturer start failed: %v", err)
+			return fmt.Errorf("capturer start failed: %w", err)
+		}
 		t.captureWg.Add(1)
 		go func() {
 			defer t.captureWg.Done()
-			t.captureLoop(t.Capturers[0], t.captureCh)
+			t.captureLoop(cap0, t.captureCh)
 		}()
 		go t.dispatchLoop()
 	}
@@ -726,19 +741,32 @@ func (t *Task) UpdateMetricsInterval(d time.Duration) {
 	}
 }
 
-// statsCollectorLoop periodically collects stats from capturers and updates Prometheus metrics.
-// Uses per-capturer tracking to correctly compute deltas in binding mode (multiple capturers).
+// statsCollectorLoop periodically collects stats from capturers, pipelines, and reporter
+// wrappers, updates Prometheus metrics, and logs a single INFO summary per tick so that
+// silent drops are always visible regardless of log level.
 func (t *Task) statsCollectorLoop() {
 	interval := t.getMetricsInterval()
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
-	// Per-capturer last-seen counters to avoid cross-capturer delta contamination.
+	// Per-capturer last-seen counters.
 	type capStats struct {
 		packetsReceived uint64
 		packetsDropped  uint64
 	}
-	lastStats := make([]capStats, len(t.Capturers))
+	lastCapStats := make([]capStats, len(t.Capturers))
+
+	// Per-pipeline last-seen drop counter.
+	type pipelineStats struct {
+		dropped      uint64
+		parsed       uint64
+		parseErrors  uint64
+		decodeErrors uint64
+	}
+	lastPipelineStats := make([]pipelineStats, len(t.Pipelines))
+
+	// Per-reporter-wrapper last-seen drop counter.
+	lastWrapperDropped := make([]uint64, len(t.ReporterWrappers))
 
 	for {
 		select {
@@ -751,52 +779,101 @@ func (t *Task) statsCollectorLoop() {
 				ticker.Reset(interval)
 				slog.Info("metrics collect interval updated", "task_id", t.Config.ID, "interval", interval)
 			}
+
+			// ── Capturer stats ─────────────────────────────────────────────
+			var totalReceived, totalCapDrops uint64
+			ifaceName := t.Config.Capture.Interface
+
 			for i, cap := range t.Capturers {
 				stats := cap.Stats()
 
-				// Calculate per-capturer deltas with underflow protection
-				deltaReceived := stats.PacketsReceived - lastStats[i].packetsReceived
-				if stats.PacketsReceived < lastStats[i].packetsReceived {
-					// Counter reset (capturer restart) — treat current value as delta
+				deltaReceived := stats.PacketsReceived - lastCapStats[i].packetsReceived
+				if stats.PacketsReceived < lastCapStats[i].packetsReceived {
 					deltaReceived = stats.PacketsReceived
 				}
-
-				deltaDropped := stats.PacketsDropped - lastStats[i].packetsDropped
-				if stats.PacketsDropped < lastStats[i].packetsDropped {
+				deltaDropped := stats.PacketsDropped - lastCapStats[i].packetsDropped
+				if stats.PacketsDropped < lastCapStats[i].packetsDropped {
 					deltaDropped = stats.PacketsDropped
 				}
 
 				if deltaReceived > 0 {
-					ifaceName, _ := t.Config.Capture.Config["interface"].(string)
-					metrics.CapturePacketsTotal.WithLabelValues(
-						t.Config.ID,
-						ifaceName,
-					).Add(float64(deltaReceived))
+					metrics.CapturePacketsTotal.WithLabelValues(t.Config.ID, ifaceName).
+						Add(float64(deltaReceived))
 				}
-
 				if deltaDropped > 0 {
-					metrics.CaptureDropsTotal.WithLabelValues(
-						t.Config.ID,
-						"capture",
-					).Add(float64(deltaDropped))
+					metrics.CaptureDropsTotal.WithLabelValues(t.Config.ID, "capture").
+						Add(float64(deltaDropped))
 				}
 
-				// Update per-capturer tracking
-				lastStats[i] = capStats{
+				lastCapStats[i] = capStats{
 					packetsReceived: stats.PacketsReceived,
 					packetsDropped:  stats.PacketsDropped,
 				}
-
-				slog.Debug("capturer stats collected",
-					"task_id", t.Config.ID,
-					"capturer_id", i,
-					"packets_received", stats.PacketsReceived,
-					"packets_dropped", stats.PacketsDropped,
-					"delta_received", deltaReceived,
-					"delta_dropped", deltaDropped)
+				totalReceived += deltaReceived
+				totalCapDrops += deltaDropped
 			}
 
-			// Update flow registry size gauge
+			// ── Pipeline stats ─────────────────────────────────────────────
+			var totalPipelineDrops, totalParsed, totalParseErrors, totalDecodeErrors uint64
+			for i, pl := range t.Pipelines {
+				s := pl.Stats()
+
+				deltaDropped := s.Dropped - lastPipelineStats[i].dropped
+				if s.Dropped < lastPipelineStats[i].dropped {
+					deltaDropped = s.Dropped
+				}
+				deltaParsed := s.Parsed - lastPipelineStats[i].parsed
+				if s.Parsed < lastPipelineStats[i].parsed {
+					deltaParsed = s.Parsed
+				}
+				deltaParseErr := s.ParseErrors - lastPipelineStats[i].parseErrors
+				if s.ParseErrors < lastPipelineStats[i].parseErrors {
+					deltaParseErr = s.ParseErrors
+				}
+				deltaDecodeErr := s.DecodeErrors - lastPipelineStats[i].decodeErrors
+				if s.DecodeErrors < lastPipelineStats[i].decodeErrors {
+					deltaDecodeErr = s.DecodeErrors
+				}
+
+				lastPipelineStats[i] = pipelineStats{
+					dropped:      s.Dropped,
+					parsed:       s.Parsed,
+					parseErrors:  s.ParseErrors,
+					decodeErrors: s.DecodeErrors,
+				}
+				totalPipelineDrops += deltaDropped
+				totalParsed += deltaParsed
+				totalParseErrors += deltaParseErr
+				totalDecodeErrors += deltaDecodeErr
+			}
+
+			// ── Reporter wrapper batchCh-full drops ─────────────────────────
+			var totalWrapperDrops uint64
+			for i, w := range t.ReporterWrappers {
+				cur := w.DropsTotal()
+				delta := cur - lastWrapperDropped[i]
+				if cur < lastWrapperDropped[i] {
+					delta = cur
+				}
+				lastWrapperDropped[i] = cur
+				totalWrapperDrops += delta
+			}
+
+			// ── Single INFO log per tick ────────────────────────────────────
+			// Always printed so drops are visible at info level.
+			slog.Info("task stats",
+				"task_id", t.Config.ID,
+				"interface", ifaceName,
+				"recv_delta", totalReceived,
+				"cap_drops_delta", totalCapDrops,
+				"parsed_delta", totalParsed,
+				"parse_err_delta", totalParseErrors,
+				"decode_err_delta", totalDecodeErrors,
+				"pipeline_drops_delta", totalPipelineDrops,
+				"reporter_drops_delta", totalWrapperDrops,
+			)
+
+			// ── Flow registry gauge ─────────────────────────────────────────
 			metrics.FlowRegistrySize.WithLabelValues(t.Config.ID).
 				Set(float64(t.Registry.Count()))
 		}

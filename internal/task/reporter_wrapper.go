@@ -4,6 +4,7 @@ package task
 import (
 	"context"
 	"log/slog"
+	"sync/atomic"
 	"time"
 
 	"icc.tech/capture-agent/internal/core"
@@ -30,8 +31,9 @@ type ReporterWrapper struct {
 	batchSize    int
 	batchTimeout time.Duration
 
-	batchCh chan *core.OutputPacket
-	doneCh  chan struct{}
+	batchCh   chan *core.OutputPacket
+	doneCh    chan struct{}
+	dropCount atomic.Uint64 // cumulative silent drops (batchCh full)
 }
 
 // WrapperConfig contains configuration for creating a ReporterWrapper.
@@ -41,7 +43,7 @@ type WrapperConfig struct {
 	TaskID       string          // task ID for Prometheus labels
 	BatchSize    int
 	BatchTimeout time.Duration
-	NoBatch      bool            // if true, each packet is flushed immediately (batchSize forced to 1)
+	NoBatch      bool // if true, each packet is flushed immediately (batchSize forced to 1)
 }
 
 // NewReporterWrapper creates a new wrapper around a Reporter.
@@ -81,8 +83,15 @@ func (w *ReporterWrapper) Send(pkt *core.OutputPacket) {
 	select {
 	case w.batchCh <- pkt:
 	default:
+		w.dropCount.Add(1)
 		metrics.ReporterDropsTotal.WithLabelValues(w.taskID, w.primary.Name()).Inc()
 	}
+}
+
+// DropsTotal returns the cumulative number of packets silently dropped because
+// batchCh was full at the time of Send().
+func (w *ReporterWrapper) DropsTotal() uint64 {
+	return w.dropCount.Load()
 }
 
 // Close closes the batch channel and waits for all pending packets to flush.
@@ -99,10 +108,18 @@ func (w *ReporterWrapper) batchLoop(ctx context.Context) {
 	ticker := time.NewTicker(w.batchTimeout)
 	defer ticker.Stop()
 
+	var flushCount uint64
+
 	flush := func() {
 		if len(batch) == 0 {
 			return
 		}
+
+		// Capture queue depth before flushing — shows how backed-up the channel is.
+		queueDepth := len(w.batchCh)
+		flushCount++
+
+		start := time.Now()
 		if err := w.sendBatch(ctx, batch); err != nil {
 			slog.Warn("primary reporter batch failed",
 				"reporter", w.primary.Name(),
@@ -120,6 +137,30 @@ func (w *ReporterWrapper) batchLoop(ctx context.Context) {
 				}
 			}
 		}
+		elapsed := time.Since(start)
+
+		// Warn if a single flush takes suspiciously long (suggests reporter blocking).
+		if elapsed > 5*time.Millisecond {
+			slog.Warn("reporter flush slow — reporter may be blocking",
+				"reporter", w.primary.Name(),
+				"task_id", w.taskID,
+				"batch_size", len(batch),
+				"duration_ms", elapsed.Milliseconds(),
+				"batchCh_queue", queueDepth,
+				"batchCh_cap", cap(w.batchCh),
+			)
+		} else if flushCount%500 == 0 {
+			// Periodic heartbeat: shows steady-state queue depth and send latency.
+			slog.Debug("reporter flush stats",
+				"reporter", w.primary.Name(),
+				"task_id", w.taskID,
+				"flush_count", flushCount,
+				"batchCh_queue", queueDepth,
+				"batchCh_cap", cap(w.batchCh),
+				"last_flush_us", elapsed.Microseconds(),
+			)
+		}
+
 		batch = batch[:0]
 	}
 

@@ -294,7 +294,6 @@ func TestEncode_OversizePayload(t *testing.T) {
 	}
 }
 
-
 func TestEncode_CorrID_SIPCallID(t *testing.T) {
 	frame, _ := Encode(makePacket(), EncodeOptions{})
 	pf := parseFrame(t, frame)

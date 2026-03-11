@@ -42,7 +42,7 @@ capture-agent:
       node_name: "uac-hep"
 
   log:
-    level: debug
+    level: info
     format: text
 
   # ── Role-based task defaults ───────────────────────────────────────────────
