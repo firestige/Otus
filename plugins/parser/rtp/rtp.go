@@ -12,12 +12,26 @@
 //     looks like RTP or RTCP.
 //
 // RTCP is distinguished from RTP by payload-type values 200–209 (SR, RR, SDES, BYE…).
+//
+// Flow lookup strategy
+// --------------------
+// For each incoming packet the registry is queried twice before giving up:
+//  1. Forward key  (SrcIP:SrcPort → DstIP:DstPort) — the exact direction stored at
+//     INVITE/200 OK time.
+//  2. Reverse key  (DstIP:DstPort → SrcIP:SrcPort) — handles packets that arrive in
+//     the opposite direction from what was registered (e.g. symmetric RTP).
+//
+// Additionally, each FlowEntry carries a RegisteredAt timestamp.  Lookups that match
+// a key whose entry is older than flowEntryTTL are treated as a miss so that stale
+// entries from a previous call that ended without a clean BYE do not corrupt the
+// correlation ID of a new call that reuses the same port pair.
 package rtp
 
 import (
 	"context"
 	"encoding/binary"
 	"fmt"
+	"time"
 
 	"icc.tech/capture-agent/internal/core"
 	"icc.tech/capture-agent/pkg/plugin"
@@ -84,7 +98,7 @@ func (p *RTPParser) CanHandle(pkt *core.DecodedPacket) bool {
 			DstPort: pkt.Transport.DstPort,
 			Proto:   17,
 		}
-		if _, ok := p.flowRegistry.Get(key); ok {
+		if _, ok := p.lookupFlowEntry(key); ok {
 			return true
 		}
 	}
@@ -190,13 +204,43 @@ func (p *RTPParser) handleRTCP(pkt *core.DecodedPacket, pt uint8) (any, core.Lab
 	return nil, labels, nil
 }
 
-// enrichFromRegistry looks up the FlowRegistry and adds call_id / codec labels.
-// isRTCP controls which label keys to use (rtcp.* vs rtp.*).
-func (p *RTPParser) enrichFromRegistry(pkt *core.DecodedPacket, labels core.Labels, isRTCP bool) {
+// flowEntryTTL is the maximum age of a FlowRegistry entry accepted during
+// lookup. It must match the SIP parser's defaultSessionTTL so that a port
+// pair reused by a new call after the previous session did not send BYE
+// never inherits the stale call's correlation ID.
+const flowEntryTTL = 24 * time.Hour
+
+// lookupFlowEntry performs a bidirectional, TTL-aware lookup in the
+// FlowRegistry.  It first tries the exact key derived from the packet
+// 5-tuple (forward direction), then the swapped key (reverse direction).
+// An entry is rejected when its RegisteredAt timestamp is older than
+// flowEntryTTL.
+func (p *RTPParser) lookupFlowEntry(key plugin.FlowKey) (plugin.FlowEntry, bool) {
 	if p.flowRegistry == nil {
-		return
+		return plugin.FlowEntry{}, false
 	}
 
+	for _, k := range []plugin.FlowKey{key, key.ReverseKey()} {
+		val, ok := p.flowRegistry.Get(k)
+		if !ok {
+			continue
+		}
+		entry, ok := val.(plugin.FlowEntry)
+		if !ok {
+			continue
+		}
+		if time.Since(entry.RegisteredAt) > flowEntryTTL {
+			continue // stale entry — port pair was reused
+		}
+		return entry, true
+	}
+
+	return plugin.FlowEntry{}, false
+}
+
+// enrichFromRegistry looks up the FlowRegistry bidirectionally and adds
+// call_id / codec labels.  isRTCP controls which label keys are used.
+func (p *RTPParser) enrichFromRegistry(pkt *core.DecodedPacket, labels core.Labels, isRTCP bool) {
 	key := plugin.FlowKey{
 		SrcIP:   pkt.IP.SrcIP,
 		DstIP:   pkt.IP.DstIP,
@@ -205,29 +249,24 @@ func (p *RTPParser) enrichFromRegistry(pkt *core.DecodedPacket, labels core.Labe
 		Proto:   17,
 	}
 
-	val, ok := p.flowRegistry.Get(key)
-	if !ok {
-		return
-	}
-
-	ctx, ok := val.(map[string]string)
+	entry, ok := p.lookupFlowEntry(key)
 	if !ok {
 		return
 	}
 
 	if isRTCP {
-		if callID, ok := ctx["call_id"]; ok && callID != "" {
-			labels[core.LabelRTCPCallID] = callID
+		if entry.CallID != "" {
+			labels[core.LabelRTCPCallID] = entry.CallID
 		}
-		if codec, ok := ctx["codec"]; ok && codec != "" {
-			labels[core.LabelRTCPCodec] = codec
+		if entry.Codec != "" {
+			labels[core.LabelRTCPCodec] = entry.Codec
 		}
 	} else {
-		if callID, ok := ctx["call_id"]; ok && callID != "" {
-			labels[core.LabelRTPCallID] = callID
+		if entry.CallID != "" {
+			labels[core.LabelRTPCallID] = entry.CallID
 		}
-		if codec, ok := ctx["codec"]; ok && codec != "" {
-			labels[core.LabelRTPCodec] = codec
+		if entry.Codec != "" {
+			labels[core.LabelRTPCodec] = entry.Codec
 		}
 	}
 }

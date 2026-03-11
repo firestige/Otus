@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"net/netip"
 	"testing"
+	"time"
 
 	"icc.tech/capture-agent/internal/core"
 	"icc.tech/capture-agent/pkg/plugin"
@@ -155,7 +156,7 @@ func TestCanHandle_FlowRegistryHit(t *testing.T) {
 	srcIP := netip.MustParseAddr("192.168.1.10")
 	dstIP := netip.MustParseAddr("192.168.1.20")
 	reg.Set(plugin.FlowKey{SrcIP: srcIP, DstIP: dstIP, SrcPort: 6000, DstPort: 7000, Proto: 17},
-		map[string]string{"call_id": "abc123", "codec": "PCMU"})
+		plugin.FlowEntry{CallID: "abc123", Codec: "PCMU", RegisteredAt: time.Now()})
 
 	pkt := makeDecodedPacket("192.168.1.10", "192.168.1.20", 6000, 7000,
 		[]byte{0xFF, 0xFF}) // garbage payload — registry hit should short-circuit
@@ -241,7 +242,7 @@ func TestHandle_RTP_WithFlowRegistry(t *testing.T) {
 	srcIP := netip.MustParseAddr("10.0.0.1")
 	dstIP := netip.MustParseAddr("10.0.0.2")
 	reg.Set(plugin.FlowKey{SrcIP: srcIP, DstIP: dstIP, SrcPort: 6000, DstPort: 7000, Proto: 17},
-		map[string]string{"call_id": "call-xyz-789", "codec": "G711A"})
+		plugin.FlowEntry{CallID: "call-xyz-789", Codec: "G711A", RegisteredAt: time.Now()})
 
 	payload := makeRTPPayload(8, 1, 100, 0x11223344, false, false)
 	pkt := makeDecodedPacket("10.0.0.1", "10.0.0.2", 6000, 7000, payload)
@@ -394,7 +395,7 @@ func TestHandle_RTCP_WithFlowRegistry(t *testing.T) {
 	srcIP := netip.MustParseAddr("10.0.0.1")
 	dstIP := netip.MustParseAddr("10.0.0.2")
 	reg.Set(plugin.FlowKey{SrcIP: srcIP, DstIP: dstIP, SrcPort: 6001, DstPort: 7001, Proto: 17},
-		map[string]string{"call_id": "rtcp-call-001", "codec": "RTCP"})
+		plugin.FlowEntry{CallID: "rtcp-call-001", Codec: "RTCP", RegisteredAt: time.Now()})
 
 	payload := makeRTCPPayload(201, 0xAABBCCDD) // RR
 	pkt := makeDecodedPacket("10.0.0.1", "10.0.0.2", 6001, 7001, payload)
@@ -540,5 +541,86 @@ func TestEnrichFromRegistry_WrongType(t *testing.T) {
 	}
 	if _, ok := labels[core.LabelRTPCallID]; ok {
 		t.Error("LabelRTPCallID should not be present when registry value has wrong type")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// lookupFlowEntry — reverse-direction and stale-TTL tests
+// ---------------------------------------------------------------------------
+
+// TestLookupFlowEntry_ReverseDirection verifies that a packet arriving in the
+// opposite direction from the registered key is still correlated correctly.
+func TestLookupFlowEntry_ReverseDirection(t *testing.T) {
+	p := NewRTPParser().(*RTPParser)
+	reg := newMockFlowRegistry()
+	p.SetFlowRegistry(reg)
+
+	// Register forward key A→B.
+	srcIP := netip.MustParseAddr("10.0.0.1")
+	dstIP := netip.MustParseAddr("10.0.0.2")
+	reg.Set(plugin.FlowKey{SrcIP: srcIP, DstIP: dstIP, SrcPort: 6000, DstPort: 7000, Proto: 17},
+		plugin.FlowEntry{CallID: "reverse-call", Codec: "PCMU", RegisteredAt: time.Now()})
+
+	// Packet arrives in reverse direction B→A.
+	payload := makeRTPPayload(8, 1, 100, 0x11223344, false, false)
+	pkt := makeDecodedPacket("10.0.0.2", "10.0.0.1", 7000, 6000, payload)
+
+	_, labels, err := p.Handle(pkt)
+	if err != nil {
+		t.Fatalf("Handle() error: %v", err)
+	}
+	if got := labels[core.LabelRTPCallID]; got != "reverse-call" {
+		t.Errorf("LabelRTPCallID = %q; want %q (reverse direction should match)", got, "reverse-call")
+	}
+	if got := labels[core.LabelRTPCodec]; got != "PCMU" {
+		t.Errorf("LabelRTPCodec = %q; want %q", got, "PCMU")
+	}
+}
+
+// TestLookupFlowEntry_StaleEntryRejected verifies that an entry older than
+// flowEntryTTL is not used, so that a new call reusing the same port pair
+// does not inherit the previous call's correlation ID.
+func TestLookupFlowEntry_StaleEntryRejected(t *testing.T) {
+	p := NewRTPParser().(*RTPParser)
+	reg := newMockFlowRegistry()
+	p.SetFlowRegistry(reg)
+
+	srcIP := netip.MustParseAddr("10.0.0.1")
+	dstIP := netip.MustParseAddr("10.0.0.2")
+	// RegisteredAt set far in the past — older than flowEntryTTL (24h).
+	staleTime := time.Now().Add(-(flowEntryTTL + time.Hour))
+	reg.Set(plugin.FlowKey{SrcIP: srcIP, DstIP: dstIP, SrcPort: 6000, DstPort: 7000, Proto: 17},
+		plugin.FlowEntry{CallID: "old-call", Codec: "G729", RegisteredAt: staleTime})
+
+	payload := makeRTPPayload(18, 1, 100, 0xDEADBEEF, false, false)
+	pkt := makeDecodedPacket("10.0.0.1", "10.0.0.2", 6000, 7000, payload)
+
+	_, labels, err := p.Handle(pkt)
+	if err != nil {
+		t.Fatalf("Handle() error: %v", err)
+	}
+	if _, ok := labels[core.LabelRTPCallID]; ok {
+		t.Errorf("LabelRTPCallID should not be set for stale registry entry; got %q", labels[core.LabelRTPCallID])
+	}
+}
+
+// TestCanHandle_ReverseDirectionFlowRegistry verifies that CanHandle returns
+// true when the registry has a reverse-direction entry for the packet 5-tuple.
+func TestCanHandle_ReverseDirectionFlowRegistry(t *testing.T) {
+	p := NewRTPParser().(*RTPParser)
+	reg := newMockFlowRegistry()
+	p.SetFlowRegistry(reg)
+
+	// Register A→B.
+	srcIP := netip.MustParseAddr("192.168.1.10")
+	dstIP := netip.MustParseAddr("192.168.1.20")
+	reg.Set(plugin.FlowKey{SrcIP: srcIP, DstIP: dstIP, SrcPort: 6000, DstPort: 7000, Proto: 17},
+		plugin.FlowEntry{CallID: "rev-handle", Codec: "PCMU", RegisteredAt: time.Now()})
+
+	// Packet arrives B→A with garbage payload — registry hit should short-circuit heuristic.
+	pkt := makeDecodedPacket("192.168.1.20", "192.168.1.10", 7000, 6000,
+		[]byte{0xFF, 0xFF, 0xFF, 0xFF})
+	if !p.CanHandle(pkt) {
+		t.Error("CanHandle should return true when FlowRegistry has reverse-direction entry")
 	}
 }

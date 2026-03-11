@@ -545,9 +545,10 @@ func (p *SIPParser) registerBidirectionalFlow(
 	portA, portB uint16,
 	callID, codec string,
 ) {
-	flowContext := map[string]string{
-		"call_id": callID,
-		"codec":   codec,
+	entry := plugin.FlowEntry{
+		CallID:       callID,
+		Codec:        codec,
+		RegisteredAt: time.Now(),
 	}
 
 	// Flow A → B
@@ -558,7 +559,7 @@ func (p *SIPParser) registerBidirectionalFlow(
 		DstPort: portB,
 		Proto:   17, // UDP
 	}
-	p.flowRegistry.Set(keyAtoB, flowContext)
+	p.flowRegistry.Set(keyAtoB, entry)
 
 	// Flow B → A
 	keyBtoA := plugin.FlowKey{
@@ -568,7 +569,7 @@ func (p *SIPParser) registerBidirectionalFlow(
 		DstPort: portA,
 		Proto:   17, // UDP
 	}
-	p.flowRegistry.Set(keyBtoA, flowContext)
+	p.flowRegistry.Set(keyBtoA, entry)
 }
 
 // cleanupFlows removes flows associated with a call from FlowRegistry.
@@ -579,8 +580,8 @@ func (p *SIPParser) cleanupFlows(callID string) {
 
 	// Iterate FlowRegistry and delete matching flows
 	p.flowRegistry.Range(func(key plugin.FlowKey, value any) bool {
-		if ctx, ok := value.(map[string]string); ok {
-			if ctx["call_id"] == callID {
+		if entry, ok := value.(plugin.FlowEntry); ok {
+			if entry.CallID == callID {
 				p.flowRegistry.Delete(key)
 			}
 		}
