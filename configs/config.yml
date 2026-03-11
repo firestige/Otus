@@ -151,13 +151,17 @@ capture-agent:
             drop_hep: false           # drop self-captured HEPv3 frames
             drop_raw: false           # drop unrecognised UDP (no parser matched)
             # sip_deny_methods: ["OPTIONS", "NOTIFY", "SUBSCRIBE", "REGISTER"]
-            #   Drop SIP requests whose method is in this list.
-            #   Non-SIP traffic and SIP responses are unaffected.
+            #   Drop SIP packets whose method is in this list.  Works for both
+            #   requests (method from Request-Line) and responses (method
+            #   extracted from CSeq header, e.g. "1 INVITE" → "INVITE").
+            #   Packets with no sip.method label pass through unchanged.
             #   Evaluated before sip_allow_methods when both are configured.
             #
             # sip_allow_methods: ["INVITE", "ACK", "BYE", "CANCEL", "PRACK", "UPDATE"]
-            #   Allowlist: only forward SIP requests whose method is in this list.
-            #   Non-SIP traffic and SIP responses always pass through.
+            #   Allowlist: only forward SIP packets whose method is in this list.
+            #   Works for both requests and responses (same CSeq extraction as
+            #   above).  Non-SIP traffic and packets with no method label always
+            #   pass through.
       reporters:
         - name: "kafka"
           config:

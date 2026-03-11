@@ -58,7 +58,12 @@ func New(cfg Config) *Pipeline {
 func (p *Pipeline) Run(ctx context.Context, input <-chan core.RawPacket, output chan<- core.OutputPacket) {
 	slog.Info("pipeline starting", "task_id", p.taskID, "pipeline_id", p.id)
 
+	statsTicker := time.NewTicker(30 * time.Second)
+	defer statsTicker.Stop()
+
 	defer func() {
+		// Final stats flush for any processor that supports it.
+		p.logProcessorStats()
 		slog.Info("pipeline stopped", "task_id", p.taskID, "pipeline_id", p.id)
 	}()
 
@@ -66,6 +71,9 @@ func (p *Pipeline) Run(ctx context.Context, input <-chan core.RawPacket, output 
 		select {
 		case <-ctx.Done():
 			return
+
+		case <-statsTicker.C:
+			p.logProcessorStats()
 
 		case raw, ok := <-input:
 			if !ok {
@@ -93,6 +101,16 @@ func (p *Pipeline) Run(ctx context.Context, input <-chan core.RawPacket, output 
 					}
 				}
 			}
+		}
+	}
+}
+
+// logProcessorStats calls LogStats on every processor that implements
+// plugin.StatsReporter.  Called periodically and on pipeline exit.
+func (p *Pipeline) logProcessorStats() {
+	for _, proc := range p.processors {
+		if sr, ok := proc.(plugin.StatsReporter); ok {
+			sr.LogStats(p.taskID, p.id)
 		}
 	}
 }

@@ -195,3 +195,80 @@ func TestInit_emptyListLeavesNil(t *testing.T) {
 		t.Error("empty sip_allow_methods should leave sipAllowSet nil")
 	}
 }
+
+// ── Stats counters ────────────────────────────────────────────────────────────
+
+func TestStats_allCounterPaths(t *testing.T) {
+	f := NewFilterProcessor().(*FilterProcessor)
+	_ = f.Init(map[string]any{
+		"drop_raw":          true,
+		"drop_hep":          true,
+		"sip_deny_methods":  []any{"OPTIONS"},
+		"sip_allow_methods": []any{"INVITE", "BYE", "ACK"},
+	})
+
+	// HEP packet — drop_hep fires
+	hepPkt := &core.OutputPacket{
+		PayloadType: "raw",
+		RawPayload:  []byte{'H', 'E', 'P', '3', 0x00},
+		Labels:      core.Labels{},
+	}
+	if f.Process(hepPkt) {
+		t.Error("HEP packet should be dropped")
+	}
+
+	// raw packet — drop_raw fires
+	if f.Process(rawPkt()) {
+		t.Error("raw packet should be dropped")
+	}
+
+	// SIP OPTIONS — sip_deny fires
+	if f.Process(sipPkt("OPTIONS")) {
+		t.Error("OPTIONS should be dropped by deny list")
+	}
+
+	// SIP REGISTER — sip_allow fires (not in allowlist)
+	if f.Process(sipPkt("REGISTER")) {
+		t.Error("REGISTER should be dropped by allow list")
+	}
+
+	// SIP INVITE — passes both filters
+	if !f.Process(sipPkt("INVITE")) {
+		t.Error("INVITE should pass")
+	}
+
+	// RTP — unaffected, passes
+	if !f.Process(rtpPkt()) {
+		t.Error("RTP should pass")
+	}
+
+	s := f.ReadStats()
+	if s.DropHEP != 1 {
+		t.Errorf("DropHEP = %d, want 1", s.DropHEP)
+	}
+	if s.DropRaw != 1 {
+		t.Errorf("DropRaw = %d, want 1", s.DropRaw)
+	}
+	if s.DropDeny != 1 {
+		t.Errorf("DropDeny = %d, want 1", s.DropDeny)
+	}
+	if s.DropAllow != 1 {
+		t.Errorf("DropAllow = %d, want 1", s.DropAllow)
+	}
+	if s.Passed != 2 {
+		t.Errorf("Passed = %d, want 2", s.Passed)
+	}
+	total := s.Passed + s.DropHEP + s.DropRaw + s.DropDeny + s.DropAllow
+	if total != 6 {
+		t.Errorf("total = %d, want 6", total)
+	}
+}
+
+func TestStats_logStatsDoesNotPanic(t *testing.T) {
+	f := NewFilterProcessor().(*FilterProcessor)
+	_ = f.Init(map[string]any{"drop_raw": true})
+	f.Process(rawPkt())
+	f.Process(rtpPkt())
+	// Must not panic; output is a side-effect (slog).
+	f.LogStats("task-test", 0)
+}

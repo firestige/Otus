@@ -25,3 +25,12 @@ type Pausable interface {
 type Reconfigurable interface {
 	Reconfigure(cfg map[string]any) error
 }
+
+// StatsReporter is an optional interface for plugins that maintain internal
+// counters.  The pipeline calls LogStats periodically and on shutdown so that
+// drop/pass statistics are written to the structured log for diagnostics.
+type StatsReporter interface {
+	// LogStats emits a single structured log line with all counters.
+	// taskID and pipelineID are supplied by the caller for correlation.
+	LogStats(taskID string, pipelineID int)
+}

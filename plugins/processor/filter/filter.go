@@ -27,7 +27,9 @@ package filter
 
 import (
 	"context"
+	"log/slog"
 	"strings"
+	"sync/atomic"
 
 	"icc.tech/capture-agent/internal/core"
 	"icc.tech/capture-agent/pkg/plugin"
@@ -38,10 +40,17 @@ var hepMagic = [4]byte{'H', 'E', 'P', '3'}
 
 // FilterProcessor drops packets matching configured rules.
 type FilterProcessor struct {
-	dropHEP        bool
-	dropRaw        bool
-	sipDenySet     map[string]struct{} // nil = disabled
-	sipAllowSet    map[string]struct{} // nil = disabled
+	dropHEP     bool
+	dropRaw     bool
+	sipDenySet  map[string]struct{} // nil = disabled
+	sipAllowSet map[string]struct{} // nil = disabled
+
+	// Stats counters — updated atomically by Process(), read by LogStats().
+	statPassed      atomic.Uint64
+	statDropHEP     atomic.Uint64
+	statDropRaw     atomic.Uint64
+	statDropDeny    atomic.Uint64 // dropped by sip_deny_methods
+	statDropAllow   atomic.Uint64 // dropped by sip_allow_methods (not in allowlist)
 }
 
 // NewFilterProcessor creates a new FilterProcessor instance.
@@ -111,6 +120,46 @@ func (f *FilterProcessor) Start(_ context.Context) error { return nil }
 // Stop is a no-op.
 func (f *FilterProcessor) Stop(_ context.Context) error { return nil }
 
+// Stats holds a snapshot of counters for external inspection or testing.
+type Stats struct {
+	Passed    uint64
+	DropHEP   uint64
+	DropRaw   uint64
+	DropDeny  uint64
+	DropAllow uint64
+}
+
+// ReadStats returns a point-in-time snapshot of filter counters.
+func (f *FilterProcessor) ReadStats() Stats {
+	return Stats{
+		Passed:    f.statPassed.Load(),
+		DropHEP:   f.statDropHEP.Load(),
+		DropRaw:   f.statDropRaw.Load(),
+		DropDeny:  f.statDropDeny.Load(),
+		DropAllow: f.statDropAllow.Load(),
+	}
+}
+
+// LogStats emits a single structured log line with all counters.
+// Implements plugin.StatsReporter — called by the pipeline periodically
+// and at shutdown for diagnostics.
+func (f *FilterProcessor) LogStats(taskID string, pipelineID int) {
+	s := f.ReadStats()
+	total := s.Passed + s.DropHEP + s.DropRaw + s.DropDeny + s.DropAllow
+	dropped := s.DropHEP + s.DropRaw + s.DropDeny + s.DropAllow
+	slog.Info("filter stats",
+		"task_id", taskID,
+		"pipeline_id", pipelineID,
+		"total", total,
+		"passed", s.Passed,
+		"dropped", dropped,
+		"drop_hep", s.DropHEP,
+		"drop_raw", s.DropRaw,
+		"drop_sip_deny", s.DropDeny,
+		"drop_sip_allow", s.DropAllow,
+	)
+}
+
 // Process returns false (drop) when any configured rule matches, true otherwise.
 func (f *FilterProcessor) Process(pkt *core.OutputPacket) bool {
 	if f.dropHEP && len(pkt.RawPayload) >= 4 {
@@ -118,10 +167,12 @@ func (f *FilterProcessor) Process(pkt *core.OutputPacket) bool {
 			pkt.RawPayload[1] == hepMagic[1] &&
 			pkt.RawPayload[2] == hepMagic[2] &&
 			pkt.RawPayload[3] == hepMagic[3] {
+			f.statDropHEP.Add(1)
 			return false
 		}
 	}
 	if f.dropRaw && pkt.PayloadType == "raw" {
+		f.statDropRaw.Add(1)
 		return false
 	}
 
@@ -135,17 +186,20 @@ func (f *FilterProcessor) Process(pkt *core.OutputPacket) bool {
 			// Deny list: explicit block takes precedence.
 			if f.sipDenySet != nil {
 				if _, blocked := f.sipDenySet[method]; blocked {
+					f.statDropDeny.Add(1)
 					return false
 				}
 			}
 			// Allow list: drop anything NOT in the list.
 			if f.sipAllowSet != nil {
 				if _, allowed := f.sipAllowSet[method]; !allowed {
+					f.statDropAllow.Add(1)
 					return false
 				}
 			}
 		}
 	}
 
+	f.statPassed.Add(1)
 	return true
 }

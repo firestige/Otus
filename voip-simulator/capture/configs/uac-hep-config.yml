@@ -62,7 +62,18 @@ capture-agent:
           config: {}
         - name: rtp
           config: {}
-      processors: []
+      processors:
+        - name: filter
+          config:
+            drop_raw: true
+            drop_hep: true
+            # Drop noisy SIP keepalives; allow full call signalling through.
+            # Works for both requests and responses (CSeq method extraction).
+            sip_deny_methods:
+              - OPTIONS
+              - REGISTER
+              - SUBSCRIBE
+              - NOTIFY
       reporters:
         - name: hep
           no_batch: true    # send each packet immediately; HEP collectors do not support batch
