@@ -456,6 +456,10 @@ func TestHandleINVITEAndResponse(t *testing.T) {
 	if labels[core.LabelSIPStatusCode] != "200" {
 		t.Errorf("status code label = %q, expected 200", labels[core.LabelSIPStatusCode])
 	}
+	// CSeq is "1 INVITE" — method must be extracted for responses too.
+	if labels[core.LabelSIPMethod] != "INVITE" {
+		t.Errorf("method label on 200 OK = %q, expected INVITE (from CSeq)", labels[core.LabelSIPMethod])
+	}
 
 	// Now flows should be registered (bidirectional: 2 RTP + 2 RTCP = 4 flows)
 	if registry.Count() != 4 {

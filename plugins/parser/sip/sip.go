@@ -128,9 +128,21 @@ func (p *SIPParser) Handle(pkt *core.DecodedPacket) (any, core.Labels, error) {
 		return nil, nil, fmt.Errorf("sip parse failed: %w", err)
 	}
 
-	// Populate labels with key headers
+	// Populate labels with key headers.
+	// For SIP requests, method comes from the Request-Line.
+	// For SIP responses there is no method on the Status-Line; extract it from
+	// the CSeq header instead (e.g. "1 INVITE" → "INVITE") so that downstream
+	// processors such as the filter processor can match on method uniformly
+	// for both requests and responses.
 	if sipMsg.method != "" {
 		labels[core.LabelSIPMethod] = sipMsg.method
+	} else if sipMsg.statusCode != 0 && sipMsg.cseq != "" {
+		// CSeq value is "<seq-number> <method>", e.g. "1 INVITE"
+		if idx := strings.LastIndex(sipMsg.cseq, " "); idx >= 0 {
+			if m := strings.TrimSpace(sipMsg.cseq[idx+1:]); m != "" {
+				labels[core.LabelSIPMethod] = m
+			}
+		}
 	}
 	if sipMsg.statusCode != 0 {
 		labels[core.LabelSIPStatusCode] = strconv.Itoa(sipMsg.statusCode)

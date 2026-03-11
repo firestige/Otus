@@ -13,15 +13,16 @@
 //	  Prevents unrecognised UDP traffic captured by a wide BPF port-range filter
 //	  from being forwarded to reporters and overwhelming downstream collectors.
 //
-//	sip_deny_methods ([]string) — drop SIP request packets whose method is in
-//	  this list.  Non-SIP packets and SIP responses (no method label) are not
-//	  affected.  Example: ["OPTIONS", "NOTIFY", "REGISTER"].
-//	  Evaluated before sip_allow_methods when both are set.
+//	sip_deny_methods ([]string) — drop SIP packets whose method is in this list.
+//	  Works for both requests (method from Request-Line) and responses (method
+//	  from CSeq header, e.g. "1 INVITE" → "INVITE").  Packets with no
+//	  sip.method label are not affected.  Evaluated before sip_allow_methods.
+//	  Example: ["OPTIONS", "NOTIFY", "REGISTER"].
 //
-//	sip_allow_methods ([]string) — if non-empty, drop any SIP request packet
-//	  whose method is NOT in this list.  Acts as an allowlist.  Non-SIP packets
-//	  and SIP responses always pass through.  Example: ["INVITE", "ACK", "BYE",
-//	  "CANCEL", "PRACK", "UPDATE"].
+//	sip_allow_methods ([]string) — if non-empty, drop any SIP packet whose
+//	  method is NOT in this list.  Works for both requests and responses.
+//	  Packets with no sip.method label and non-SIP traffic always pass through.
+//	  Example: ["INVITE", "ACK", "BYE", "CANCEL", "PRACK", "UPDATE"].
 package filter
 
 import (
@@ -124,8 +125,10 @@ func (f *FilterProcessor) Process(pkt *core.OutputPacket) bool {
 		return false
 	}
 
-	// SIP method filters — only apply to SIP packets that carry a method label.
-	// SIP responses (no sip.method label) and non-SIP traffic are not affected.
+	// SIP method filters — apply to any SIP packet that carries a sip.method
+	// label.  The SIP parser populates this for both requests (from the
+	// Request-Line) and responses (from the CSeq header), so filtering is
+	// uniform across the full SIP dialog.
 	if pkt.PayloadType == "sip" {
 		method := strings.ToUpper(pkt.Labels[core.LabelSIPMethod])
 		if method != "" {
